@@ -1,0 +1,249 @@
+name: 发布 PhotoBook APK
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: photobook-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      FLUTTER_VERSION: 3.41.2
+      PHOTOBOOK_TARGET_ABIS: arm64-v8a
+      PHOTOBOOK_PYTHON: python
+      EXPECTED_CERT_SHA256: 79294e51a747e96ffca87d31fc14daf25b75c2a0b3e9c73afb4d2522be2c0574
+    steps:
+      - name: 检出源码
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: 配置 JDK 17
+        uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: 配置 Python 3.13
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
+        with:
+          python-version: '3.13'
+
+      - name: 配置 Flutter
+        uses: subosito/flutter-action@fd55f4c5af5b953cc57a2be44cb082c8f6635e8e # v2.21.0
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 安装依赖
+        working-directory: client
+        run: flutter pub get
+
+      - name: 校验标签与版本
+        id: metadata
+        working-directory: client
+        run: dart run tool/release_metadata.dart "$GITHUB_REF_NAME" "$GITHUB_OUTPUT"
+
+      - name: 执行发布前测试
+        working-directory: client
+        run: |
+          flutter analyze
+          flutter test
+          cd android
+          ./gradlew :app:testDebugUnitTest
+
+      - name: 准备临时签名
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEY_STORE_PASSWORD: ${{ secrets.KEY_STORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          test -n "$KEYSTORE_BASE64"
+          test -n "$KEY_STORE_PASSWORD"
+          test -n "$KEY_ALIAS"
+          test -n "$KEY_PASSWORD"
+          umask 077
+          printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/photobook-release.jks"
+          printf 'storeFile=%s\nstorePassword=%s\nkeyAlias=%s\nkeyPassword=%s\n' \
+            "$RUNNER_TEMP/photobook-release.jks" \
+            "$KEY_STORE_PASSWORD" \
+            "$KEY_ALIAS" \
+            "$KEY_PASSWORD" \
+            > "$RUNNER_TEMP/photobook-key.properties"
+
+      - name: 构建正式 APK
+        working-directory: client
+        env:
+          PHOTOBOOK_SIGNING_PROPERTIES: ${{ runner.temp }}/photobook-key.properties
+        run: flutter build apk --release
+
+      - name: 校验并命名 APK
+        id: apk
+        env:
+          VERSION_NAME: ${{ steps.metadata.outputs.version_name }}
+          VERSION_CODE: ${{ steps.metadata.outputs.version_code }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+        run: |
+          set -euo pipefail
+          source_apk="client/build/app/outputs/flutter-apk/app-release.apk"
+          test -f "$source_apk"
+          asset_name="photobook-$TAG-arm64-v8a.apk"
+          asset_path="$RUNNER_TEMP/$asset_name"
+          cp "$source_apk" "$asset_path"
+
+          apkanalyzer_path="$(find "$ANDROID_SDK_ROOT/cmdline-tools" -type f -name apkanalyzer | sort | tail -n 1)"
+          test -x "$apkanalyzer_path"
+          application_id="$("$apkanalyzer_path" manifest application-id "$asset_path")"
+          version_code="$("$apkanalyzer_path" manifest version-code "$asset_path")"
+          version_name="$("$apkanalyzer_path" manifest version-name "$asset_path")"
+          min_sdk="$("$apkanalyzer_path" manifest min-sdk "$asset_path")"
+
+          require_equal() {
+            local label="$1"
+            local actual="$2"
+            local expected="$3"
+            if [[ "$actual" != "$expected" ]]; then
+              printf '%s 校验失败：期望 %q，实际 %q\n' \
+                "$label" "$expected" "$actual" >&2
+              exit 1
+            fi
+          }
+
+          printf 'APK 元数据：applicationId=%s, versionName=%s, versionCode=%s, minSdk=%s\n' \
+            "$application_id" "$version_name" "$version_code" "$min_sdk"
+          require_equal applicationId "$application_id" "com.mantou.photobook"
+          require_equal versionCode "$version_code" "$VERSION_CODE"
+          require_equal versionName "$version_name" "$VERSION_NAME"
+          if [[ ! "$min_sdk" =~ ^[0-9]+$ ]] || (( min_sdk < 24 )); then
+            printf 'minSdk 校验失败：期望不低于 24，实际 %q\n' "$min_sdk" >&2
+            exit 1
+          fi
+
+          mapfile -t abis < <(
+            unzip -Z1 "$asset_path" |
+              sed -n 's#^lib/\([^/]*\)/.*#\1#p' |
+              sort -u
+          )
+          printf 'APK ABI：%s\n' "${abis[*]:-<none>}"
+          require_equal 'ABI 数量' "${#abis[@]}" 1
+          require_equal ABI "${abis[0]}" arm64-v8a
+
+          apksigner_path="$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
+          test -x "$apksigner_path"
+          "$apksigner_path" verify "$asset_path"
+          cert_pem="$(
+            "$apksigner_path" verify --print-certs-pem "$asset_path" 2>&1 |
+              sed -n '/-----BEGIN CERTIFICATE-----/,/-----END CERTIFICATE-----/p'
+          )"
+          if [[ -z "$cert_pem" ]]; then
+            printf '无法从 APK 提取签名证书 PEM\n' >&2
+            exit 1
+          fi
+          cert_count="$(grep -c -- '-----BEGIN CERTIFICATE-----' <<< "$cert_pem")"
+          require_equal '签名证书数量' "$cert_count" 1
+          cert_sha256="$(
+            printf '%s\n' "$cert_pem" |
+              openssl x509 -noout -fingerprint -sha256 |
+              cut -d= -f2- |
+              tr -d ':' |
+              tr '[:upper:]' '[:lower:]'
+          )"
+          printf 'APK 证书 SHA-256：%s\n' "$cert_sha256"
+          require_equal '证书 SHA-256' "$cert_sha256" "$EXPECTED_CERT_SHA256"
+
+          size="$(stat -c '%s' "$asset_path")"
+          sha256="$(sha256sum "$asset_path" | awk '{print $1}')"
+          {
+            echo "asset_name=$asset_name"
+            echo "asset_path=$asset_path"
+            echo "size=$size"
+            echo "sha256=$sha256"
+            echo "min_sdk=$min_sdk"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 创建并发布完整 Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.metadata.outputs.tag }}
+          VERSION_NAME: ${{ steps.metadata.outputs.version_name }}
+          VERSION_CODE: ${{ steps.metadata.outputs.version_code }}
+          ASSET_NAME: ${{ steps.apk.outputs.asset_name }}
+          ASSET_PATH: ${{ steps.apk.outputs.asset_path }}
+          ASSET_SIZE: ${{ steps.apk.outputs.size }}
+          ASSET_SHA256: ${{ steps.apk.outputs.sha256 }}
+          MIN_SDK: ${{ steps.apk.outputs.min_sdk }}
+        run: |
+          set -euo pipefail
+          manifest_path="$RUNNER_TEMP/photobook-update.json"
+          gh release create "$TAG" "$ASSET_PATH" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --generate-notes \
+            --title "PhotoBook $VERSION_NAME"
+          release_notes="$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq '.body // ""')"
+          jq -n \
+            --arg application_id "com.mantou.photobook" \
+            --arg version_name "$VERSION_NAME" \
+            --argjson version_code "$VERSION_CODE" \
+            --arg tag "$TAG" \
+            --arg release_notes "$release_notes" \
+            --arg asset_name "$ASSET_NAME" \
+            --arg download_url "https://github.com/$GITHUB_REPOSITORY/releases/download/$TAG/$ASSET_NAME" \
+            --argjson size "$ASSET_SIZE" \
+            --arg sha256 "$ASSET_SHA256" \
+            --argjson schema_version 1 \
+            --argjson min_sdk "$MIN_SDK" \
+            '{
+              schema_version: $schema_version,
+              application_id: $application_id,
+              version_name: $version_name,
+              version_code: $version_code,
+              tag: $tag,
+              min_sdk: $min_sdk,
+              release_notes: $release_notes,
+              asset: {
+                name: $asset_name,
+                download_url: $download_url,
+                size: $size,
+                sha256: $sha256
+              }
+            }' > "$manifest_path"
+          jq -e '
+            .schema_version == 1 and
+            .application_id == "com.mantou.photobook" and
+            (.version_code | type == "number") and
+            (.asset.size | type == "number") and
+            (.asset.sha256 | test("^[0-9a-f]{64}$"))
+          ' "$manifest_path" > /dev/null
+          gh release upload "$TAG" "$manifest_path" \
+            --repo "$GITHUB_REPOSITORY" \
+            --clobber
+          asset_count="$(
+            gh release view "$TAG" \
+              --repo "$GITHUB_REPOSITORY" \
+              --json assets \
+              --jq '.assets | length'
+          )"
+          test "$asset_count" -eq 2
+          gh release edit "$TAG" \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft=false \
+            --latest
+
+      - name: 清理临时签名
+        if: always()
+        run: rm -f "$RUNNER_TEMP/photobook-release.jks" "$RUNNER_TEMP/photobook-key.properties"

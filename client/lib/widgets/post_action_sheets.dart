@@ -1,0 +1,400 @@
+import 'dart:io';
+
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../core/theme/app_theme.dart';
+import '../models/post.dart';
+
+enum MediaAction { save, delete }
+
+Future<bool> showDeletePostSheet({
+  required BuildContext context,
+  required ArchivedPost post,
+  required Future<void> Function() onDelete,
+}) async {
+  final deleted = await showModalBottomSheet<bool>(
+    context: context,
+    isScrollControlled: true,
+    isDismissible: false,
+    enableDrag: false,
+    builder: (sheetContext) {
+      var isDeleting = false;
+      String? errorMessage;
+      return StatefulBuilder(
+        builder: (context, setState) => PopScope(
+          canPop: !isDeleting,
+          child: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const _SheetHandle(),
+                  const SizedBox(height: 14),
+                  const Text(
+                    '删除这条帖子？',
+                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${post.authorDisplayName}  ·  @${post.authorUsername}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: AppTheme.muted),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    '帖子会从本机和同一 R2 资料库的其他设备移除，已保存到系统相册的副本不受影响。',
+                    style: TextStyle(height: 1.45),
+                  ),
+                  if (errorMessage != null) ...[
+                    const SizedBox(height: 12),
+                    Text(
+                      errorMessage!,
+                      style: TextStyle(
+                        color: Theme.of(context).colorScheme.error,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  FilledButton.icon(
+                    key: const ValueKey('confirm-delete-post'),
+                    style: FilledButton.styleFrom(
+                      backgroundColor: Theme.of(context).colorScheme.error,
+                      foregroundColor: Theme.of(context).colorScheme.onError,
+                      minimumSize: const Size.fromHeight(48),
+                    ),
+                    onPressed: isDeleting
+                        ? null
+                        : () async {
+                            setState(() {
+                              isDeleting = true;
+                              errorMessage = null;
+                            });
+                            try {
+                              await onDelete();
+                              if (sheetContext.mounted) {
+                                Navigator.of(sheetContext).pop(true);
+                              }
+                            } on Object catch (error) {
+                              if (!context.mounted) return;
+                              setState(() {
+                                isDeleting = false;
+                                errorMessage = _messageFor(error);
+                              });
+                            }
+                          },
+                    icon: isDeleting
+                        ? const SizedBox.square(
+                            dimension: 18,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : const Icon(Icons.delete_outline),
+                    label: Text(isDeleting ? '正在删除' : '删除帖子'),
+                  ),
+                  const SizedBox(height: 8),
+                  TextButton(
+                    onPressed: isDeleting
+                        ? null
+                        : () => Navigator.of(sheetContext).pop(false),
+                    child: const Text('取消'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      );
+    },
+  );
+  return deleted ?? false;
+}
+
+Future<void> showShareMediaSheet({
+  required BuildContext context,
+  required ArchivedPost post,
+  required String initialMediaId,
+  required Future<void> Function(List<PostMedia>) onShare,
+}) async {
+  await showModalBottomSheet<void>(
+    context: context,
+    isScrollControlled: true,
+    isDismissible: false,
+    enableDrag: false,
+    builder: (sheetContext) {
+      final selectedIds = <String>{initialMediaId};
+      var isSharing = false;
+      String? errorMessage;
+      return StatefulBuilder(
+        builder: (context, setState) {
+          void toggle(PostMedia media) {
+            if (isSharing) return;
+            setState(() {
+              errorMessage = null;
+              if (media.mediaType == PostMediaType.video) {
+                selectedIds
+                  ..clear()
+                  ..add(media.id);
+                return;
+              }
+              final selectedVideo = post.media.any(
+                (item) =>
+                    selectedIds.contains(item.id) &&
+                    item.mediaType == PostMediaType.video,
+              );
+              if (selectedVideo) selectedIds.clear();
+              if (!selectedIds.add(media.id)) selectedIds.remove(media.id);
+            });
+          }
+
+          return PopScope(
+            canPop: !isSharing,
+            child: SafeArea(
+              child: SingleChildScrollView(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  10,
+                  16,
+                  16 + MediaQuery.viewInsetsOf(context).bottom,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const _SheetHandle(),
+                    const SizedBox(height: 8),
+                    Row(
+                      children: [
+                        const Expanded(
+                          child: Text(
+                            '选择要分享的原媒体',
+                            style: TextStyle(
+                              fontSize: 20,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        IconButton(
+                          key: const ValueKey('close-share-sheet'),
+                          tooltip: '关闭',
+                          onPressed: isSharing
+                              ? null
+                              : () => Navigator.of(sheetContext).pop(),
+                          icon: const Icon(Icons.close),
+                        ),
+                      ],
+                    ),
+                    const Text(
+                      '图片可多选，视频每次选择一个',
+                      style: TextStyle(color: AppTheme.muted),
+                    ),
+                    const SizedBox(height: 16),
+                    GridView.builder(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      gridDelegate:
+                          const SliverGridDelegateWithFixedCrossAxisCount(
+                            crossAxisCount: 3,
+                            mainAxisSpacing: 8,
+                            crossAxisSpacing: 8,
+                          ),
+                      itemCount: post.media.length,
+                      itemBuilder: (context, index) {
+                        final media = post.media[index];
+                        final selected = selectedIds.contains(media.id);
+                        return _MediaChoice(
+                          key: ValueKey('share-${media.id}'),
+                          media: media,
+                          selected: selected,
+                          onTap: () => toggle(media),
+                        );
+                      },
+                    ),
+                    if (errorMessage != null) ...[
+                      const SizedBox(height: 12),
+                      Text(
+                        errorMessage!,
+                        style: TextStyle(
+                          color: Theme.of(context).colorScheme.error,
+                        ),
+                      ),
+                    ],
+                    const SizedBox(height: 16),
+                    FilledButton.icon(
+                      key: const ValueKey('share-selected-media'),
+                      onPressed: selectedIds.isEmpty || isSharing
+                          ? null
+                          : () async {
+                              setState(() {
+                                isSharing = true;
+                                errorMessage = null;
+                              });
+                              try {
+                                final selected = post.media
+                                    .where(
+                                      (item) => selectedIds.contains(item.id),
+                                    )
+                                    .toList(growable: false);
+                                await onShare(selected);
+                                if (sheetContext.mounted) {
+                                  Navigator.of(sheetContext).pop();
+                                }
+                              } on Object catch (error) {
+                                if (!context.mounted) return;
+                                setState(() {
+                                  isSharing = false;
+                                  errorMessage = _messageFor(error);
+                                });
+                              }
+                            },
+                      icon: isSharing
+                          ? const SizedBox.square(
+                              dimension: 18,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : const Icon(Icons.share_outlined),
+                      label: Text(
+                        isSharing ? '正在准备原文件' : '分享 ${selectedIds.length} 项',
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      );
+    },
+  );
+}
+
+Future<MediaAction?> showMediaActionSheet({
+  required BuildContext context,
+  required PostMedia media,
+}) => showModalBottomSheet<MediaAction>(
+  context: context,
+  builder: (sheetContext) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const _SheetHandle(),
+          const SizedBox(height: 8),
+          ListTile(
+            key: const ValueKey('save-current-media'),
+            leading: const Icon(Icons.download_outlined),
+            title: const Text('保存到系统相册'),
+            onTap: () => Navigator.of(sheetContext).pop(MediaAction.save),
+          ),
+          ListTile(
+            key: const ValueKey('delete-current-media'),
+            iconColor: Theme.of(context).colorScheme.error,
+            textColor: Theme.of(context).colorScheme.error,
+            leading: const Icon(Icons.delete_outline),
+            title: Text(
+              media.mediaType == PostMediaType.video ? '删除该视频' : '删除该图片',
+            ),
+            onTap: () => Navigator.of(sheetContext).pop(MediaAction.delete),
+          ),
+        ],
+      ),
+    ),
+  ),
+);
+
+class _MediaChoice extends StatelessWidget {
+  const _MediaChoice({
+    required this.media,
+    required this.selected,
+    required this.onTap,
+    super.key,
+  });
+
+  final PostMedia media;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final thumbnail = media.localThumbnailPath == null
+        ? null
+        : File(media.localThumbnailPath!);
+    return Material(
+      color: AppTheme.divider,
+      clipBehavior: Clip.antiAlias,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(6),
+        side: BorderSide(
+          color: selected
+              ? Theme.of(context).colorScheme.primary
+              : AppTheme.divider,
+          width: selected ? 3 : 1,
+        ),
+      ),
+      child: InkWell(
+        onTap: onTap,
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            if (thumbnail != null && thumbnail.existsSync())
+              Image.file(thumbnail, fit: BoxFit.cover)
+            else
+              const Icon(Icons.image_outlined, color: AppTheme.muted),
+            if (media.mediaType == PostMediaType.video)
+              const Center(
+                child: Icon(
+                  Icons.play_circle_fill,
+                  color: Colors.white,
+                  size: 30,
+                ),
+              ),
+            Positioned(
+              top: 6,
+              right: 6,
+              child: Icon(
+                selected ? Icons.check_circle : Icons.circle_outlined,
+                color: selected
+                    ? Theme.of(context).colorScheme.primary
+                    : Colors.white,
+                shadows: const [Shadow(blurRadius: 4, color: Colors.black54)],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _SheetHandle extends StatelessWidget {
+  const _SheetHandle();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Container(
+      width: 36,
+      height: 4,
+      decoration: BoxDecoration(
+        color: AppTheme.divider,
+        borderRadius: BorderRadius.circular(2),
+      ),
+    ),
+  );
+}
+
+String _messageFor(Object error) {
+  if (error is PlatformException) return error.message ?? '操作失败，请重试';
+  final message = error.toString();
+  return message
+      .replaceFirst('Bad state: ', '')
+      .replaceFirst('Exception: ', '');
+}

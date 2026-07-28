@@ -1,0 +1,127 @@
+import 'package:photobook/controllers/app_controller.dart';
+import 'package:photobook/controllers/providers.dart';
+import 'package:photobook/core/theme/app_theme.dart';
+import 'package:photobook/models/post.dart';
+import 'package:photobook/screens/home_screen.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+
+void main() {
+  testWidgets('首页没有 Tab，失败列表只从右上角入口进入', (tester) async {
+    final controller = AppController()..phase = AppPhase.ready;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(theme: AppTheme.light, home: const HomeScreen()),
+      ),
+    );
+
+    expect(find.byType(TabBar), findsNothing);
+    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    expect(find.byIcon(Icons.settings_outlined), findsOneWidget);
+    expect(find.text('PhotoBook'), findsOneWidget);
+  });
+
+  testWidgets('长按时只有一张卡片显示操作，作者筛选可从标题胶囊取消', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _post(id: 'post-a', username: 'alice', displayName: 'Alice'),
+        _post(id: 'post-b', username: 'bob', displayName: 'Bob'),
+      ];
+    await _pumpHome(tester, controller);
+
+    await tester.longPress(find.byKey(const ValueKey('post-a')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('post-actions-overlay')), findsOneWidget);
+    expect(find.text('只看TA'), findsOneWidget);
+    expect(find.text('删除'), findsOneWidget);
+
+    await tester.longPress(find.byKey(const ValueKey('post-b')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('post-actions-overlay')), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('filter-author-action')));
+    await tester.pump();
+
+    final chip = find.byKey(const ValueKey('author-filter-chip'));
+    expect(chip, findsOneWidget);
+    expect(find.text('Bob'), findsOneWidget);
+    expect(find.byKey(const ValueKey('post-a')), findsNothing);
+    expect(find.byKey(const ValueKey('post-b')), findsOneWidget);
+
+    await tester.tap(
+      find.descendant(of: chip, matching: find.byIcon(Icons.close)),
+    );
+    await tester.pump();
+
+    expect(find.text('PhotoBook'), findsOneWidget);
+    expect(find.byKey(const ValueKey('post-a')), findsOneWidget);
+    expect(find.byKey(const ValueKey('post-b')), findsOneWidget);
+  });
+
+  testWidgets('首页删除先显示确认抽屉，确认后才删除帖子', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [_post(id: 'post-a', username: 'alice', displayName: 'Alice')];
+    await _pumpHome(tester, controller);
+
+    await tester.longPress(find.byKey(const ValueKey('post-a')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('delete-post-action')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('删除这条帖子？'), findsOneWidget);
+    expect(controller.deletedPostIds, isEmpty);
+
+    await tester.tap(find.byKey(const ValueKey('confirm-delete-post')));
+    await tester.pumpAndSettle();
+
+    expect(controller.deletedPostIds, ['post-a']);
+    expect(find.text('还没有保存的帖子'), findsOneWidget);
+  });
+}
+
+Future<void> _pumpHome(WidgetTester tester, AppController controller) =>
+    tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(theme: AppTheme.light, home: const HomeScreen()),
+      ),
+    );
+
+ArchivedPost _post({
+  required String id,
+  required String username,
+  required String displayName,
+}) => ArchivedPost(
+  id: id,
+  sourceUrl: 'https://www.instagram.com/p/$id/',
+  authorUsername: username,
+  authorDisplayName: displayName,
+  caption: id,
+  publishedAt: 1,
+  coverMediaId: '$id-media',
+  mediaCount: 1,
+  media: [
+    PostMedia(
+      id: '$id-media',
+      mediaType: PostMediaType.image,
+      width: 1080,
+      height: 1350,
+    ),
+  ],
+);
+
+class _FakeAppController extends AppController {
+  final List<String> deletedPostIds = [];
+
+  @override
+  Future<void> deletePost(String postId) async {
+    deletedPostIds.add(postId);
+    posts = posts.where((post) => post.id != postId).toList(growable: false);
+    notifyListeners();
+  }
+}

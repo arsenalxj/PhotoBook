@@ -1,0 +1,739 @@
+import 'dart:async';
+import 'dart:io';
+import 'dart:math' as math;
+
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
+import 'package:url_launcher/url_launcher.dart';
+import 'package:video_player/video_player.dart';
+
+import '../controllers/providers.dart';
+import '../core/theme/app_theme.dart';
+import '../models/post.dart';
+import '../widgets/post_action_sheets.dart';
+
+class DetailScreen extends ConsumerStatefulWidget {
+  const DetailScreen({required this.postId, super.key});
+
+  final String postId;
+
+  @override
+  ConsumerState<DetailScreen> createState() => _DetailScreenState();
+}
+
+class _DetailScreenState extends ConsumerState<DetailScreen> {
+  String? _currentMediaId;
+  int _currentMediaIndex = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final posts = ref.watch(
+      appControllerProvider.select((controller) => controller.posts),
+    );
+    ArchivedPost? post;
+    for (final candidate in posts) {
+      if (candidate.id == widget.postId) {
+        post = candidate;
+        break;
+      }
+    }
+    if (post == null) {
+      return Scaffold(
+        appBar: AppBar(),
+        body: const Center(child: Text('帖子不存在')),
+      );
+    }
+    final currentMedia = _resolveCurrentMedia(post);
+
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('@${post.authorUsername}'),
+        actions: [
+          IconButton(
+            key: const ValueKey('share-post-media'),
+            tooltip: '分享原媒体',
+            onPressed: () => _sharePost(post!, currentMedia.id),
+            icon: const Icon(Icons.share_outlined),
+          ),
+          IconButton(
+            key: const ValueKey('delete-detail-post'),
+            tooltip: '删除帖子',
+            onPressed: () => _deletePost(post!),
+            icon: const Icon(Icons.delete_outline),
+          ),
+          PopupMenuButton<_DetailMenuAction>(
+            tooltip: '更多',
+            onSelected: (action) {
+              if (action == _DetailMenuAction.openSource) {
+                unawaited(_openSource(post!.sourceUrl));
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _DetailMenuAction.openSource,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(Icons.open_in_new),
+                  title: Text('打开原帖'),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 4),
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.only(bottom: 36),
+        children: [
+          _AuthorHeader(post: post),
+          SizedBox(
+            key: const ValueKey('media-viewer'),
+            height: _mediaViewerHeight(
+              screenSize: MediaQuery.sizeOf(context),
+              media: post.media,
+            ),
+            child: _LazyMediaViewer(
+              post: post,
+              currentMediaId: currentMedia.id,
+              onMediaChanged: (mediaId, index) {
+                if (_currentMediaId == mediaId && _currentMediaIndex == index) {
+                  return;
+                }
+                setState(() {
+                  _currentMediaId = mediaId;
+                  _currentMediaIndex = index;
+                });
+              },
+              onLongPress: (media) => _handleMediaLongPress(post!, media),
+            ),
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 18, 16, 0),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (post.caption.isNotEmpty)
+                  SelectableText(
+                    post.caption,
+                    style: const TextStyle(fontSize: 15, height: 1.55),
+                  ),
+                if (post.caption.isNotEmpty) const SizedBox(height: 16),
+                Wrap(
+                  spacing: 14,
+                  runSpacing: 8,
+                  children: [
+                    _MetaItem(
+                      icon: Icons.calendar_today_outlined,
+                      label: _formatDate(post.publishedAt),
+                    ),
+                    if (post.locationName != null)
+                      _MetaItem(
+                        icon: Icons.location_on_outlined,
+                        label: post.locationName!,
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  PostMedia _resolveCurrentMedia(ArchivedPost post) {
+    var index = post.media.indexWhere((item) => item.id == _currentMediaId);
+    if (index < 0) {
+      index = _currentMediaIndex.clamp(0, post.media.length - 1);
+      _currentMediaId = post.media[index].id;
+    }
+    _currentMediaIndex = index;
+    return post.media[index];
+  }
+
+  Future<void> _sharePost(ArchivedPost post, String currentMediaId) =>
+      showShareMediaSheet(
+        context: context,
+        post: post,
+        initialMediaId: currentMediaId,
+        onShare: ref.read(appControllerProvider).shareMedia,
+      );
+
+  Future<void> _deletePost(ArchivedPost post) async {
+    final deleted = await showDeletePostSheet(
+      context: context,
+      post: post,
+      onDelete: () => ref.read(appControllerProvider).deletePost(post.id),
+    );
+    if (deleted && mounted && Navigator.of(context).canPop()) {
+      Navigator.of(context).pop();
+    }
+  }
+
+  Future<void> _handleMediaLongPress(ArchivedPost post, PostMedia media) async {
+    final action = await showMediaActionSheet(context: context, media: media);
+    if (!mounted || action == null) return;
+    switch (action) {
+      case MediaAction.save:
+        await _saveMedia(media);
+      case MediaAction.delete:
+        await _deleteMedia(post, media);
+    }
+  }
+
+  Future<void> _saveMedia(PostMedia media) async {
+    final messenger = ScaffoldMessenger.of(context);
+    messenger
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        const SnackBar(
+          content: Text('正在准备原文件...'),
+          duration: Duration(seconds: 30),
+        ),
+      );
+    try {
+      final displayName = await ref
+          .read(appControllerProvider)
+          .saveMedia(media);
+      if (!mounted) return;
+      final album = media.mediaType == PostMediaType.video
+          ? 'Movies/PhotoBook'
+          : 'Pictures/PhotoBook';
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text('已保存到 $album：$displayName')));
+    } on Object catch (error) {
+      if (!mounted) return;
+      messenger
+        ..hideCurrentSnackBar()
+        ..showSnackBar(SnackBar(content: Text(_messageFor(error))));
+    }
+  }
+
+  Future<void> _deleteMedia(ArchivedPost post, PostMedia media) async {
+    try {
+      final result = await ref
+          .read(appControllerProvider)
+          .deleteMedia(media.id);
+      if (!mounted) return;
+      if (result.postDeleteRequired) {
+        await _deletePost(post);
+        return;
+      }
+      final deletedIndex = post.media.indexWhere((item) => item.id == media.id);
+      final remaining = post.media
+          .where((item) => item.id != media.id)
+          .toList(growable: false);
+      final targetIndex = deletedIndex >= remaining.length
+          ? remaining.length - 1
+          : deletedIndex;
+      final targetMediaId = remaining[targetIndex].id;
+      setState(() => _currentMediaId = targetMediaId);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            media.mediaType == PostMediaType.video ? '已删除该视频' : '已删除该图片',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_messageFor(error))));
+    }
+  }
+
+  Future<void> _openSource(String sourceUrl) async {
+    try {
+      final opened = await launchUrl(
+        Uri.parse(sourceUrl),
+        mode: LaunchMode.externalApplication,
+      );
+      if (!opened) throw StateError('无法打开原帖');
+    } on Object catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(_messageFor(error))));
+    }
+  }
+}
+
+enum _DetailMenuAction { openSource }
+
+double _mediaViewerHeight({
+  required Size screenSize,
+  required List<PostMedia> media,
+}) {
+  final maxHeight = screenSize.height * 2 / 3;
+  return media.fold<double>(0, (height, item) {
+    final fullWidthHeight = screenSize.width / item.aspectRatio;
+    return math.max(height, math.min(fullWidthHeight, maxHeight));
+  });
+}
+
+class _AuthorHeader extends StatelessWidget {
+  const _AuthorHeader({required this.post});
+
+  final ArchivedPost post;
+
+  @override
+  Widget build(BuildContext context) {
+    final avatar = post.localAvatarPath == null
+        ? null
+        : File(post.localAvatarPath!);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+      child: Row(
+        children: [
+          CircleAvatar(
+            radius: 22,
+            backgroundColor: AppTheme.divider,
+            foregroundImage: avatar != null && avatar.existsSync()
+                ? FileImage(avatar)
+                : null,
+            child: avatar == null || !avatar.existsSync()
+                ? const Icon(Icons.person_outline, color: AppTheme.muted)
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  post.authorDisplayName,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w700),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  '@${post.authorUsername}',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LazyMediaViewer extends ConsumerStatefulWidget {
+  const _LazyMediaViewer({
+    required this.post,
+    required this.currentMediaId,
+    required this.onMediaChanged,
+    required this.onLongPress,
+  });
+
+  final ArchivedPost post;
+  final String currentMediaId;
+  final void Function(String mediaId, int index) onMediaChanged;
+  final ValueChanged<PostMedia> onLongPress;
+
+  @override
+  ConsumerState<_LazyMediaViewer> createState() => _LazyMediaViewerState();
+}
+
+class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
+  final Map<String, String> _originalPaths = {};
+  final Map<String, String> _errors = {};
+  final Set<String> _downloading = {};
+  late final PageController _pageController;
+
+  @override
+  void initState() {
+    super.initState();
+    final initialIndex = widget.post.media.indexWhere(
+      (item) => item.id == widget.currentMediaId,
+    );
+    _pageController = PageController(
+      initialPage: initialIndex < 0 ? 0 : initialIndex,
+    );
+    _seedOriginalPaths();
+    WidgetsBinding.instance.addPostFrameCallback(
+      (_) => _ensureMedia(widget.currentMediaId),
+    );
+  }
+
+  @override
+  void didUpdateWidget(_LazyMediaViewer oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    final activeIds = widget.post.media.map((item) => item.id).toSet();
+    _originalPaths.removeWhere((mediaId, _) => !activeIds.contains(mediaId));
+    _errors.removeWhere((mediaId, _) => !activeIds.contains(mediaId));
+    _downloading.removeWhere((mediaId) => !activeIds.contains(mediaId));
+    _seedOriginalPaths();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      final targetIndex = widget.post.media.indexWhere(
+        (item) => item.id == widget.currentMediaId,
+      );
+      if (targetIndex >= 0 && _pageController.hasClients) {
+        final currentPage = _pageController.page?.round();
+        if (currentPage != targetIndex) _pageController.jumpToPage(targetIndex);
+      }
+      unawaited(_ensureMedia(widget.currentMediaId));
+    });
+  }
+
+  void _seedOriginalPaths() {
+    for (final media in widget.post.media) {
+      final localPath = media.localOriginalPath;
+      if (localPath != null && File(localPath).existsSync()) {
+        _originalPaths[media.id] = localPath;
+      }
+    }
+  }
+
+  Future<void> _ensureMedia(String mediaId) async {
+    PostMedia? media;
+    for (final candidate in widget.post.media) {
+      if (candidate.id == mediaId) {
+        media = candidate;
+        break;
+      }
+    }
+    if (media == null) return;
+    if (!mounted ||
+        _originalPaths.containsKey(mediaId) ||
+        !_downloading.add(mediaId)) {
+      return;
+    }
+    setState(() => _errors.remove(mediaId));
+    try {
+      final file = await ref.read(appControllerProvider).ensureOriginal(media);
+      if (!mounted) return;
+      final stillActive = widget.post.media.any((item) => item.id == mediaId);
+      if (stillActive) setState(() => _originalPaths[mediaId] = file.path);
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _errors[mediaId] = error.toString());
+    } finally {
+      if (mounted) setState(() => _downloading.remove(mediaId));
+    }
+  }
+
+  @override
+  void dispose() {
+    _pageController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final currentIndex = widget.post.media.indexWhere(
+      (item) => item.id == widget.currentMediaId,
+    );
+    return ColoredBox(
+      color: const Color(0xFF111111),
+      child: Stack(
+        children: [
+          PageView.builder(
+            controller: _pageController,
+            itemCount: widget.post.media.length,
+            onPageChanged: (index) {
+              final mediaId = widget.post.media[index].id;
+              widget.onMediaChanged(mediaId, index);
+              unawaited(_ensureMedia(mediaId));
+            },
+            itemBuilder: (context, index) {
+              final media = widget.post.media[index];
+              return _buildMedia(media, media.id == widget.currentMediaId);
+            },
+          ),
+          if (widget.post.media.length > 1)
+            Positioned(
+              right: 12,
+              top: 12,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  color: const Color(0x99000000),
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  child: Text(
+                    '${(currentIndex < 0 ? 0 : currentIndex) + 1}/${widget.post.media.length}',
+                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                  ),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMedia(PostMedia media, bool isCurrent) {
+    final originalPath = _originalPaths[media.id];
+    if (originalPath != null) {
+      final file = File(originalPath);
+      if (media.mediaType == PostMediaType.video) {
+        return _LocalVideo(
+          key: ValueKey(media.id),
+          file: file,
+          thumbnailPath: media.localThumbnailPath,
+          width: media.width,
+          height: media.height,
+          isCurrent: isCurrent,
+          onLongPress: () => widget.onLongPress(media),
+        );
+      }
+      return GestureDetector(
+        key: ValueKey('media-${media.id}'),
+        behavior: HitTestBehavior.opaque,
+        onLongPress: () => widget.onLongPress(media),
+        child: Stack(
+          fit: StackFit.expand,
+          children: [
+            _MediaPlaceholder(thumbnailPath: media.localThumbnailPath),
+            Image.file(
+              file,
+              fit: BoxFit.contain,
+              gaplessPlayback: true,
+              errorBuilder: (_, _, _) => const SizedBox.shrink(),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return GestureDetector(
+      key: ValueKey('media-${media.id}'),
+      behavior: HitTestBehavior.opaque,
+      onLongPress: () => widget.onLongPress(media),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          _MediaPlaceholder(thumbnailPath: media.localThumbnailPath),
+          if (isCurrent && _downloading.contains(media.id))
+            const Center(child: CircularProgressIndicator(color: Colors.white)),
+          if (isCurrent && _errors.containsKey(media.id))
+            Center(
+              child: IconButton.filled(
+                tooltip: '重新下载',
+                onPressed: () => _ensureMedia(media.id),
+                icon: const Icon(Icons.refresh),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+}
+
+class _MediaPlaceholder extends StatelessWidget {
+  const _MediaPlaceholder({this.thumbnailPath});
+
+  final String? thumbnailPath;
+
+  @override
+  Widget build(BuildContext context) {
+    final file = thumbnailPath == null ? null : File(thumbnailPath!);
+    if (file == null || !file.existsSync()) {
+      return const Center(
+        child: Icon(Icons.image_outlined, color: Colors.white54, size: 42),
+      );
+    }
+    return Image.file(file, fit: BoxFit.contain, gaplessPlayback: true);
+  }
+}
+
+class _LocalVideo extends StatefulWidget {
+  const _LocalVideo({
+    required this.file,
+    required this.thumbnailPath,
+    required this.width,
+    required this.height,
+    required this.isCurrent,
+    required this.onLongPress,
+    super.key,
+  });
+
+  final File file;
+  final String? thumbnailPath;
+  final int width;
+  final int height;
+  final bool isCurrent;
+  final VoidCallback onLongPress;
+
+  @override
+  State<_LocalVideo> createState() => _LocalVideoState();
+}
+
+class _LocalVideoState extends State<_LocalVideo> {
+  late final VideoPlayerController _controller;
+  bool _initialized = false;
+  bool _failed = false;
+  bool _isPlaying = false;
+  int _playbackRevision = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = VideoPlayerController.file(
+      widget.file,
+      viewType: VideoViewType.platformView,
+    );
+    _controller.addListener(_handleControllerChanged);
+    unawaited(_initialize());
+  }
+
+  @override
+  void didUpdateWidget(_LocalVideo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isCurrent != widget.isCurrent && _initialized) {
+      _schedulePlaybackSync();
+    }
+  }
+
+  Future<void> _initialize() async {
+    try {
+      await _controller.initialize();
+      await _controller.setLooping(true);
+      if (!mounted) return;
+      setState(() => _initialized = true);
+      _schedulePlaybackSync();
+    } on Object {
+      if (mounted) setState(() => _failed = true);
+    }
+  }
+
+  void _handleControllerChanged() {
+    final isPlaying = _controller.value.isPlaying;
+    if (!mounted || _isPlaying == isPlaying) return;
+    setState(() => _isPlaying = isPlaying);
+  }
+
+  void _schedulePlaybackSync() {
+    final revision = ++_playbackRevision;
+    unawaited(_syncPlayback(revision));
+  }
+
+  Future<void> _syncPlayback(int revision) async {
+    try {
+      if (!mounted || !_initialized) return;
+      if (widget.isCurrent && !_controller.value.isPlaying) {
+        await _controller.play();
+      } else if (!widget.isCurrent && _controller.value.isPlaying) {
+        await _controller.pause();
+      }
+      if (mounted && revision != _playbackRevision) {
+        await _syncPlayback(_playbackRevision);
+      }
+    } on Object {
+      if (mounted && revision == _playbackRevision) {
+        setState(() => _failed = true);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _playbackRevision += 1;
+    _controller.removeListener(_handleControllerChanged);
+    unawaited(_controller.dispose());
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    late final Widget content;
+    if (_failed) {
+      content = const Center(
+        child: Icon(
+          Icons.broken_image_outlined,
+          color: Colors.white54,
+          size: 42,
+        ),
+      );
+    } else if (!_initialized) {
+      content = Stack(
+        fit: StackFit.expand,
+        children: [
+          _MediaPlaceholder(thumbnailPath: widget.thumbnailPath),
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
+        ],
+      );
+    } else {
+      content = Stack(
+        alignment: Alignment.center,
+        children: [
+          Center(
+            child: AspectRatio(
+              aspectRatio: widget.width / widget.height,
+              child: VideoPlayer(_controller),
+            ),
+          ),
+          if (!_isPlaying)
+            const Icon(Icons.play_circle_fill, color: Colors.white, size: 54),
+        ],
+      );
+    }
+
+    return GestureDetector(
+      key: ValueKey('video-${widget.file.path}'),
+      behavior: HitTestBehavior.opaque,
+      onTap: !_initialized || _failed
+          ? null
+          : () async {
+              if (!widget.isCurrent) return;
+              if (_isPlaying) {
+                await _controller.pause();
+              } else {
+                await _controller.play();
+              }
+            },
+      onLongPress: widget.onLongPress,
+      child: content,
+    );
+  }
+}
+
+class _MetaItem extends StatelessWidget {
+  const _MetaItem({required this.icon, required this.label});
+
+  final IconData icon;
+  final String label;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 16, color: AppTheme.muted),
+        const SizedBox(width: 5),
+        Text(
+          label,
+          style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+        ),
+      ],
+    );
+  }
+}
+
+String _formatDate(int timestampMs) {
+  final date = DateTime.fromMillisecondsSinceEpoch(timestampMs).toLocal();
+  final month = date.month.toString().padLeft(2, '0');
+  final day = date.day.toString().padLeft(2, '0');
+  return '${date.year}-$month-$day';
+}
+
+String _messageFor(Object error) {
+  if (error is PlatformException) return error.message ?? '操作失败，请重试';
+  final message = error.toString();
+  return message
+      .replaceFirst('Bad state: ', '')
+      .replaceFirst('Exception: ', '');
+}
