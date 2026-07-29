@@ -40,21 +40,63 @@ class ArchiveRuntimeState {
   const ArchiveRuntimeState({
     required this.activeJobCount,
     required this.failedJobCount,
+    this.instagramSession,
     this.r2Config,
   });
 
   final int activeJobCount;
   final int failedJobCount;
+  final InstagramSessionSummary? instagramSession;
   final R2ConfigSummary? r2Config;
 
   factory ArchiveRuntimeState.fromMap(Map<Object?, Object?> map) =>
       ArchiveRuntimeState(
         activeJobCount: map['activeJobCount']! as int,
         failedJobCount: map['failedJobCount']! as int,
+        instagramSession: map['instagramSession'] is Map<Object?, Object?>
+            ? InstagramSessionSummary.fromMap(
+                map['instagramSession']! as Map<Object?, Object?>,
+              )
+            : null,
         r2Config: map['r2Config'] is Map<Object?, Object?>
             ? R2ConfigSummary.fromMap(map['r2Config']! as Map<Object?, Object?>)
             : null,
       );
+}
+
+enum InstagramSessionStatus { ready, needsRefresh }
+
+class InstagramSessionSummary {
+  const InstagramSessionSummary({
+    required this.status,
+    required this.username,
+    required this.validatedAt,
+  });
+
+  final InstagramSessionStatus status;
+  final String username;
+  final int validatedAt;
+
+  factory InstagramSessionSummary.fromMap(Map<Object?, Object?> map) {
+    final username = map['username'];
+    final validatedAt = map['validatedAt'];
+    if (username is! String || username.trim().isEmpty) {
+      throw const FormatException('Instagram 用户名无效');
+    }
+    if (validatedAt is! num || validatedAt <= 0) {
+      throw const FormatException('Instagram Session 验证时间无效');
+    }
+    final status = switch (map['status']) {
+      'ready' => InstagramSessionStatus.ready,
+      'needs_refresh' => InstagramSessionStatus.needsRefresh,
+      _ => throw const FormatException('Instagram Session 状态无效'),
+    };
+    return InstagramSessionSummary(
+      status: status,
+      username: username.trim(),
+      validatedAt: validatedAt.toInt(),
+    );
+  }
 }
 
 class R2ConfigSummary {
@@ -148,6 +190,23 @@ class ArchiveRuntimeBridge {
 
   Future<void> retryJob(String jobId) =>
       _methodChannel.invokeMethod<void>('retryJob', {'jobId': jobId});
+
+  Future<void> beginInstagramLogin() =>
+      _methodChannel.invokeMethod<void>('beginInstagramLogin');
+
+  Future<InstagramSessionSummary> captureInstagramSession() async {
+    final value = await _methodChannel.invokeMapMethod<Object?, Object?>(
+      'captureInstagramSession',
+    );
+    if (value == null) throw StateError('Instagram 登录结果为空');
+    return InstagramSessionSummary.fromMap(value);
+  }
+
+  Future<void> cancelInstagramLogin() =>
+      _methodChannel.invokeMethod<void>('cancelInstagramLogin');
+
+  Future<void> clearInstagramSession() =>
+      _methodChannel.invokeMethod<void>('clearInstagramSession');
 
   Future<void> syncNow() => _methodChannel.invokeMethod<void>('syncNow');
 

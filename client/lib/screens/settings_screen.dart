@@ -6,6 +6,7 @@ import '../controllers/providers.dart';
 import '../controllers/update_controller.dart';
 import '../core/theme/app_theme.dart';
 import '../services/archive_runtime_bridge.dart';
+import 'instagram_login_screen.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -13,11 +14,12 @@ class SettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final controller = ref.watch(appControllerProvider);
+    final instagramSession = controller.instagramSession;
     final savedConfig = controller.r2Config;
     final hasSyncError = controller.syncStatus.lastError != null;
     final updateController = ref.watch(updateControllerProvider);
     final updateState = updateController.state;
-    final status = savedConfig == null
+    final r2Status = savedConfig == null
         ? '未配置'
         : hasSyncError
         ? '同步失败'
@@ -28,6 +30,64 @@ class SettingsScreen extends ConsumerWidget {
       body: ListView(
         padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
         children: [
+          const Padding(
+            padding: EdgeInsets.only(left: 4),
+            child: Text(
+              'Instagram',
+              style: TextStyle(color: AppTheme.muted, fontSize: 14),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Card(
+            clipBehavior: Clip.antiAlias,
+            child: ListTile(
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 16,
+                vertical: 4,
+              ),
+              leading: Icon(
+                switch (instagramSession?.status) {
+                  InstagramSessionStatus.ready => Icons.verified_user_outlined,
+                  InstagramSessionStatus.needsRefresh =>
+                    Icons.person_off_outlined,
+                  null => Icons.person_outline,
+                },
+                color: switch (instagramSession?.status) {
+                  InstagramSessionStatus.ready => const Color(0xFF217A66),
+                  InstagramSessionStatus.needsRefresh => Theme.of(
+                    context,
+                  ).colorScheme.error,
+                  null => AppTheme.muted,
+                },
+              ),
+              title: const Text('Instagram 登录'),
+              subtitle: Text(
+                switch (instagramSession?.status) {
+                  InstagramSessionStatus.ready =>
+                    '@${instagramSession!.username}',
+                  InstagramSessionStatus.needsRefresh =>
+                    '@${instagramSession!.username} · 登录已失效',
+                  null => '未登录',
+                },
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color:
+                      instagramSession?.status ==
+                          InstagramSessionStatus.needsRefresh
+                      ? Theme.of(context).colorScheme.error
+                      : AppTheme.muted,
+                ),
+              ),
+              trailing: const Icon(Icons.chevron_right),
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const InstagramSettingsScreen(),
+                ),
+              ),
+            ),
+          ),
+          const SizedBox(height: 24),
           const Padding(
             padding: EdgeInsets.only(left: 4),
             child: Text(
@@ -57,7 +117,7 @@ class SettingsScreen extends ConsumerWidget {
               ),
               title: const Text('Cloudflare R2'),
               subtitle: Text(
-                status,
+                r2Status,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(

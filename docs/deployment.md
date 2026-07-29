@@ -16,6 +16,8 @@ Android 会把旧包名与当前包名视为两个独立 App，旧包名沙盒�
 
 Chaquopy 17 要求 Android `minSdk >= 24`。正式 Release 只包含 `arm64-v8a`，本地默认同时保留 `arm64-v8a` 和 `x86_64`。可通过 `PHOTOBOOK_TARGET_ABIS` 指定逗号分隔的受支持 ABI，禁止使用 `--split-per-abi`。
 
+MinIO 9.0.3 默认依赖的 `simple-xml-safe` 需要 Android 不提供的 StAX，客户端必须改用支持 XmlPullParser fallback 的 `simple-xml` 2.7.1。正式构建还必须保留 MinIO Args、XML 响应模型、泛型签名和完整 Simple XML 反射运行时；调整 R8 规则后必须重新安装 release APK，并通过 R2 的 LIST、PUT、GET、DELETE 真机探针。
+
 ## 2. 固定 Instaloader
 
 客户端必须使用项目记录的 fork 提交：
@@ -57,6 +59,10 @@ flutter build apk --debug
 APK 构建通过不代表抓取可用。还必须在 arm64 真机验证：
 
 - 分享图片帖、多图帖和 Reel。
+- 验证未登录时匿名抓取；只有登录墙出现后才使用 Session 重试。
+- 在官方 WebView 中完成普通登录和 2FA，杀进程重启后 Session 仍可使用；重新登录、取消和清除后状态正确。
+- 登录成功或取消后，WebView Cookie、缓存和本地存储已清理；SQLite、R2、日志、通知和异常文本中没有 Cookie。
+- 已登录账号可见的私密帖子仍返回不可访问。
 - 分享后立刻回桌面、锁屏，再确认任务继续。
 - 任务完成后前台服务通知消失。
 - 断网后任务保持可恢复，网络恢复后能够重试。

@@ -4,6 +4,8 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../controllers/providers.dart';
 import '../core/theme/app_theme.dart';
 import '../models/archive_job.dart';
+import '../services/archive_runtime_bridge.dart';
+import 'instagram_login_screen.dart';
 
 class FailedScreen extends ConsumerStatefulWidget {
   const FailedScreen({super.key});
@@ -44,6 +46,14 @@ class _FailedScreenState extends ConsumerState<FailedScreen> {
         setState(() => _retrying.remove(job.id));
       }
     }
+  }
+
+  Future<void> _loginAndRetry(ArchiveJob job) async {
+    final session = await Navigator.of(context).push<InstagramSessionSummary>(
+      MaterialPageRoute(builder: (_) => const InstagramLoginScreen()),
+    );
+    if (session == null || !mounted) return;
+    await _retry(job);
   }
 
   @override
@@ -93,8 +103,16 @@ class _FailedScreenState extends ConsumerState<FailedScreen> {
               itemBuilder: (context, index) {
                 final job = captures[index];
                 final retrying = _retrying.contains(job.id);
+                final session = ref
+                    .watch(appControllerProvider)
+                    .instagramSession;
+                final needsLogin =
+                    job.errorCode == 'LOGIN_REQUIRED' &&
+                    session?.status != InstagramSessionStatus.ready;
                 return InkWell(
-                  onTap: retrying ? null : () => _retry(job),
+                  onTap: retrying
+                      ? null
+                      : () => needsLogin ? _loginAndRetry(job) : _retry(job),
                   child: Padding(
                     padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
                     child: Row(
@@ -150,9 +168,13 @@ class _FailedScreenState extends ConsumerState<FailedScreen> {
                                   ),
                                 )
                               : IconButton(
-                                  tooltip: '重新下载',
-                                  onPressed: () => _retry(job),
-                                  icon: const Icon(Icons.refresh),
+                                  tooltip: needsLogin ? '登录 Instagram' : '重新下载',
+                                  onPressed: () => needsLogin
+                                      ? _loginAndRetry(job)
+                                      : _retry(job),
+                                  icon: Icon(
+                                    needsLogin ? Icons.login : Icons.refresh,
+                                  ),
                                 ),
                         ),
                       ],

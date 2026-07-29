@@ -8,8 +8,12 @@ MethodChannel：`com.mantou.photobook/archive`
 
 | 方法 | 入参 | 返回 | 用途 |
 |---|---|---|---|
-| `getRuntimeState` | 无 | JSON map | 获取活动/失败任务数和 R2 配置摘要 |
+| `getRuntimeState` | 无 | JSON map | 获取活动/失败任务数、Instagram Session 和 R2 配置摘要 |
 | `retryJob` | `jobId` | 无 | 将失败任务重新排队并启动服务 |
+| `beginInstagramLogin` | 无 | 无 | 清理 WebView 数据并开始新的官方网页登录 |
+| `captureInstagramSession` | 无 | Session 摘要 | 从 Android WebView CookieManager 验证并加密保存登录态 |
+| `cancelInstagramLogin` | 无 | 无 | 取消登录并清理 WebView 数据，不改变已保存 Session |
+| `clearInstagramSession` | 无 | 无 | 清除加密 Session、Keystore 密钥和 WebView 数据 |
 | `saveR2Config` | 配置 map | 配置摘要 | 加密保存通过验证的 R2 配置 |
 | `clearR2Config` | 无 | 无 | 清除密钥和当前资料库绑定 |
 | `syncNow` | 无 | 无 | 启动一次前台同步 |
@@ -22,6 +26,8 @@ MethodChannel：`com.mantou.photobook/archive`
 EventChannel：`com.mantou.photobook/archive_events`
 
 事件类型为 `archiveChanged`、`runStarted` 和 `runFinished`。事件只用于驱动刷新和即时反馈，不作为权威状态；Flutter 收到事件后重新查询 SQLite。`runFinished` 可携带脱敏后的同步错误，冷启动仍从 `app_meta.last_sync_error` 恢复错误状态。
+
+`getRuntimeState.instagramSession` 只返回非敏感摘要：未配置时为 `null`，否则为 `{status: "ready" | "needs_refresh", username, validatedAt}`。Flutter 侧不存在读取 Cookie 的接口。
 
 ## 2. App 更新
 
@@ -64,36 +70,31 @@ EventChannel：`com.mantou.photobook/update_events`，发送下载字节进度�
 
 ```python
 health_check() -> str
-fetch_post(shortcode: str) -> str
+validate_session(cookie_header: str) -> str
+fetch_post(shortcode: str, session_json: str | None = None) -> str
 ```
 
-`fetch_post` 返回 UTF-8 JSON：
+`validate_session` 解析完整 Cookie header，要求 `sessionid` 和 `csrftoken`，通过 Instaloader `test_login()` 取得真实用户名并返回规范化 Session JSON。`fetch_post` 返回 UTF-8 JSON envelope：
 
 ```json
 {
-  "sourcePostId": "Abc123",
-  "sourceUrl": "https://www.instagram.com/p/Abc123/",
-  "authorUsername": "author",
-  "authorDisplayName": "Author",
-  "authorProfileUrl": "https://www.instagram.com/author/",
-  "authorAvatarUrl": "https://...",
-  "caption": "...",
-  "publishedAt": 1750000000000,
-  "locationName": null,
-  "media": [
-    {
-      "sortIndex": 0,
-      "mediaType": "image",
-      "url": "https://...",
-      "width": 1080,
-      "height": 1350,
-      "durationMs": null
-    }
-  ]
+  "post": {
+    "sourcePostId": "Abc123",
+    "sourceUrl": "https://www.instagram.com/p/Abc123/",
+    "authorUsername": "author",
+    "authorDisplayName": "Author",
+    "authorProfileUrl": "https://www.instagram.com/author/",
+    "authorAvatarUrl": "https://...",
+    "caption": "...",
+    "publishedAt": 1750000000000,
+    "locationName": null,
+    "media": []
+  },
+  "refreshedSession": null
 }
 ```
 
-Python 层不得写数据库、下载媒体、读取 R2 密钥或保存默认 Instaloader session 文件。异常由 Kotlin 映射为稳定错误码：`NETWORK_ERROR`、`POST_UNAVAILABLE`、`LOGIN_REQUIRED`、`RATE_LIMITED` 或 `INVALID_RESPONSE`。
+传入 Session 时，成功响应的 `refreshedSession` 包含 Instaloader 更新后的 Cookie，只允许 Kotlin 立即重新加密保存。调用策略固定为匿名请求优先；只有匿名调用返回 `LOGIN_REQUIRED`，Kotlin 才读取 `ready` Session 并调用第二次。Python 层不得写数据库、下载媒体、读取 R2 密钥或保存默认 Instaloader session 文件。异常由 Kotlin 映射为稳定错误码：`NETWORK_ERROR`、`POST_UNAVAILABLE`、`LOGIN_REQUIRED`、`RATE_LIMITED` 或 `INVALID_RESPONSE`。
 
 ## 4. R2 操作对象
 

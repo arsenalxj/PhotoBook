@@ -7,13 +7,38 @@ import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
 import org.json.JSONObject
 
-class PythonInstagramClient(context: Context) {
+internal class PythonInstagramClient(context: Context) : InstagramGateway {
     private val applicationContext = context.applicationContext
 
-    fun fetchPost(shortcode: String): RemotePost {
+    override fun validateSession(cookieHeader: String, validatedAt: Long): InstagramSession {
         try {
-            val raw = module().callAttr("fetch_post", shortcode).toString()
-            return RemotePost.fromJson(raw)
+            val raw = module().callAttr("validate_session", cookieHeader).toString()
+            return InstagramSession.fromPythonJson(raw, validatedAt)
+        } catch (error: PyException) {
+            throw parsePythonError(error)
+        } catch (error: ArchiveException) {
+            throw error
+        } catch (error: Exception) {
+            throw ArchiveException("INVALID_RESPONSE", "Instagram 登录验证结果无效", error)
+        }
+    }
+
+    override fun fetchPost(shortcode: String, session: InstagramSession?): InstagramFetchResult {
+        try {
+            val raw =
+                module().callAttr("fetch_post", shortcode, session?.toPythonJson() ?: "").toString()
+            val envelope = JSONObject(raw)
+            val post = RemotePost.fromJson(envelope.getJSONObject("post").toString())
+            val refreshedSession =
+                if (envelope.isNull("refreshedSession")) {
+                    null
+                } else {
+                    InstagramSession.fromPythonJson(
+                        envelope.getJSONObject("refreshedSession").toString(),
+                        session?.validatedAt ?: System.currentTimeMillis(),
+                    )
+                }
+            return InstagramFetchResult(post, refreshedSession)
         } catch (error: PyException) {
             throw parsePythonError(error)
         } catch (error: ArchiveException) {

@@ -25,6 +25,7 @@ class AppController extends ChangeNotifier {
   int activeJobCount = 0;
   int failedCount = 0;
   bool isSyncing = false;
+  InstagramSessionSummary? instagramSession;
   R2ConfigSummary? r2Config;
   SyncStatus syncStatus = const SyncStatus();
 
@@ -42,6 +43,7 @@ class AppController extends ChangeNotifier {
         final runtime = await _runtimeBridge.getRuntimeState();
         activeJobCount = runtime.activeJobCount;
         failedCount = runtime.failedJobCount;
+        instagramSession = runtime.instagramSession;
         r2Config = runtime.r2Config;
         if (activeJobCount > 0 || r2Config != null) {
           unawaited(_runtimeBridge.syncNow());
@@ -79,6 +81,31 @@ class AppController extends ChangeNotifier {
     if (!Platform.isAndroid) return;
     await _runtimeBridge.retryJob(job.id);
     await _reloadLocalState();
+  }
+
+  Future<void> beginInstagramLogin() async {
+    if (!Platform.isAndroid) throw StateError('Instagram 登录仅支持 Android');
+    await _runtimeBridge.beginInstagramLogin();
+  }
+
+  Future<InstagramSessionSummary> captureInstagramSession() async {
+    if (!Platform.isAndroid) throw StateError('Instagram 登录仅支持 Android');
+    final session = await _runtimeBridge.captureInstagramSession();
+    instagramSession = session;
+    notifyListeners();
+    return session;
+  }
+
+  Future<void> cancelInstagramLogin() async {
+    if (!Platform.isAndroid) return;
+    await _runtimeBridge.cancelInstagramLogin();
+  }
+
+  Future<void> clearInstagramSession() async {
+    if (!Platform.isAndroid) return;
+    await _runtimeBridge.clearInstagramSession();
+    instagramSession = null;
+    notifyListeners();
   }
 
   Future<File> ensureOriginal(PostMedia media) async {
@@ -122,6 +149,7 @@ class AppController extends ChangeNotifier {
   Future<void> setForeground(bool value) async {
     if (!value) return;
     await _reloadLocalState();
+    await _reloadRuntimeState();
     if (Platform.isAndroid && (activeJobCount > 0 || r2Config != null)) {
       unawaited(_runtimeBridge.syncNow());
     }
@@ -148,6 +176,20 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> _reloadRuntimeState() async {
+    if (!Platform.isAndroid) return;
+    try {
+      final runtime = await _runtimeBridge.getRuntimeState();
+      activeJobCount = runtime.activeJobCount;
+      failedCount = runtime.failedJobCount;
+      instagramSession = runtime.instagramSession;
+      r2Config = runtime.r2Config;
+      notifyListeners();
+    } on PlatformException catch (error) {
+      _publishMessage(error.message ?? '原生归档状态刷新失败');
+    }
+  }
+
   void _handleRuntimeEvent(ArchiveRuntimeEvent event) {
     switch (event.type) {
       case ArchiveRuntimeEventType.runStarted:
@@ -158,6 +200,7 @@ class AppController extends ChangeNotifier {
       case ArchiveRuntimeEventType.runFinished:
         isSyncing = false;
         unawaited(_reloadLocalState());
+        unawaited(_reloadRuntimeState());
         final error = event.error;
         if (error != null) _publishMessage(error);
     }

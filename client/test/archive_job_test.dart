@@ -7,12 +7,12 @@ void main() {
       'id': 'job-1',
       'source_post_id': 'ABC123',
       'error_code': 'LOGIN_REQUIRED',
-      'error_message': 'Instagram 要求登录，当前版本仅支持匿名访问公开帖子',
+      'error_message': null,
     });
 
     expect(job.errorCode, 'LOGIN_REQUIRED');
     expect(job.failureTitle, '需要 Instagram 登录');
-    expect(job.failureDetail, contains('当前版本仅支持匿名访问公开帖子'));
+    expect(job.failureDetail, contains('官方登录页'));
   });
 
   test('解析类错误统一显示为帖子解析失败', () {

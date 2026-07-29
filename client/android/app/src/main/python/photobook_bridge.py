@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
+from http.cookies import SimpleCookie
 from typing import Any
 
 import instaloader
@@ -23,16 +24,56 @@ def health_check() -> str:
     )
 
 
-def fetch_post(shortcode: str) -> str:
+def validate_session(cookie_header: str) -> str:
+    try:
+        cookies = _cookies_from_header(cookie_header)
+        loader = instaloader.Instaloader(max_connection_attempts=1)
+        loader.context.update_cookies(cookies)
+        username = loader.test_login()
+        if not username:
+            raise RuntimeError(
+                _error_json(
+                    "LOGIN_VALIDATION_FAILED",
+                    "Instagram 登录状态无法验证，请完成页面验证后重试",
+                )
+            )
+        loader.context.username = username
+        return json.dumps(
+            _session_payload(username, loader.save_session()),
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+    except RuntimeError:
+        raise
+    except Exception as error:
+        raise RuntimeError(
+            _error_json("LOGIN_VALIDATION_FAILED", "Instagram 登录状态验证失败")
+        ) from error
+
+
+def fetch_post(shortcode: str, session_json: str | None = None) -> str:
     normalized = str(shortcode).strip()
     if not _SHORTCODE_PATTERN.fullmatch(normalized):
         raise RuntimeError(_error_json("INVALID_URL", "Instagram 帖子编号无效"))
 
     try:
         loader = instaloader.Instaloader(max_connection_attempts=1)
+        session = _session_from_json(session_json)
+        if session is not None:
+            loader.load_session(session["username"], session["cookies"])
         post = instaloader.Post.from_shortcode(loader.context, normalized)
+        profile = post.owner_profile
+        if bool(getattr(profile, "is_private", False)):
+            raise RuntimeError(_error_json("POST_UNAVAILABLE", "当前版本只支持公开帖子"))
         return json.dumps(
-            _post_payload(post, expected_shortcode=normalized),
+            {
+                "post": _post_payload(post, expected_shortcode=normalized),
+                "refreshedSession": (
+                    _session_payload(session["username"], loader.save_session())
+                    if session is not None
+                    else None
+                ),
+            },
             ensure_ascii=False,
             separators=(",", ":"),
         )
@@ -74,6 +115,57 @@ def _post_payload(post: Any, *, expected_shortcode: str) -> dict[str, Any]:
         "publishedAt": _timestamp_ms(getattr(post, "date_utc", None)),
         "locationName": _location_name(_optional_attribute(post, "location")),
         "media": media,
+    }
+
+
+def _cookies_from_header(cookie_header: str) -> dict[str, str]:
+    header = str(cookie_header or "").strip()
+    if not header:
+        raise RuntimeError(_error_json("LOGIN_INCOMPLETE", "Instagram 登录尚未完成"))
+    parsed = SimpleCookie()
+    try:
+        parsed.load(header)
+    except Exception as error:
+        raise RuntimeError(_error_json("LOGIN_INCOMPLETE", "Instagram Cookie 格式无效")) from error
+    return _validated_cookies({name: morsel.value for name, morsel in parsed.items()})
+
+
+def _session_from_json(session_json: str | None) -> dict[str, Any] | None:
+    raw = str(session_json or "").strip()
+    if not raw:
+        return None
+    try:
+        payload = json.loads(raw)
+        username = str(payload["username"]).strip()
+        cookies = _validated_cookies(payload["cookies"])
+    except RuntimeError:
+        raise
+    except Exception as error:
+        raise RuntimeError(_error_json("LOGIN_REQUIRED", "Instagram Session 无效")) from error
+    if not username:
+        raise RuntimeError(_error_json("LOGIN_REQUIRED", "Instagram Session 无效"))
+    return {"username": username, "cookies": cookies}
+
+
+def _validated_cookies(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        raise RuntimeError(_error_json("LOGIN_INCOMPLETE", "Instagram Cookie 格式无效"))
+    cookies = {
+        str(name).strip(): str(cookie_value)
+        for name, cookie_value in value.items()
+        if str(name).strip()
+    }
+    if not cookies.get("sessionid") or not cookies.get("csrftoken"):
+        raise RuntimeError(
+            _error_json("LOGIN_INCOMPLETE", "Instagram 登录尚未完成，请继续登录")
+        )
+    return cookies
+
+
+def _session_payload(username: str, cookies: dict[str, str]) -> dict[str, Any]:
+    return {
+        "username": str(username).strip(),
+        "cookies": _validated_cookies(cookies),
     }
 
 
@@ -167,8 +259,10 @@ def _optional_text(value: Any) -> str | None:
 
 def _classify_error(error: Exception) -> tuple[str, str]:
     name = type(error).__name__
-    if name in {"LoginRequiredException", "PrivateProfileNotFollowedException"}:
-        return "LOGIN_REQUIRED", "Instagram 要求登录，当前版本仅支持匿名访问公开帖子"
+    if name == "LoginRequiredException":
+        return "LOGIN_REQUIRED", "Instagram 要求登录"
+    if name == "PrivateProfileNotFollowedException":
+        return "POST_UNAVAILABLE", "当前登录账号无权访问该帖子"
     if name in {"TooManyRequestsException"}:
         return "RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试"
     if name in {"BadResponseException", "QueryReturnedNotFoundException"}:

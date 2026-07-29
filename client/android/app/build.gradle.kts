@@ -141,10 +141,14 @@ dependencies {
     implementation("androidx.core:core-ktx:1.16.0")
     implementation("androidx.work:work-runtime-ktx:2.11.2")
     implementation("io.minio:minio:9.0.3") {
+        // The safe fork requires Java StAX, which Android doesn't provide. Use Simple XML's
+        // XmlPullParser fallback instead so S3 XML responses work on-device.
+        exclude(group = "com.carrotsearch.thirdparty", module = "simple-xml-safe")
         // These codecs are only used by MinIO Snowball uploads, which PhotoBook never calls.
         exclude(group = "org.apache.commons", module = "commons-compress")
         exclude(group = "org.xerial.snappy", module = "snappy-java")
     }
+    implementation("org.simpleframework:simple-xml:2.7.1")
     testImplementation("junit:junit:4.13.2")
     testImplementation("androidx.test:core:1.6.1")
     testImplementation("org.robolectric:robolectric:4.14.1")

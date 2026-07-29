@@ -1,12 +1,12 @@
 # PhotoBook 纯客户端架构方案
 
 > 状态：客户端实现完成，等待真机验收
-> 日期：2026-07-28
-> 范围：Android + Instagram 公开帖子，无 PhotoBook 账号和登录
+> 日期：2026-07-29
+> 范围：Android + Instagram 公开帖子，无 PhotoBook 账号，可选 Instagram 本机会话
 
 ## 1. 结论
 
-PhotoBook 采用纯客户端架构：Android 前台服务在手机内调用 Chaquopy/Instaloader，下载媒体并写入本机 SQLite 和 App 沙盒。Cloudflare R2 是用户自行配置的可选共享资料库，不是本地归档成功的前置条件。
+PhotoBook 采用纯客户端架构：Android 前台服务在手机内调用 Chaquopy/Instaloader，匿名优先下载媒体并写入本机 SQLite 和 App 沙盒。用户可以在 Instagram 官方 WebView 中建立本机会话，但只有匿名请求明确要求登录时才使用。Cloudflare R2 是用户自行配置的可选共享资料库，不是本地归档成功的前置条件。
 
 最终不需要 Cloudflare Worker、D1、Python 下载服务器、设备配对、Discord Bot 或 Mihomo。
 
@@ -30,7 +30,8 @@ flowchart LR
 首版包含：
 
 - 接收 Instagram `text/plain` 分享。
-- 匿名抓取公开图片帖、多图帖和 Reel。
+- 匿名优先抓取公开图片帖、多图帖和 Reel；登录墙出现时可使用已验证的本机会话重试一次。
+- 设置页提供 Instagram 官方 WebView 登录、登录状态、重新登录和清除会话。
 - App 退到后台或锁屏后继续下载，完成后自动停止前台服务。
 - 本地瀑布流、详情、失败重试和按需原媒体读取。
 - 可选 R2 上传、拉取、多设备去重同步和逻辑删除。
@@ -39,13 +40,13 @@ flowchart LR
 
 首版不包含：
 
-- PhotoBook 账号、登录、注册、配对或设备吊销。
-- Instagram 登录、Session 导入、私密帖子。
+- PhotoBook 账号、注册、配对或设备吊销。
+- 手动 Cookie、Instaloader session 文件、原生账号密码表单或私密帖子。
 - 评论、互动数据、视频转码、HLS 或 AI 处理。
 - Worker、D1、服务端下载器和 Mihomo 控制。
 - 物理删除 R2 共享媒体。
 
-匿名访问会受到 Instagram 登录墙、限流和接口变化影响。出现登录要求时应记录为可读失败，不能宣称可以下载私密或所有公开内容。
+匿名访问仍会受到 Instagram 登录墙、限流和接口变化影响。认证重试只处理明确的登录要求，不能绕过限流或访问控制，也不能宣称可以下载私密或所有公开内容。
 
 ## 3. 端到端流程
 
@@ -64,7 +65,10 @@ sequenceDiagram
     A->>S: startForegroundService
     S->>S: 立即发布通知
     S->>D: 领取最早任务并标记 fetching
-    S->>P: shortcode -> 帖子 JSON
+    S->>P: 匿名 shortcode -> 帖子 JSON
+    opt 匿名请求明确要求登录且本机会话可用
+        S->>P: Session 重试一次
+    end
     S->>F: 流式下载 .part、校验、原子发布
     S->>D: 帖子/媒体/completed/outbox 同事务提交
     opt 已配置 R2
@@ -80,11 +84,11 @@ sequenceDiagram
 
 | 组件 | 负责 | 不负责 |
 |---|---|---|
-| Flutter | 首页、详情、失败列表、R2 设置、检查更新、展示任务状态 | Instagram 抓取、维持后台执行 |
+| Flutter | 首页、详情、失败列表、Instagram 登录状态、R2 设置、检查更新、展示任务状态 | 读取 Cookie、Instagram 抓取、维持后台执行 |
 | MainActivity | 接收分享、规范化链接、先落任务、启动服务 | 长时间网络请求 |
 | ArchiveForegroundService | 通知、串行调度、恢复、停止条件 | UI 状态 |
 | ArchiveRunner | Python 解析、原生下载、缩略图、事务提交、一次有界同步 | 保存明文密钥 |
-| Chaquopy bridge | 调 Instaloader，把帖子映射成 JSON | 文件下载、SQLite、R2、ffmpeg |
+| Chaquopy bridge | 验证 WebView Cookie，调 Instaloader，把帖子映射成 JSON | 保存 Session 文件、文件下载、SQLite、R2、ffmpeg |
 | SQLite | 本机帖子、媒体、任务、失败和同步状态 | 二进制媒体、Secret |
 | R2 | 可选多设备操作日志和内容寻址媒体 | 用户身份、任务协调、查询数据库 |
 
@@ -180,6 +184,8 @@ Access Key 只代表访问权限，替换 Key 不产生新资料库。每个安�
 
 R2 使用 S3 API 的 `region=auto`。凭证仅存 Keystore，token 权限限制到目标 bucket 的对象读写。分页必须依据服务返回的截断标记，不能按返回数量猜测结束。
 
+Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。账号密码只提交给官方 WebView；Android `CookieManager` 取得 Cookie 后由 Chaquopy 验证，成功才替换旧会话并清理 WebView 数据。匿名成功时不解密 Session；认证失败只标记会话需要刷新，不影响已经完成的本地归档。
+
 ## 8. Android 生命周期
 
 - Manifest 声明 `FOREGROUND_SERVICE`、`FOREGROUND_SERVICE_DATA_SYNC` 和 `POST_NOTIFICATIONS`。
@@ -193,7 +199,7 @@ R2 使用 S3 API 的 `region=auto`。凭证仅存 Keystore，token 权限限制�
 
 ## 9. 验收边界
 
-源码仓库已完成纯客户端迁移，只保留 Android 客户端和现行文档。发布前仍需在 arm64 真机完成图片帖、多图帖、Reel、后台/锁屏下载、异常恢复和双设备 R2 同步验收；构建通过不能替代这些真实网络与生命周期验证。
+源码仓库已完成纯客户端迁移，只保留 Android 客户端和现行文档。发布前仍需在 arm64 真机完成图片帖、多图帖、Reel、Instagram 普通登录与 2FA、匿名优先与 Session 回退、后台/锁屏下载、异常恢复和双设备 R2 同步验收；构建通过不能替代这些真实网络与生命周期验证。
 
 ## 10. 应用内更新
 

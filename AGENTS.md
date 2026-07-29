@@ -2,7 +2,7 @@
 
 ## 项目目标
 
-PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系统分享链接，在手机内通过 Chaquopy 运行 Instaloader，并由 Android 前台服务完成解析、下载、落库和可选 Cloudflare R2 同步。项目不依赖自建服务器、Worker、D1、账号、登录或设备配对。
+PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系统分享链接，在手机内通过 Chaquopy 运行 Instaloader，并由 Android 前台服务完成解析、下载、落库和可选 Cloudflare R2 同步。项目不依赖自建服务器、Worker、D1、PhotoBook 账号或设备配对；Instagram 登录是可选的本机会话能力。
 
 ## 目录约定
 
@@ -33,9 +33,12 @@ PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系�
 
 - App 不内置 R2 或 Instagram 密钥。
 - R2 Access Key ID 和 Secret 由用户在设置中填写，通过 Android Keystore 加密后保存。
-- 日志、SQLite、通知、异常文本和同步操作中禁止出现 Secret。
+- 日志、SQLite、通知、异常文本和同步操作中禁止出现 Secret 或 Instagram Cookie。
 - R2 token 应只允许目标 bucket 的对象读写，不要求账户管理权限。
-- 当前版本只支持 Instagram 匿名访问，不读取其他 App 数据，也不提供 Instagram 账号登录或 Session 导入。
+- Instagram 请求必须匿名优先；只有匿名请求明确返回 `LOGIN_REQUIRED` 时，才允许使用已验证的本机会话重试一次。
+- Instagram 账号密码只填写在官方 WebView 页面，业务代码不得读取或保存；WebView Cookie 验证并加密保存后必须清理 WebView Cookie、缓存和本地存储。
+- Instagram Session 使用独立 Android Keystore 密钥加密，只属于本机，不得进入 Flutter 状态、SQLite、R2、备份、日志、通知、异常文本或崩溃上报。
+- App 不读取 Instagram App 或其他浏览器的数据，不提供手动 Cookie、Instaloader session 文件或账号密码导入。
 - 正式签名文件只允许保存在仓库外的 `MyKeys/PhotoBook/` 或 GitHub Actions Secrets，禁止提交、打印或写入 Release。
 - 更新 APK 必须同时通过大小、SHA-256、包名、整数版本号和当前 App 签名证书校验后才能交给系统安装器。
 
@@ -45,6 +48,8 @@ PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系�
 - `ACTION_SEND` 必须在原生 Activity 可见期间先持久化任务，再启动 `dataSync` 前台服务。
 - 前台服务必须立即显示通知；所有任务结束后移除通知并停止自身。
 - Instaloader 同步调用只能在串行后台队列运行，禁止阻塞主线程。
+- 匿名抓取成功时禁止读取或解密 Instagram Session；限流、断网、帖子不存在等非登录错误不得触发认证重试或改变 Session 状态。
+- 登录态只提高公开帖抓取成功率。即使当前账号有权查看，私密账号帖子也必须返回不可访问，不得归档或同步。
 - Chaquopy 只负责把 shortcode 解析成 JSON；媒体流式下载、哈希、缩略图和视频元数据使用 Android 原生 API。
 - 本地归档和云同步是两条独立状态机。R2 失败不得回滚已经完成的本地归档。
 - WorkManager 只作为进程或网络中断后的恢复保险，分享主流程仍直接启动前台服务。
@@ -99,5 +104,6 @@ PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系�
 - `client/`：`flutter analyze`、`flutter test`、Android debug APK 构建。
 - Python 桥：脱敏 fixture 单元测试，并验证固定 Instaloader wheel 可导入。
 - Android：覆盖先持久化后启动、后台继续、进程恢复、任务结束自动停服和通知权限。
-- 抓取：覆盖图片帖、多图帖、Reel、重复分享、失效链接、匿名访问受限和系统 VPN。
+- 抓取：覆盖图片帖、多图帖、Reel、重复分享、失效链接、匿名优先、登录墙后 Session 重试、Session 失效、私密帖拒绝和系统 VPN。
+- 登录：覆盖普通登录、2FA、取消、重新登录、WebView 数据清理、Keystore 持久化以及 Cookie 全链路脱敏。
 - 同步：覆盖无 R2、本地成功但上传失败、首次 seed、多设备独立高水位、离线设备晚上传、序号缺口、重复操作、换 Key 和换资料库。

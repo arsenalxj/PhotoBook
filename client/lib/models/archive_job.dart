@@ -35,7 +35,7 @@ class ArchiveJob {
     final detail = errorMessage?.trim();
     if (detail != null && detail.isNotEmpty) return detail;
     return switch (errorCode) {
-      'LOGIN_REQUIRED' => 'Instagram 限制了匿名访问，当前版本无法读取需要登录的帖子。',
+      'LOGIN_REQUIRED' => 'Instagram 要求登录，请在官方登录页完成验证后重试。',
       'POST_UNAVAILABLE' => '帖子不存在、已删除、已设为私密或当前不可访问。',
       'INSTAGRAM_ERROR' ||
       'INVALID_RESPONSE' ||

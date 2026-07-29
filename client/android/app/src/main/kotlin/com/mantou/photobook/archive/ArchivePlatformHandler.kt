@@ -4,6 +4,8 @@ import android.Manifest
 import android.app.Activity
 import android.content.pm.PackageManager
 import android.util.Log
+import android.webkit.CookieManager
+import android.webkit.WebStorage
 import androidx.core.app.ActivityCompat
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
@@ -18,8 +20,10 @@ class ArchivePlatformHandler(
     private val applicationContext = activity.applicationContext
     private val database = ArchiveDatabase(applicationContext)
     private val configStore = R2ConfigStore(applicationContext)
+    private val instagram = InstagramClient(applicationContext)
     private val mediaActions = ArchiveMediaActions(activity, database)
     private val permissionExecutor = Executors.newSingleThreadExecutor()
+    private val sessionExecutor = Executors.newSingleThreadExecutor()
     private var pendingLegacySave: PendingLegacySave? = null
     private val channel =
         MethodChannel(
@@ -38,6 +42,9 @@ class ArchivePlatformHandler(
             when (call.method) {
                 "getRuntimeState" -> result.success(runtimeState())
                 "retryJob" -> retryJob(call, result)
+                "beginInstagramLogin", "cancelInstagramLogin" -> clearInstagramWebData(result)
+                "captureInstagramSession" -> captureInstagramSession(result)
+                "clearInstagramSession" -> clearInstagramSession(result)
                 "saveR2Config" -> saveR2Config(call, result)
                 "clearR2Config" -> {
                     configStore.clear()
@@ -72,6 +79,7 @@ class ArchivePlatformHandler(
             pendingLegacySave = null
         }
         permissionExecutor.shutdownNow()
+        sessionExecutor.shutdownNow()
         database.close()
     }
 
@@ -100,8 +108,83 @@ class ArchivePlatformHandler(
         return mapOf(
             "activeJobCount" to database.activeJobCount(),
             "failedJobCount" to database.failedJobCount(),
+            "instagramSession" to instagram.sessionSummary(),
             "r2Config" to config?.summary(),
         )
+    }
+
+    private fun captureInstagramSession(result: MethodChannel.Result) {
+        activity.runOnUiThread {
+            try {
+                val cookieHeader =
+                    CookieManager.getInstance().getCookie(INSTAGRAM_URL).orEmpty().trim()
+                if (cookieHeader.isEmpty()) {
+                    result.error("LOGIN_INCOMPLETE", "Instagram 登录尚未完成，请继续登录", null)
+                    return@runOnUiThread
+                }
+                validateInstagramSession(cookieHeader, result)
+            } catch (error: Exception) {
+                reportError(result, error)
+            }
+        }
+    }
+
+    private fun validateInstagramSession(
+        cookieHeader: String,
+        result: MethodChannel.Result,
+    ) {
+        sessionExecutor.execute {
+            var acquired = false
+            val summary =
+                try {
+                    ArchiveExecutionGate.acquire()
+                    acquired = true
+                    instagram.validateAndSaveSession(cookieHeader).summary()
+                } catch (error: Exception) {
+                    reportError(result, error)
+                    return@execute
+                } finally {
+                    if (acquired) ArchiveExecutionGate.release()
+                }
+            clearInstagramWebData(result, summary)
+        }
+    }
+
+    private fun clearInstagramSession(result: MethodChannel.Result) {
+        var acquired = false
+        try {
+            ArchiveExecutionGate.acquire()
+            acquired = true
+            instagram.clearSession()
+        } finally {
+            if (acquired) ArchiveExecutionGate.release()
+        }
+        clearInstagramWebData(result)
+    }
+
+    private fun clearInstagramWebData(
+        result: MethodChannel.Result,
+        successValue: Any? = null,
+    ) {
+        activity.runOnUiThread {
+            try {
+                WebStorage.getInstance().deleteAllData()
+                val cookies = CookieManager.getInstance()
+                cookies.setAcceptCookie(true)
+                cookies.removeAllCookies {
+                    sessionExecutor.execute {
+                        try {
+                            cookies.flush()
+                            result.success(successValue)
+                        } catch (error: Exception) {
+                            reportError(result, error)
+                        }
+                    }
+                }
+            } catch (error: Exception) {
+                reportError(result, error)
+            }
+        }
     }
 
     private fun retryJob(call: MethodCall, result: MethodChannel.Result) {
@@ -233,9 +316,34 @@ class ArchivePlatformHandler(
         if (error is ArchiveException) {
             result.error(error.code, error.message, null)
         } else {
+            Log.e(TAG, sanitizedStackTrace(error))
             result.error("ARCHIVE_ERROR", error.message ?: "本地归档操作失败", null)
         }
     }
+
+    private fun sanitizedStackTrace(error: Throwable): String =
+        buildString {
+            append("原生归档操作失败: ")
+            generateSequence(error) { it.cause }
+                .take(8)
+                .forEachIndexed { index, cause ->
+                    if (index > 0) append("\nCaused by: ")
+                    append(cause.javaClass.name)
+                    cause.stackTrace.take(32).forEach { frame ->
+                        append("\n  at ")
+                        append(frame.className)
+                        append('.')
+                        append(frame.methodName)
+                        append('(')
+                        append(frame.fileName ?: "Unknown Source")
+                        if (frame.lineNumber >= 0) {
+                            append(':')
+                            append(frame.lineNumber)
+                        }
+                        append(')')
+                    }
+                }
+        }
 
     private data class PendingLegacySave(
         val mediaId: String,
@@ -245,6 +353,7 @@ class ArchivePlatformHandler(
     companion object {
         const val METHOD_CHANNEL = "com.mantou.photobook/archive"
         const val EVENT_CHANNEL = "com.mantou.photobook/archive_events"
+        private const val INSTAGRAM_URL = "https://www.instagram.com/"
         private const val LEGACY_STORAGE_PERMISSION_REQUEST = 102
         private const val TAG = "ArchivePlatform"
     }

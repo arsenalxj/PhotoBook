@@ -3,7 +3,7 @@ package com.mantou.photobook.archive
 import android.content.Context
 
 class ArchiveRunner(context: Context, private val database: ArchiveDatabase) {
-    private val python = PythonInstagramClient(context)
+    private val instagram = InstagramClient(context)
     private val media = MediaPipeline(context, database::isMediaShaReferenced)
     private val deviceId = DeviceIdentity(context).getOrCreate()
 
@@ -17,7 +17,7 @@ class ArchiveRunner(context: Context, private val database: ArchiveDatabase) {
             var prepared: PreparedPost? = null
             var committed = false
             try {
-                val remote = python.fetchPost(job.sourcePostId)
+                val remote = instagram.fetchPost(job.sourcePostId)
                 if (remote.sourcePostId != job.sourcePostId) {
                     throw ArchiveException("SOURCE_MISMATCH", "Instagram 返回了不同的帖子编号")
                 }
