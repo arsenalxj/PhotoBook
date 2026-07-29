@@ -82,10 +82,12 @@ token 只授予目标 bucket 的 Object Read & Write 权限，不需要账户管
 
 保存前 App 会写入、读取并删除一个随机测试对象。任何一步失败都不替换当前可用配置。
 
-## 5. 正式签名
+## 5. 应用签名
 
 - 本机签名目录为仓库外的 `MyKeys/PhotoBook/`，包含 `photobook-release.jks` 和权限为 `600` 的 `key.properties`。
-- Gradle 只通过 `PHOTOBOOK_SIGNING_PROPERTIES` 读取签名配置；release 构建缺少配置时必须失败。
+- Gradle 优先通过 `PHOTOBOOK_SIGNING_PROPERTIES` 读取签名配置，本机开发也可在被忽略的 `client/android/local.properties` 中设置 `photobook.signingProperties`；两者都只允许指向仓库外的绝对路径。
+- 有有效签名配置时，debug 和 release 使用同一正式证书，使自有测试设备可以覆盖安装并保留 App 数据；debug APK 可调试，禁止分发、上传 Release 或用于不受控设备。
+- 未配置签名时普通 debug 仍使用 Android 默认调试证书；release 构建缺少有效配置时必须失败。
 - GitHub Actions 使用 `KEYSTORE_BASE64`、`KEY_STORE_PASSWORD`、`KEY_ALIAS`、`KEY_PASSWORD`，不得输出 Secret。
 - 首个 Release 发布后不得更换证书；证书 SHA-256 指纹为 `79294e51a747e96ffca87d31fc14daf25b75c2a0b3e9c73afb4d2522be2c0574`，由 CI 强制校验。
 
@@ -100,6 +102,6 @@ token 只授予目标 bucket 的 Object Read & Write 权限，不需要账户管
 ## 7. 发布检查
 
 - APK 中不得包含 `.env`、R2 Secret、Instagram Session 或测试凭证。
-- release 使用正式签名，不得沿用 debug keystore。
+- release 和需要覆盖正式 App 的本机 debug 必须使用正式签名；默认 debug keystore 产物不得覆盖正式安装。
 - 检查 Chaquopy 和 Instaloader 许可证随包分发要求。
 - 记录 APK 体积、Python 冷启动时间和目标 Android 版本真机结果。

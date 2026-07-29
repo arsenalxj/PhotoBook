@@ -9,10 +9,21 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-val releaseSigningPropertiesFile =
+val localProperties =
+    Properties().apply {
+        val localPropertiesFile = rootProject.file("local.properties")
+        if (localPropertiesFile.isFile) {
+            localPropertiesFile.inputStream().use(::load)
+        }
+    }
+val signingPropertiesPath =
     System.getenv("PHOTOBOOK_SIGNING_PROPERTIES")
-        ?.takeIf { it.isNotBlank() }
-        ?.let { file(it) }
+        ?.trim()
+        ?.takeIf { it.isNotEmpty() }
+        ?: localProperties.getProperty("photobook.signingProperties")
+            ?.trim()
+            ?.takeIf { it.isNotEmpty() }
+val releaseSigningPropertiesFile = signingPropertiesPath?.let { file(it) }
 val releaseSigningProperties = Properties()
 val releaseBuildRequested =
     gradle.startParameter.taskNames.any { it.contains("release", ignoreCase = true) }
@@ -32,12 +43,18 @@ if (targetAbis.any { it !in supportedAbis }) {
     )
 }
 
-if (releaseSigningPropertiesFile?.isFile == true) {
-    releaseSigningPropertiesFile.inputStream().use(releaseSigningProperties::load)
-} else if (releaseBuildRequested) {
-    throw GradleException(
-        "Release 构建必须通过 PHOTOBOOK_SIGNING_PROPERTIES 指定 key.properties。",
-    )
+when {
+    releaseSigningPropertiesFile?.isFile == true -> {
+        releaseSigningPropertiesFile.inputStream().use(releaseSigningProperties::load)
+    }
+    signingPropertiesPath != null -> {
+        throw GradleException("PhotoBook 签名配置不存在：$releaseSigningPropertiesFile")
+    }
+    releaseBuildRequested -> {
+        throw GradleException(
+            "Release 构建必须通过 PHOTOBOOK_SIGNING_PROPERTIES 或 local.properties 指定 key.properties。",
+        )
+    }
 }
 
 fun releaseSigningProperty(name: String): String =
@@ -95,6 +112,9 @@ android {
     }
 
     buildTypes {
+        getByName("debug") {
+            signingConfigs.findByName("release")?.let { signingConfig = it }
+        }
         getByName("release") {
             signingConfig = signingConfigs.findByName("release")
             proguardFiles("proguard-rules.pro")

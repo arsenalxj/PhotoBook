@@ -11,6 +11,8 @@ import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMethodCodec
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CompletionException
 import java.util.concurrent.Executors
 
 class ArchivePlatformHandler(
@@ -24,6 +26,9 @@ class ArchivePlatformHandler(
     private val mediaActions = ArchiveMediaActions(activity, database)
     private val permissionExecutor = Executors.newSingleThreadExecutor()
     private val sessionExecutor = Executors.newSingleThreadExecutor()
+    private val instagramLoginAttempts = InstagramLoginAttemptCoordinator()
+    private val webDataCleanupLock = Any()
+    private var webDataCleanupTail = CompletableFuture.completedFuture(Unit)
     private var pendingLegacySave: PendingLegacySave? = null
     private val channel =
         MethodChannel(
@@ -35,6 +40,12 @@ class ArchivePlatformHandler(
 
     init {
         channel.setMethodCallHandler(this)
+        // 进程被杀时无法执行退出清理，下次创建原生通道时先清掉遗留的 WebView 数据。
+        clearInstagramWebData().whenComplete { _, error ->
+            if (error != null) {
+                Log.w(TAG, "冷启动 Instagram WebView 数据清理失败：${asException(error).javaClass.name}")
+            }
+        }
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
@@ -42,7 +53,8 @@ class ArchivePlatformHandler(
             when (call.method) {
                 "getRuntimeState" -> result.success(runtimeState())
                 "retryJob" -> retryJob(call, result)
-                "beginInstagramLogin", "cancelInstagramLogin" -> clearInstagramWebData(result)
+                "beginInstagramLogin" -> beginInstagramLogin(result)
+                "cancelInstagramLogin" -> cancelInstagramLogin(result)
                 "captureInstagramSession" -> captureInstagramSession(result)
                 "clearInstagramSession" -> clearInstagramSession(result)
                 "saveR2Config" -> saveR2Config(call, result)
@@ -74,6 +86,7 @@ class ArchivePlatformHandler(
 
     fun close() {
         channel.setMethodCallHandler(null)
+        instagramLoginAttempts.cancel()
         synchronized(this) {
             pendingLegacySave?.result?.error("ACTIVITY_CLOSED", "页面已关闭，请重新操作", null)
             pendingLegacySave = null
@@ -116,13 +129,18 @@ class ArchivePlatformHandler(
     private fun captureInstagramSession(result: MethodChannel.Result) {
         activity.runOnUiThread {
             try {
+                val attemptId = instagramLoginAttempts.currentAttempt()
+                if (attemptId == null) {
+                    reportLoginCancelled(result)
+                    return@runOnUiThread
+                }
                 val cookieHeader =
                     CookieManager.getInstance().getCookie(INSTAGRAM_URL).orEmpty().trim()
                 if (cookieHeader.isEmpty()) {
                     result.error("LOGIN_INCOMPLETE", "Instagram 登录尚未完成，请继续登录", null)
                     return@runOnUiThread
                 }
-                validateInstagramSession(cookieHeader, result)
+                validateInstagramSession(cookieHeader, attemptId, result)
             } catch (error: Exception) {
                 reportError(result, error)
             }
@@ -131,26 +149,95 @@ class ArchivePlatformHandler(
 
     private fun validateInstagramSession(
         cookieHeader: String,
+        attemptId: Long,
         result: MethodChannel.Result,
     ) {
         sessionExecutor.execute {
             var acquired = false
-            val summary =
+            val validated =
                 try {
                     ArchiveExecutionGate.acquire()
                     acquired = true
-                    instagram.validateAndSaveSession(cookieHeader).summary()
+                    instagram.validateSession(cookieHeader)
                 } catch (error: Exception) {
-                    reportError(result, error)
+                    if (instagramLoginAttempts.isActive(attemptId)) {
+                        reportError(result, error)
+                    } else {
+                        reportLoginCancelled(result)
+                    }
                     return@execute
                 } finally {
                     if (acquired) ArchiveExecutionGate.release()
                 }
-            clearInstagramWebData(result, summary)
+            if (!instagramLoginAttempts.isActive(attemptId)) {
+                reportLoginCancelled(result)
+                return@execute
+            }
+            clearInstagramWebData().whenComplete { _, cleanupError ->
+                if (cleanupError != null) {
+                    instagramLoginAttempts.cancelIfActive(attemptId)
+                    reportError(result, asException(cleanupError))
+                    return@whenComplete
+                }
+                try {
+                    sessionExecutor.execute {
+                        saveValidatedInstagramSession(validated, attemptId, result)
+                    }
+                } catch (error: Exception) {
+                    instagramLoginAttempts.cancelIfActive(attemptId)
+                    reportError(result, error)
+                }
+            }
         }
     }
 
+    private fun saveValidatedInstagramSession(
+        session: InstagramSession,
+        attemptId: Long,
+        result: MethodChannel.Result,
+    ) {
+        var acquired = false
+        try {
+            ArchiveExecutionGate.acquire()
+            acquired = true
+            val committed =
+                instagramLoginAttempts.commitIfActive(attemptId) {
+                    instagram.saveSession(session)
+                }
+            if (!committed) {
+                reportLoginCancelled(result)
+                return
+            }
+            result.success(session.summary())
+        } catch (error: Exception) {
+            instagramLoginAttempts.cancelIfActive(attemptId)
+            reportError(result, error)
+        } finally {
+            if (acquired) ArchiveExecutionGate.release()
+        }
+    }
+
+    private fun beginInstagramLogin(result: MethodChannel.Result) {
+        val attemptId = instagramLoginAttempts.begin()
+        clearInstagramWebData().whenComplete { _, error ->
+            if (error != null) {
+                instagramLoginAttempts.cancelIfActive(attemptId)
+                reportError(result, asException(error))
+            } else if (instagramLoginAttempts.isActive(attemptId)) {
+                result.success(null)
+            } else {
+                reportLoginCancelled(result)
+            }
+        }
+    }
+
+    private fun cancelInstagramLogin(result: MethodChannel.Result) {
+        instagramLoginAttempts.cancel()
+        completeInstagramWebDataCleanup(result)
+    }
+
     private fun clearInstagramSession(result: MethodChannel.Result) {
+        instagramLoginAttempts.cancel()
         var acquired = false
         try {
             ArchiveExecutionGate.acquire()
@@ -159,32 +246,63 @@ class ArchivePlatformHandler(
         } finally {
             if (acquired) ArchiveExecutionGate.release()
         }
-        clearInstagramWebData(result)
+        completeInstagramWebDataCleanup(result)
     }
 
-    private fun clearInstagramWebData(
+    private fun completeInstagramWebDataCleanup(
         result: MethodChannel.Result,
         successValue: Any? = null,
     ) {
-        activity.runOnUiThread {
-            try {
-                WebStorage.getInstance().deleteAllData()
-                val cookies = CookieManager.getInstance()
-                cookies.setAcceptCookie(true)
-                cookies.removeAllCookies {
-                    sessionExecutor.execute {
-                        try {
-                            cookies.flush()
-                            result.success(successValue)
-                        } catch (error: Exception) {
-                            reportError(result, error)
-                        }
-                    }
-                }
-            } catch (error: Exception) {
-                reportError(result, error)
+        clearInstagramWebData().whenComplete { _, error ->
+            if (error == null) {
+                result.success(successValue)
+            } else {
+                reportError(result, asException(error))
             }
         }
+    }
+
+    private fun clearInstagramWebData(): CompletableFuture<Unit> =
+        synchronized(webDataCleanupLock) {
+            // 旧验证和新登录可能交错，串行清理可避免旧任务擦掉新页面刚写入的 Cookie。
+            val cleanup =
+                webDataCleanupTail
+                    .handle { _, _ -> Unit }
+                    .thenCompose { clearInstagramWebDataOnce() }
+            webDataCleanupTail = cleanup
+            cleanup
+        }
+
+    private fun clearInstagramWebDataOnce(): CompletableFuture<Unit> {
+        val completion = CompletableFuture<Unit>()
+        try {
+            activity.runOnUiThread {
+                try {
+                    WebStorage.getInstance().deleteAllData()
+                    val cookies = CookieManager.getInstance()
+                    cookies.setAcceptCookie(true)
+                    cookies.removeAllCookies {
+                        try {
+                            sessionExecutor.execute {
+                                try {
+                                    cookies.flush()
+                                    completion.complete(Unit)
+                                } catch (error: Exception) {
+                                    completion.completeExceptionally(error)
+                                }
+                            }
+                        } catch (error: Exception) {
+                            completion.completeExceptionally(error)
+                        }
+                    }
+                } catch (error: Exception) {
+                    completion.completeExceptionally(error)
+                }
+            }
+        } catch (error: Exception) {
+            completion.completeExceptionally(error)
+        }
+        return completion
     }
 
     private fun retryJob(call: MethodCall, result: MethodChannel.Result) {
@@ -319,6 +437,18 @@ class ArchivePlatformHandler(
             Log.e(TAG, sanitizedStackTrace(error))
             result.error("ARCHIVE_ERROR", error.message ?: "本地归档操作失败", null)
         }
+    }
+
+    private fun reportLoginCancelled(result: MethodChannel.Result) {
+        result.error("LOGIN_CANCELLED", "Instagram 登录已取消，请重新打开登录页", null)
+    }
+
+    private fun asException(error: Throwable): Exception {
+        var current = error
+        while (current is CompletionException && current.cause != null) {
+            current = current.cause!!
+        }
+        return current as? Exception ?: RuntimeException("Instagram WebView 数据清理失败", current)
     }
 
     private fun sanitizedStackTrace(error: Throwable): String =

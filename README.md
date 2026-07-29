@@ -28,7 +28,15 @@ flutter test
 flutter build apk --debug
 ```
 
-Release APK 使用仓库外的 PhotoBook 专用正式证书签名：
+本机 debug 需要覆盖正式 App 并保留数据时，在不会提交的 `client/android/local.properties` 中配置一次：
+
+```properties
+photobook.signingProperties=/absolute/path/to/key.properties
+```
+
+配置存在时，debug 和 release 使用同一份仓库外 PhotoBook 正式证书；debug APK 可调试，只能安装到自己的测试设备，禁止分发。未配置的普通 debug 构建仍使用 Android 默认调试证书。
+
+Release APK 也可通过环境变量显式指定正式证书，环境变量优先于本机配置：
 
 ```bash
 cd client
@@ -36,7 +44,7 @@ PHOTOBOOK_SIGNING_PROPERTIES=/absolute/path/to/key.properties \
   flutter build apk --release
 ```
 
-`PHOTOBOOK_SIGNING_PROPERTIES` 必须指向本机 `key.properties` 的绝对路径。签名配置和 Keystore 禁止复制或提交到 PhotoBook 仓库。
+签名路径必须指向 `key.properties` 的绝对路径。签名配置和 Keystore 禁止复制或提交到 PhotoBook 仓库；release 构建没有有效配置时必须失败。
 
 正式版本通过 `v<versionName>+<versionCode>` 标签发布到 GitHub Release。App 直接读取公开的 `photobook-update.json` 检查更新，用户确认后才下载并交给 Android 系统安装器。
 

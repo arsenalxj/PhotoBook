@@ -40,6 +40,7 @@ PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系�
 - Instagram Session 使用独立 Android Keystore 密钥加密，只属于本机，不得进入 Flutter 状态、SQLite、R2、备份、日志、通知、异常文本或崩溃上报。
 - App 不读取 Instagram App 或其他浏览器的数据，不提供手动 Cookie、Instaloader session 文件或账号密码导入。
 - 正式签名文件只允许保存在仓库外的 `MyKeys/PhotoBook/` 或 GitHub Actions Secrets，禁止提交、打印或写入 Release。
+- 本机 debug 为覆盖安装并复用正式 App 数据，可通过被忽略的 `client/android/local.properties` 使用正式证书；debug APK 只允许用于自有测试设备，禁止分发或上传 Release。
 - 更新 APK 必须同时通过大小、SHA-256、包名、整数版本号和当前 App 签名证书校验后才能交给系统安装器。
 
 ## Android 运行约定

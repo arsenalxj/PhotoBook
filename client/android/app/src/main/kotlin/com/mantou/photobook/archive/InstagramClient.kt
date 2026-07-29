@@ -26,11 +26,10 @@ internal class InstagramClient internal constructor(
 
     fun sessionSummary(): Map<String, Any>? = sessions.read()?.summary()
 
-    fun validateAndSaveSession(cookieHeader: String): InstagramSession {
-        val validated = gateway.validateSession(cookieHeader, clock())
-        sessions.save(validated)
-        return validated
-    }
+    fun validateSession(cookieHeader: String): InstagramSession =
+        gateway.validateSession(cookieHeader, clock())
+
+    fun saveSession(session: InstagramSession) = sessions.save(session)
 
     fun clearSession() = sessions.clear()
 

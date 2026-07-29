@@ -28,7 +28,10 @@ void main() {
       'r2Config': null,
     });
 
-    expect(runtime.instagramSession?.status, InstagramSessionStatus.needsRefresh);
+    expect(
+      runtime.instagramSession?.status,
+      InstagramSessionStatus.needsRefresh,
+    );
     expect(runtime.instagramSession?.username, 'archive_user');
     expect(runtime.instagramSession?.validatedAt, 1750000000000);
   });

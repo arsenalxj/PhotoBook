@@ -7,6 +7,7 @@ from http.cookies import SimpleCookie
 from typing import Any
 
 import instaloader
+from instaloader import exceptions as instaloader_exceptions
 
 
 _SHORTCODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -56,6 +57,7 @@ def fetch_post(shortcode: str, session_json: str | None = None) -> str:
     if not _SHORTCODE_PATTERN.fullmatch(normalized):
         raise RuntimeError(_error_json("INVALID_URL", "Instagram 帖子编号无效"))
 
+    session = None
     try:
         loader = instaloader.Instaloader(max_connection_attempts=1)
         session = _session_from_json(session_json)
@@ -80,7 +82,7 @@ def fetch_post(shortcode: str, session_json: str | None = None) -> str:
     except RuntimeError:
         raise
     except Exception as error:
-        code, message = _classify_error(error)
+        code, message = _classify_error(error, authenticated=session is not None)
         raise RuntimeError(_error_json(code, message)) from error
 
 
@@ -257,19 +259,81 @@ def _optional_text(value: Any) -> str | None:
     return normalized or None
 
 
-def _classify_error(error: Exception) -> tuple[str, str]:
-    name = type(error).__name__
-    if name == "LoginRequiredException":
+def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]:
+    chain = _exception_chain(error)
+    message = "\n".join(str(item).lower() for item in chain)
+
+    if any(
+        isinstance(item, instaloader_exceptions.LoginRequiredException)
+        for item in chain
+    ):
         return "LOGIN_REQUIRED", "Instagram 要求登录"
-    if name == "PrivateProfileNotFollowedException":
-        return "POST_UNAVAILABLE", "当前登录账号无权访问该帖子"
-    if name in {"TooManyRequestsException"}:
+    if any(
+        isinstance(item, instaloader_exceptions.TooManyRequestsException)
+        for item in chain
+    ) or "feedback_required" in message:
         return "RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试"
-    if name in {"BadResponseException", "QueryReturnedNotFoundException"}:
+    if authenticated and any(
+        isinstance(item, instaloader_exceptions.AbortDownloadException)
+        for item in chain
+    ) and any(
+        marker in message
+        for marker in (
+            "redirected to login page",
+            "accounts/login",
+            "logged out",
+            "login_required",
+            "checkpoint_required",
+            "challenge_required",
+        )
+    ):
+        return "LOGIN_REQUIRED", "Instagram 登录已失效，请重新登录"
+    if any(
+        isinstance(item, instaloader_exceptions.PrivateProfileNotFollowedException)
+        for item in chain
+    ):
+        return "POST_UNAVAILABLE", "当前登录账号无权访问该帖子"
+    if any(
+        isinstance(
+            item,
+            (
+                instaloader_exceptions.BadResponseException,
+                instaloader_exceptions.QueryReturnedNotFoundException,
+            ),
+        )
+        for item in chain
+    ):
         return "POST_UNAVAILABLE", "帖子不存在、已失效或当前不可访问"
-    if name in {"ConnectionException", "QueryReturnedBadRequestException"}:
+    if any(
+        isinstance(
+            item,
+            (
+                instaloader_exceptions.ConnectionException,
+                instaloader_exceptions.QueryReturnedBadRequestException,
+            ),
+        )
+        for item in chain
+    ):
         return "NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN"
     return "INSTAGRAM_ERROR", "Instagram 帖子解析失败"
+
+
+def _exception_chain(error: BaseException) -> list[BaseException]:
+    pending = [error]
+    seen: set[int] = set()
+    chain: list[BaseException] = []
+    while pending:
+        current = pending.pop()
+        identity = id(current)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        chain.append(current)
+        if current.__context__ is not None:
+            pending.append(current.__context__)
+        if current.__cause__ is not None:
+            pending.append(current.__cause__)
+    return chain
 
 
 def _error_json(code: str, message: str) -> str:

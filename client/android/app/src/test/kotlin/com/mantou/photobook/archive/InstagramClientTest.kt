@@ -117,6 +117,37 @@ class InstagramClientTest {
     }
 
     @Test
+    fun `validation does not overwrite session before explicit save`() {
+        val oldSession = session(sessionId = "old-session")
+        val validatedSession = session(sessionId = "validated-session")
+        val sessions = FakeSessions(oldSession)
+        val gateway =
+            object : InstagramGateway {
+                override fun validateSession(
+                    cookieHeader: String,
+                    validatedAt: Long,
+                ): InstagramSession = validatedSession
+
+                override fun fetchPost(
+                    shortcode: String,
+                    session: InstagramSession?,
+                ): InstagramFetchResult = throw UnsupportedOperationException()
+            }
+        val client = InstagramClient(gateway, sessions)
+
+        val validated = client.validateSession("sessionid=secret; csrftoken=csrf")
+
+        assertTrue(validated === validatedSession)
+        assertTrue(sessions.current === oldSession)
+        assertTrue(sessions.saved.isEmpty())
+
+        client.saveSession(validated)
+
+        assertTrue(sessions.current === validatedSession)
+        assertEquals(1, sessions.saved.size)
+    }
+
+    @Test
     fun `session string representation redacts cookies`() {
         val value = session(sessionId = "must-not-appear")
 

@@ -7,6 +7,14 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import photobook_bridge
+from instaloader.exceptions import (
+    AbortDownloadException,
+    ConnectionException,
+    LoginRequiredException,
+    PrivateProfileNotFollowedException,
+    QueryReturnedNotFoundException,
+    TooManyRequestsException,
+)
 
 
 class _PostWithoutLocation(SimpleNamespace):
@@ -231,6 +239,93 @@ class SessionBridgeTest(unittest.TestCase):
 
         error = json.loads(str(caught.exception))
         self.assertEqual(error["code"], "POST_UNAVAILABLE")
+
+    def test_classifies_real_login_network_and_access_errors(self) -> None:
+        cases = (
+            (LoginRequiredException("login required"), False, "LOGIN_REQUIRED"),
+            (
+                PrivateProfileNotFollowedException("private profile"),
+                True,
+                "POST_UNAVAILABLE",
+            ),
+            (TooManyRequestsException("429 Too Many Requests"), False, "RATE_LIMITED"),
+            (QueryReturnedNotFoundException("404 Not Found"), False, "POST_UNAVAILABLE"),
+            (ConnectionException("connection failed"), False, "NETWORK_ERROR"),
+            (ValueError("unexpected"), False, "INSTAGRAM_ERROR"),
+        )
+
+        for error, authenticated, expected_code in cases:
+            with self.subTest(exception_name=type(error).__name__):
+                code, message = photobook_bridge._classify_error(
+                    error,
+                    authenticated=authenticated,
+                )
+
+                self.assertEqual(code, expected_code)
+                self.assertTrue(message)
+
+    def test_classifies_wrapped_rate_limit_from_pinned_fork(self) -> None:
+        rate_limit = TooManyRequestsException("429 Too Many Requests")
+        wrapped = ConnectionException("JSON Query failed")
+        wrapped.__cause__ = rate_limit
+
+        code, _ = photobook_bridge._classify_error(wrapped, authenticated=False)
+
+        self.assertEqual(code, "RATE_LIMITED")
+
+    def test_classifies_authenticated_abort_as_expired_login(self) -> None:
+        login_redirect = AbortDownloadException(
+            "Redirected to login page. You've been logged out, please wait some time"
+        )
+        challenge = AbortDownloadException("400 Bad Request - challenge_required")
+
+        for error in (login_redirect, challenge):
+            with self.subTest(message=str(error)):
+                authenticated_code, _ = photobook_bridge._classify_error(
+                    error,
+                    authenticated=True,
+                )
+                anonymous_code, _ = photobook_bridge._classify_error(
+                    error,
+                    authenticated=False,
+                )
+
+                self.assertEqual(authenticated_code, "LOGIN_REQUIRED")
+                self.assertEqual(anonymous_code, "INSTAGRAM_ERROR")
+
+    def test_classifies_feedback_required_as_rate_limit(self) -> None:
+        error = AbortDownloadException("400 Bad Request - feedback_required")
+
+        code, _ = photobook_bridge._classify_error(error, authenticated=True)
+
+        self.assertEqual(code, "RATE_LIMITED")
+
+    def test_authenticated_fetch_maps_logged_out_abort_to_login_required(self) -> None:
+        loader = _FakeLoader()
+        session = json.dumps(
+            {
+                "username": "archive_user",
+                "cookies": {
+                    "sessionid": "session-value",
+                    "csrftoken": "csrf-value",
+                },
+            }
+        )
+        with (
+            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(
+                photobook_bridge.instaloader.Post,
+                "from_shortcode",
+                side_effect=AbortDownloadException(
+                    "Redirected to login page. You've been logged out"
+                ),
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post("PublicPost", session)
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "LOGIN_REQUIRED")
 
 
 def _post(*, is_private: bool) -> SimpleNamespace:

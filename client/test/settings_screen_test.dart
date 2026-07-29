@@ -49,4 +49,23 @@ void main() {
     expect(find.text('@archive_user · 登录已失效'), findsOneWidget);
     expect(find.byIcon(Icons.person_off_outlined), findsOneWidget);
   });
+
+  testWidgets('设置首页展示可用的 Instagram 登录摘要', (tester) async {
+    final controller = AppController()
+      ..phase = AppPhase.ready
+      ..instagramSession = const InstagramSessionSummary(
+        status: InstagramSessionStatus.ready,
+        username: 'archive_user',
+        validatedAt: 1750000000000,
+      );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(theme: AppTheme.light, home: const SettingsScreen()),
+      ),
+    );
+
+    expect(find.text('@archive_user'), findsOneWidget);
+    expect(find.byIcon(Icons.verified_user_outlined), findsOneWidget);
+  });
 }
