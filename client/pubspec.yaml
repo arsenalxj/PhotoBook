@@ -1,7 +1,7 @@
 name: photobook
 description: "PhotoBook 个人 Instagram 帖子归档客户端。"
 publish_to: 'none'
-version: 1.2.0+3
+version: 1.2.1+4
 
 environment:
   sdk: ^3.11.0
