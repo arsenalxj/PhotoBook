@@ -12,18 +12,25 @@ import '../services/archive_runtime_bridge.dart';
 enum AppPhase { initializing, ready }
 
 class AppController extends ChangeNotifier {
-  AppController({AppDatabase? database, ArchiveRuntimeBridge? runtimeBridge})
-    : _database = database ?? AppDatabase(),
-      _runtimeBridge = runtimeBridge ?? ArchiveRuntimeBridge();
+  AppController({
+    AppDatabase? database,
+    ArchiveRuntimeBridge? runtimeBridge,
+    bool? isAndroid,
+  }) : _database = database ?? AppDatabase(),
+       _runtimeBridge = runtimeBridge ?? ArchiveRuntimeBridge(),
+       _isAndroid = isAndroid ?? Platform.isAndroid;
 
   final AppDatabase _database;
   final ArchiveRuntimeBridge _runtimeBridge;
+  final bool _isAndroid;
   StreamSubscription<ArchiveRuntimeEvent>? _runtimeSubscription;
+  Future<void>? _localReloadFuture;
+  int _localReloadRevision = 0;
+  bool _fullReloadRequested = false;
 
   AppPhase phase = AppPhase.initializing;
   List<ArchivedPost> posts = const [];
-  int activeJobCount = 0;
-  int failedCount = 0;
+  List<ArchiveJob> tasks = const [];
   bool isSyncing = false;
   InstagramSessionSummary? instagramSession;
   R2ConfigSummary? r2Config;
@@ -32,17 +39,22 @@ class AppController extends ChangeNotifier {
   String? message;
   int messageRevision = 0;
 
+  int get activeJobCount => tasks.where((job) => job.isActive).length;
+  int get failedCount =>
+      tasks.where((job) => job.status == ArchiveJobStatus.failed).length;
+  int get taskCount => tasks.length;
+  bool get hasRealFailures => tasks.any((job) => job.isFailure);
   int get savingCount => activeJobCount;
 
   Future<void> initialize() async {
     await _database.initialize();
-    await _reloadLocalState();
-    if (Platform.isAndroid) {
+    if (_isAndroid) {
       _runtimeSubscription = _runtimeBridge.events.listen(_handleRuntimeEvent);
+    }
+    await _reloadLocalState();
+    if (_isAndroid) {
       try {
         final runtime = await _runtimeBridge.getRuntimeState();
-        activeJobCount = runtime.activeJobCount;
-        failedCount = runtime.failedJobCount;
         instagramSession = runtime.instagramSession;
         r2Config = runtime.r2Config;
         if (activeJobCount > 0 || r2Config != null) {
@@ -58,8 +70,7 @@ class AppController extends ChangeNotifier {
 
   Future<void> synchronize({bool showErrors = true}) async {
     if (isSyncing) return;
-    final shouldStart =
-        Platform.isAndroid && (activeJobCount > 0 || r2Config != null);
+    final shouldStart = _isAndroid && (activeJobCount > 0 || r2Config != null);
     if (shouldStart) {
       isSyncing = true;
       notifyListeners();
@@ -75,21 +86,33 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  Future<List<ArchiveJob>> loadAllFailures() => _database.listFailedJobs();
+  Future<void> refreshTasks() => _reloadTaskState();
 
   Future<void> retryJob(ArchiveJob job) async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     await _runtimeBridge.retryJob(job.id);
-    await _reloadLocalState();
+    await _reloadTaskState();
+  }
+
+  Future<void> cancelJob(ArchiveJob job) async {
+    if (!_isAndroid) return;
+    await _runtimeBridge.cancelJob(job.id);
+    await _reloadTaskState();
+  }
+
+  Future<void> deleteJob(ArchiveJob job) async {
+    if (!_isAndroid) return;
+    await _runtimeBridge.deleteJob(job.id);
+    await _reloadTaskState();
   }
 
   Future<void> beginInstagramLogin() async {
-    if (!Platform.isAndroid) throw StateError('Instagram 登录仅支持 Android');
+    if (!_isAndroid) throw StateError('Instagram 登录仅支持 Android');
     await _runtimeBridge.beginInstagramLogin();
   }
 
   Future<InstagramSessionSummary> captureInstagramSession() async {
-    if (!Platform.isAndroid) throw StateError('Instagram 登录仅支持 Android');
+    if (!_isAndroid) throw StateError('Instagram 登录仅支持 Android');
     final session = await _runtimeBridge.captureInstagramSession();
     instagramSession = session;
     notifyListeners();
@@ -97,12 +120,12 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> cancelInstagramLogin() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     await _runtimeBridge.cancelInstagramLogin();
   }
 
   Future<void> clearInstagramSession() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     await _runtimeBridge.clearInstagramSession();
     instagramSession = null;
     notifyListeners();
@@ -114,33 +137,33 @@ class AppController extends ChangeNotifier {
       final existing = File(existingPath);
       if (await existing.exists()) return existing;
     }
-    if (!Platform.isAndroid) throw StateError('原媒体恢复仅支持 Android');
+    if (!_isAndroid) throw StateError('原媒体恢复仅支持 Android');
     final localPath = await _runtimeBridge.ensureOriginal(media.id);
     await _reloadLocalState();
     return File(localPath);
   }
 
   Future<void> deletePost(String postId) async {
-    if (!Platform.isAndroid) throw StateError('帖子删除仅支持 Android');
+    if (!_isAndroid) throw StateError('帖子删除仅支持 Android');
     await _runtimeBridge.deletePost(postId);
     await _reloadLocalState();
   }
 
   Future<DeleteMediaResult> deleteMedia(String mediaId) async {
-    if (!Platform.isAndroid) throw StateError('媒体删除仅支持 Android');
+    if (!_isAndroid) throw StateError('媒体删除仅支持 Android');
     final result = await _runtimeBridge.deleteMedia(mediaId);
     await _reloadLocalState();
     return result;
   }
 
   Future<void> shareMedia(List<PostMedia> media) async {
-    if (!Platform.isAndroid) throw StateError('媒体分享仅支持 Android');
+    if (!_isAndroid) throw StateError('媒体分享仅支持 Android');
     await _runtimeBridge.shareMedia(media.map((item) => item.id).toList());
     await _reloadLocalState();
   }
 
   Future<String> saveMedia(PostMedia media) async {
-    if (!Platform.isAndroid) throw StateError('保存到系统相册仅支持 Android');
+    if (!_isAndroid) throw StateError('保存到系统相册仅支持 Android');
     final displayName = await _runtimeBridge.saveMedia(media.id);
     await _reloadLocalState();
     return displayName;
@@ -150,38 +173,64 @@ class AppController extends ChangeNotifier {
     if (!value) return;
     await _reloadLocalState();
     await _reloadRuntimeState();
-    if (Platform.isAndroid && (activeJobCount > 0 || r2Config != null)) {
+    if (_isAndroid && (activeJobCount > 0 || r2Config != null)) {
       unawaited(_runtimeBridge.syncNow());
     }
   }
 
   Future<void> saveR2Config(R2ConfigInput config) async {
-    if (!Platform.isAndroid) throw StateError('R2 同步仅支持 Android');
+    if (!_isAndroid) throw StateError('R2 同步仅支持 Android');
     r2Config = await _runtimeBridge.saveR2Config(config);
     notifyListeners();
   }
 
   Future<void> clearR2Config() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     await _runtimeBridge.clearR2Config();
     r2Config = null;
     await _reloadLocalState();
   }
 
-  Future<void> _reloadLocalState() async {
-    posts = await _database.listPosts();
-    activeJobCount = await _database.activeJobCount();
-    failedCount = await _database.failedJobCount();
-    syncStatus = await _database.readSyncStatus();
-    notifyListeners();
+  Future<void> _reloadLocalState() {
+    _fullReloadRequested = true;
+    return _requestLocalReload();
+  }
+
+  Future<void> _reloadTaskState() => _requestLocalReload();
+
+  Future<void> _requestLocalReload() {
+    _localReloadRevision += 1;
+    return _localReloadFuture ??= _drainLocalReloads();
+  }
+
+  Future<void> _drainLocalReloads() async {
+    try {
+      var handledRevision = -1;
+      while (handledRevision != _localReloadRevision) {
+        handledRevision = _localReloadRevision;
+        final reloadAll = _fullReloadRequested;
+        _fullReloadRequested = false;
+        if (reloadAll) {
+          final loadedPosts = await _database.listPosts();
+          final loadedTasks = await _database.listVisibleJobs();
+          final loadedSyncStatus = await _database.readSyncStatus();
+          posts = loadedPosts;
+          tasks = loadedTasks;
+          syncStatus = loadedSyncStatus;
+        } else {
+          tasks = await _database.listVisibleJobs();
+        }
+        notifyListeners();
+      }
+    } finally {
+      _localReloadFuture = null;
+    }
   }
 
   Future<void> _reloadRuntimeState() async {
-    if (!Platform.isAndroid) return;
+    if (!_isAndroid) return;
     try {
       final runtime = await _runtimeBridge.getRuntimeState();
-      activeJobCount = runtime.activeJobCount;
-      failedCount = runtime.failedJobCount;
       instagramSession = runtime.instagramSession;
       r2Config = runtime.r2Config;
       notifyListeners();
@@ -197,6 +246,8 @@ class AppController extends ChangeNotifier {
         notifyListeners();
       case ArchiveRuntimeEventType.archiveChanged:
         unawaited(_reloadLocalState());
+      case ArchiveRuntimeEventType.jobChanged:
+        unawaited(_reloadTaskState());
       case ArchiveRuntimeEventType.runFinished:
         isSyncing = false;
         unawaited(_reloadLocalState());

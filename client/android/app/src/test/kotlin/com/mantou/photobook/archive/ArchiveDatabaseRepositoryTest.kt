@@ -6,9 +6,11 @@ import java.io.File
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -32,6 +34,114 @@ class ArchiveDatabaseRepositoryTest {
     fun tearDown() {
         database.close()
         context.deleteDatabase(ArchiveDatabase.DATABASE_NAME)
+    }
+
+    @Test
+    fun `running cancellation waits for cleanup before retry`() {
+        val sourcePostId = "CancelRetry1"
+        val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
+        val firstAttempt = database.claimNextJob()!!
+
+        assertEquals(JobCancellationResult.RUNNING, database.cancelJob(job.id))
+        assertEquals("cancelling", jobState(job.id).first)
+        assertFalse(database.retryJob(job.id))
+        assertFalse(
+            database.updateJobProgress(
+                job.id,
+                firstAttempt.attemptCount,
+                "fetching",
+                "downloading",
+                0,
+                1,
+            ),
+        )
+        assertTrue(database.completeJobCancellation(job.id, firstAttempt.attemptCount))
+        assertEquals(Pair("failed", "CANCELLED"), jobState(job.id))
+        assertTrue(database.retryJob(job.id))
+
+        val secondAttempt = database.claimNextJob()!!
+        assertEquals(firstAttempt.attemptCount + 1, secondAttempt.attemptCount)
+        assertFalse(
+            database.recordJobError(
+                job.id,
+                firstAttempt.attemptCount,
+                ArchiveException("INTERNAL_ERROR", "旧 attempt"),
+            ),
+        )
+        assertEquals(1, database.activeJobCount())
+        assertEquals(0, database.failedJobCount())
+    }
+
+    @Test
+    fun `cancelled or deleted job rejects old attempt commit`() {
+        val sourcePostId = "CancelCommit1"
+        val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
+        val attempt = database.claimNextJob()!!
+        assertTrue(
+            database.updateJobProgress(
+                job.id,
+                attempt.attemptCount,
+                "fetching",
+                "committing",
+                1,
+                1,
+            ),
+        )
+        assertEquals(JobCancellationResult.RUNNING, database.cancelJob(job.id))
+        assertFalse(
+            database.commitCompletedJob(
+                job.id,
+                attempt.attemptCount,
+                preparedPost(sourcePostId, "不应提交", '0'),
+                LOCAL_DEVICE,
+            ),
+        )
+        assertFalse(database.deleteJob(job.id))
+        assertTrue(database.completeJobCancellation(job.id, attempt.attemptCount))
+        assertTrue(database.deleteJob(job.id))
+        assertFalse(
+            database.commitCompletedJob(
+                job.id,
+                attempt.attemptCount,
+                preparedPost(sourcePostId, "删除后也不应提交", '0'),
+                LOCAL_DEVICE,
+            ),
+        )
+        assertNull(database.originalDescriptor("instagram:$sourcePostId:0"))
+    }
+
+    @Test
+    fun `only active jobs can cancel and only failed jobs can delete`() {
+        val sourcePostId = "CancelDelete1"
+        val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
+
+        assertFalse(database.deleteJob(job.id))
+        assertEquals(JobCancellationResult.QUEUED, database.cancelJob(job.id))
+        assertNull(database.cancelJob(job.id))
+        assertEquals(1, database.failedJobCount())
+        assertTrue(database.deleteJob(job.id))
+        assertFalse(database.deleteJob(job.id))
+        assertEquals(0, database.failedJobCount())
+    }
+
+    @Test
+    fun `recovery finalizes cancellation but requeues interrupted work`() {
+        val cancellingId = "CancelRecover1"
+        val cancelling =
+            database.enqueue("https://www.instagram.com/p/$cancellingId/", cancellingId)
+        val cancellingAttempt = database.claimNextJob()!!
+        assertEquals(JobCancellationResult.RUNNING, database.cancelJob(cancelling.id))
+
+        val interruptedId = "InterruptedRecover1"
+        val interrupted =
+            database.enqueue("https://www.instagram.com/p/$interruptedId/", interruptedId)
+        assertEquals(interrupted.id, database.claimNextJob()!!.id)
+
+        assertTrue(database.recoverInterruptedJobs())
+
+        assertEquals(Pair("failed", "CANCELLED"), jobState(cancelling.id))
+        assertEquals(Pair("queued", null), jobState(interrupted.id))
+        assertFalse(database.completeJobCancellation(cancelling.id, cancellingAttempt.attemptCount))
     }
 
     @Test
@@ -480,6 +590,18 @@ class ArchiveDatabaseRepositoryTest {
                 },
         )
     }
+
+    private fun jobState(jobId: String): Pair<String, String?> =
+        database.readableDatabase.rawQuery(
+            "SELECT status, error_code FROM capture_jobs WHERE id = ?",
+            arrayOf(jobId),
+        ).use { cursor ->
+            check(cursor.moveToFirst()) { "测试任务不存在" }
+            Pair(
+                cursor.getString(0),
+                if (cursor.isNull(1)) null else cursor.getString(1),
+            )
+        }
 
     private fun deleteMediaOperation(
         deviceId: String,

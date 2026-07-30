@@ -32,15 +32,26 @@ class MediaPipeline(
     fun preparePost(
         job: CaptureJob,
         remote: RemotePost,
+        isAttemptActive: () -> Boolean,
         onProgress: (current: Int, total: Int) -> Unit,
     ): PreparedPost {
         val jobDirectory = File(jobs, job.id).apply { mkdirs() }
         val createdFiles = linkedSetOf<File>()
         return try {
-            val avatar = prepareAvatar(remote.authorAvatarUrl, jobDirectory, createdFiles)
+            ensureAttemptActive(isAttemptActive)
+            val avatar =
+                prepareAvatar(
+                    remote.authorAvatarUrl,
+                    jobDirectory,
+                    createdFiles,
+                    isAttemptActive,
+                )
             val preparedMedia =
                 remote.media.mapIndexed { index, item ->
-                    val prepared = prepareMedia(item, jobDirectory, createdFiles)
+                    ensureAttemptActive(isAttemptActive)
+                    val prepared =
+                        prepareMedia(item, jobDirectory, createdFiles, isAttemptActive)
+                    ensureAttemptActive(isAttemptActive)
                     onProgress(index + 1, remote.media.size)
                     prepared
                 }
@@ -91,30 +102,45 @@ class MediaPipeline(
         url: String?,
         jobDirectory: File,
         createdFiles: MutableSet<File>,
+        isAttemptActive: () -> Boolean,
     ): StoredFile? {
         if (url.isNullOrBlank()) return null
-        return runCatching {
-            val downloaded = download(url, File(jobDirectory, "avatar.part"), "image")
+        return try {
+            val downloaded =
+                download(
+                    url,
+                    File(jobDirectory, "avatar.part"),
+                    "image",
+                    isAttemptActive,
+                )
+            ensureAttemptActive(isAttemptActive)
             val bitmap = decodeScaledImage(downloaded.file, AVATAR_MAX_EDGE)
                 ?: throw ArchiveException("INVALID_RESPONSE", "博主头像无法解析")
             val normalized = File(jobDirectory, "avatar.jpg.part")
             writeJpeg(bitmap, normalized, 90)
             bitmap.recycle()
             storeContentAddressed(normalized, avatars, ".jpg", createdFiles = createdFiles)
-        }.getOrNull()
+        } catch (error: ArchiveAttemptStoppedException) {
+            throw error
+        } catch (_: Exception) {
+            null
+        }
     }
 
     private fun prepareMedia(
         remote: RemoteMedia,
         jobDirectory: File,
         createdFiles: MutableSet<File>,
+        isAttemptActive: () -> Boolean,
     ): PreparedMedia {
         val downloaded =
             download(
                 remote.url,
                 File(jobDirectory, "media-${remote.sortIndex}.part"),
                 remote.mediaType,
+                isAttemptActive,
             )
+        ensureAttemptActive(isAttemptActive)
         val extension = extensionForMime(downloaded.mimeType, remote.mediaType)
         val original =
             storeContentAddressed(
@@ -124,6 +150,7 @@ class MediaPipeline(
                 downloaded.sha256,
                 createdFiles,
             )
+        ensureAttemptActive(isAttemptActive)
 
         val metadata =
             if (remote.mediaType == "video") {
@@ -149,6 +176,7 @@ class MediaPipeline(
                 ".jpg",
                 createdFiles = createdFiles,
             )
+        ensureAttemptActive(isAttemptActive)
 
         return PreparedMedia(
             sortIndex = remote.sortIndex,
@@ -165,7 +193,13 @@ class MediaPipeline(
         )
     }
 
-    private fun download(url: String, target: File, mediaType: String): DownloadedFile {
+    private fun download(
+        url: String,
+        target: File,
+        mediaType: String,
+        isAttemptActive: () -> Boolean,
+    ): DownloadedFile {
+        ensureAttemptActive(isAttemptActive)
         val connection =
             (URL(url).openConnection() as HttpURLConnection).apply {
                 instanceFollowRedirects = true
@@ -193,12 +227,20 @@ class MediaPipeline(
             FileOutputStream(target, false).use { output ->
                 connection.inputStream.use { input ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                    var nextCancellationCheck =
+                        System.nanoTime() + CANCELLATION_CHECK_INTERVAL_NANOS
                     while (true) {
                         val count = input.read(buffer)
                         if (count < 0) break
                         output.write(buffer, 0, count)
                         digest.update(buffer, 0, count)
+                        val now = System.nanoTime()
+                        if (now >= nextCancellationCheck) {
+                            ensureAttemptActive(isAttemptActive)
+                            nextCancellationCheck = now + CANCELLATION_CHECK_INTERVAL_NANOS
+                        }
                     }
+                    ensureAttemptActive(isAttemptActive)
                     output.fd.sync()
                 }
             }
@@ -210,12 +252,19 @@ class MediaPipeline(
         } catch (error: ArchiveException) {
             target.delete()
             throw error
+        } catch (error: ArchiveAttemptStoppedException) {
+            target.delete()
+            throw error
         } catch (error: Exception) {
             target.delete()
             throw ArchiveException("NETWORK_ERROR", "媒体下载失败，请检查系统网络或 VPN", error)
         } finally {
             connection.disconnect()
         }
+    }
+
+    private fun ensureAttemptActive(isAttemptActive: () -> Boolean) {
+        if (!isAttemptActive()) throw ArchiveAttemptStoppedException()
     }
 
     private fun imageMetadata(file: File, remote: RemoteMedia): MediaMetadata {
@@ -402,6 +451,7 @@ class MediaPipeline(
         private const val THUMBNAIL_MAX_EDGE = 800
         private const val AVATAR_MAX_EDGE = 256
         private const val STALE_FILE_AGE_MS = 24L * 60L * 60L * 1000L
+        private const val CANCELLATION_CHECK_INTERVAL_NANOS = 250_000_000L
         private val SHA256_PATTERN = Regex("^[0-9a-f]{64}$")
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36"

@@ -2,14 +2,30 @@ import 'package:photobook/controllers/app_controller.dart';
 import 'package:photobook/controllers/providers.dart';
 import 'package:photobook/core/theme/app_theme.dart';
 import 'package:photobook/models/post.dart';
+import 'package:photobook/models/archive_job.dart';
 import 'package:photobook/screens/home_screen.dart';
+import 'package:photobook/screens/task_list_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  testWidgets('首页没有 Tab，失败列表只从右上角入口进入', (tester) async {
-    final controller = AppController()..phase = AppPhase.ready;
+  testWidgets('首页没有 Tab，任务列表从右上角入口进入并显示总数', (tester) async {
+    final controller = AppController()
+      ..phase = AppPhase.ready
+      ..tasks = const [
+        ArchiveJob(
+          id: 'active',
+          sourcePostId: 'ACTIVE',
+          status: ArchiveJobStatus.fetching,
+        ),
+        ArchiveJob(
+          id: 'failed',
+          sourcePostId: 'FAILED',
+          status: ArchiveJobStatus.failed,
+          errorCode: 'NETWORK_ERROR',
+        ),
+      ];
     await tester.pumpWidget(
       ProviderScope(
         overrides: [appControllerProvider.overrideWith((ref) => controller)],
@@ -18,9 +34,38 @@ void main() {
     );
 
     expect(find.byType(TabBar), findsNothing);
-    expect(find.byIcon(Icons.error_outline), findsOneWidget);
+    expect(find.byIcon(Icons.format_list_bulleted), findsOneWidget);
+    expect(find.text('2'), findsOneWidget);
+    expect(
+      tester.widget<Badge>(find.byType(Badge)).backgroundColor,
+      AppTheme.light.colorScheme.error,
+    );
     expect(find.byIcon(Icons.settings_outlined), findsOneWidget);
     expect(find.text('PhotoBook'), findsOneWidget);
+
+    await tester.tap(find.byTooltip('任务列表'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(TaskListScreen), findsOneWidget);
+    expect(find.text('任务列表'), findsOneWidget);
+  });
+
+  testWidgets('只有进行中任务时角标使用非错误色', (tester) async {
+    final controller = AppController()
+      ..phase = AppPhase.ready
+      ..tasks = const [
+        ArchiveJob(
+          id: 'active',
+          sourcePostId: 'ACTIVE',
+          status: ArchiveJobStatus.queued,
+        ),
+      ];
+    await _pumpHome(tester, controller);
+
+    expect(
+      tester.widget<Badge>(find.byType(Badge)).backgroundColor,
+      AppTheme.light.colorScheme.secondary,
+    );
   });
 
   testWidgets('长按时只有一张卡片显示操作，作者筛选可从标题胶囊取消', (tester) async {

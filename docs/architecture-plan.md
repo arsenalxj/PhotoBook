@@ -84,7 +84,7 @@ sequenceDiagram
 
 | 组件 | 负责 | 不负责 |
 |---|---|---|
-| Flutter | 首页、详情、失败列表、Instagram 登录状态、R2 设置、检查更新、展示任务状态 | 读取 Cookie、Instagram 抓取、维持后台执行 |
+| Flutter | 首页、详情、任务列表、Instagram 登录状态、R2 设置、检查更新、展示任务状态 | 读取 Cookie、Instagram 抓取、维持后台执行 |
 | MainActivity | 接收分享、规范化链接、先落任务、启动服务 | 长时间网络请求 |
 | ArchiveForegroundService | 通知、串行调度、恢复、停止条件 | UI 状态 |
 | ArchiveRunner | Python 解析、原生下载、缩略图、事务提交、一次有界同步 | 保存明文密钥 |
@@ -103,13 +103,18 @@ sequenceDiagram
 - `id`
 - `source_url`
 - `source_post_id`
-- `status`：`queued / fetching / downloading / committing / completed / failed`
+- `status`：`queued / fetching / downloading / committing / cancelling / completed / failed`
 - `progress_current / progress_total`
 - `attempt_count`
+- `next_attempt_at`
 - `error_code / error_message`
 - `created_at / updated_at`
 
-同一 `source_post_id` 只有一个活动任务。重复分享已完成帖子直接视为成功；失败任务可以显式重试。
+同一 `source_post_id` 只有一个任务。首页任务列表只查询 `queued / fetching / downloading / committing / cancelling / failed`，按“进行中 / 失败 / 已取消”分组，不展示已完成历史，也不混入 R2 同步或应用更新任务。`queued` 且设置了 `next_attempt_at` 时显示“等待自动重试”，下载阶段显示 `progress_current / progress_total`，`cancelling` 显示“正在取消”且不提供取消、重试或删除操作。
+
+排队任务取消时直接改为 `failed + CANCELLED`；运行 attempt 取消时先改为 `cancelling`，执行器停止后续阶段，完成文件回滚和任务临时目录清理，再以相同 `attempt_count` 收口为 `failed + CANCELLED`。进程中断后恢复时也必须把遗留 `cancelling` 收口为已取消，不能重新排队。运行 attempt 的阶段更新、错误写入和最终提交都必须同时校验 `attempt_count` 与期望状态；匿名解析前后、读取 Session 前、认证重试前后、媒体下载循环及流式读取中、提交前都检查任务仍属于当前 attempt。取消后不得继续读取 Session、发起认证请求、保存刷新后的 Session、下载或提交。Chaquopy 的 Instaloader 解析是同步调用，不能强杀正在执行的 Python 网络请求，因此单次网络请求超时固定为 30 秒；请求返回后立即响应取消。
+
+抓取恢复与 R2 同步恢复分别使用 `archive_capture_recovery` 和 `r2_sync_recovery` 两个唯一 WorkManager 计划。取消等待自动重试的排队任务后只重算抓取计划，即使已配置 R2 也不得保留无用的抓取唤醒；R2 重试计划不受影响。若另一个抓取任务正在执行，取消排队任务不得替换或取消当前执行器，执行结束后再按剩余队列重算。删除只允许删除 `failed` 任务记录，不删除已归档帖子、媒体或 R2 数据；活动任务必须先取消。
 
 ### `sync_ops`
 
@@ -194,7 +199,7 @@ Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。�
 - 恢复 Worker 占用执行权时，由用户分享启动的前台服务保持运行并等待，获得执行权后立即扫描持久任务。
 - Android 15 起后台 `dataSync` 前台服务有系统累计时长限制；超时时保存状态并停止。
 - 用户从系统“活动应用”停止 App 会直接终止进程，无法承诺自动恢复；下次用户启动 App 后继续持久任务。
-- WorkManager 在网络恢复、重启或进程重建后扫描未完成任务，但不替代分享时的直接前台服务。
+- WorkManager 在网络恢复、重启或进程重建后扫描未完成任务，但不替代分享时的直接前台服务；抓取恢复与 R2 同步恢复独立调度，并通过同一执行权串行运行。
 - 已配置 R2 时，App 冷启动和回前台都会触发一次同步；同步完成、续跑和失败状态由原生层事件驱动 Flutter 反馈。
 
 ## 9. 验收边界

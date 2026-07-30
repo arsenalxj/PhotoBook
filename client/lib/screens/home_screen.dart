@@ -8,8 +8,8 @@ import '../models/post.dart';
 import '../widgets/post_action_sheets.dart';
 import '../widgets/post_card.dart';
 import 'detail_screen.dart';
-import 'failed_screen.dart';
 import 'settings_screen.dart';
+import 'task_list_screen.dart';
 
 class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
@@ -57,15 +57,20 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
             Badge.count(
-              count: controller.failedCount,
-              isLabelVisible: controller.failedCount > 0,
+              count: controller.taskCount,
+              isLabelVisible: controller.taskCount > 0,
+              backgroundColor: controller.hasRealFailures
+                  ? Theme.of(context).colorScheme.error
+                  : Theme.of(context).colorScheme.secondary,
               offset: const Offset(-5, 5),
               child: IconButton(
-                tooltip: '失败任务',
+                tooltip: '任务列表',
                 onPressed: () => Navigator.of(context).push(
-                  MaterialPageRoute<void>(builder: (_) => const FailedScreen()),
+                  MaterialPageRoute<void>(
+                    builder: (_) => const TaskListScreen(),
+                  ),
                 ),
-                icon: const Icon(Icons.error_outline),
+                icon: const Icon(Icons.format_list_bulleted),
               ),
             ),
             IconButton(

@@ -40,6 +40,7 @@ class ArchiveForegroundService : Service() {
         executor.execute {
             var acquired = false
             var syncResult: R2SyncResult? = null
+            var syncAttempted = false
             var runError: String? = null
             ArchiveEventBus.emitRunStarted()
             try {
@@ -56,24 +57,30 @@ class ArchiveForegroundService : Service() {
                     updateNotification(text, current, total)
                 }
                 updateNotification("正在同步 R2", 0, 0)
+                syncAttempted = true
                 syncResult = R2SyncEngine(this, database).syncIfConfigured()
                 runError = syncResult?.error
             } catch (error: InterruptedException) {
                 Thread.currentThread().interrupt()
             } catch (error: Exception) {
                 runError = "归档任务执行失败，请重新打开 App 后重试"
-                syncResult =
-                    R2SyncResult(
-                        error = runError,
-                        hasRemainingWork = true,
-                        shouldRetry = true,
-                    )
+                if (syncAttempted) {
+                    syncResult =
+                        R2SyncResult(
+                            error = runError,
+                            hasRemainingWork = true,
+                            shouldRetry = true,
+                        )
+                }
             } finally {
                 if (acquired) {
                     database.recoverInterruptedJobs()
                     ArchiveExecutionGate.release()
                 }
-                ArchiveRecoveryScheduler.scheduleIfNeeded(this, database, syncResult)
+                ArchiveRecoveryScheduler.scheduleCaptureIfNeeded(this, database)
+                if (syncAttempted) {
+                    ArchiveRecoveryScheduler.scheduleSyncIfNeeded(this, syncResult)
+                }
                 ArchiveEventBus.emitArchiveChanged()
                 ArchiveEventBus.emitRunFinished(runError)
                 stopCleanly(startId)

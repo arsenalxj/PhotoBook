@@ -30,15 +30,33 @@ class ArchiveDatabase(context: Context) :
         error("开发阶段不支持数据库从 $oldVersion 升级到 $newVersion，请清除 App 数据后重新安装")
     }
 
-    fun recoverInterruptedJobs() {
-        writableDatabase.execSQL(
-            """
-            UPDATE capture_jobs
-            SET status = 'queued', updated_at = ?
-            WHERE status IN ('fetching', 'downloading', 'committing')
-            """.trimIndent(),
-            arrayOf(System.currentTimeMillis()),
-        )
+    fun recoverInterruptedJobs(): Boolean {
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        db.beginTransaction()
+        return try {
+            val requeued =
+                db.update(
+                    "capture_jobs",
+                    ContentValues().apply {
+                        put("status", "queued")
+                        put("updated_at", now)
+                    },
+                    "status IN ('fetching', 'downloading', 'committing')",
+                    null,
+                )
+            val cancelled =
+                db.update(
+                    "capture_jobs",
+                    cancelledJobValues(now),
+                    "status = 'cancelling'",
+                    null,
+                )
+            db.setTransactionSuccessful()
+            requeued > 0 || cancelled > 0
+        } finally {
+            db.endTransaction()
+        }
     }
 
     fun enqueue(sourceUrl: String, sourcePostId: String): CaptureJob {
@@ -145,7 +163,14 @@ class ArchiveDatabase(context: Context) :
         }
     }
 
-    fun updateJobProgress(jobId: String, status: String, current: Int, total: Int) {
+    fun updateJobProgress(
+        jobId: String,
+        attemptCount: Int,
+        expectedStatus: String,
+        status: String,
+        current: Int,
+        total: Int,
+    ): Boolean {
         val values =
             ContentValues().apply {
                 put("status", status)
@@ -153,17 +178,17 @@ class ArchiveDatabase(context: Context) :
                 put("progress_total", total)
                 put("updated_at", System.currentTimeMillis())
             }
-        writableDatabase.update("capture_jobs", values, "id = ?", arrayOf(jobId))
+        return writableDatabase.update(
+            "capture_jobs",
+            values,
+            "id = ? AND attempt_count = ? AND status = ?",
+            arrayOf(jobId, attemptCount.toString(), expectedStatus),
+        ) == 1
     }
 
-    fun recordJobError(jobId: String, error: ArchiveException) {
+    fun recordJobError(jobId: String, attemptCount: Int, error: ArchiveException): Boolean {
         val retryable = error.code == "NETWORK_ERROR" || error.code == "RATE_LIMITED"
         val now = System.currentTimeMillis()
-        val attemptCount =
-            readableDatabase.rawQuery(
-                "SELECT attempt_count FROM capture_jobs WHERE id = ?",
-                arrayOf(jobId),
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 1 }
         val retryDelay =
             if (error.code == "RATE_LIMITED") RATE_LIMIT_MS else retryDelayMs(attemptCount)
         val values =
@@ -175,8 +200,84 @@ class ArchiveDatabase(context: Context) :
                 else putNull("next_attempt_at")
                 put("updated_at", now)
             }
-        writableDatabase.update("capture_jobs", values, "id = ?", arrayOf(jobId))
+        return writableDatabase.update(
+            "capture_jobs",
+            values,
+            """
+            id = ? AND attempt_count = ?
+            AND status IN ('fetching', 'downloading', 'committing')
+            """.trimIndent(),
+            arrayOf(jobId, attemptCount.toString()),
+        ) == 1
     }
+
+    fun isJobAttemptActive(jobId: String, attemptCount: Int, expectedStatus: String): Boolean =
+        isJobAttemptActive(readableDatabase, jobId, attemptCount, expectedStatus)
+
+    private fun isJobAttemptActive(
+        db: SQLiteDatabase,
+        jobId: String,
+        attemptCount: Int,
+        expectedStatus: String,
+    ): Boolean =
+        db.rawQuery(
+            """
+            SELECT 1 FROM capture_jobs
+            WHERE id = ? AND attempt_count = ? AND status = ?
+            LIMIT 1
+            """.trimIndent(),
+            arrayOf(jobId, attemptCount.toString(), expectedStatus),
+        ).use(Cursor::moveToFirst)
+
+    fun cancelJob(jobId: String): JobCancellationResult? {
+        val db = writableDatabase
+        val now = System.currentTimeMillis()
+        db.beginTransaction()
+        return try {
+            val queued =
+                db.update(
+                    "capture_jobs",
+                    cancelledJobValues(now),
+                    "id = ? AND status = 'queued'",
+                    arrayOf(jobId),
+                )
+            if (queued == 1) {
+                db.setTransactionSuccessful()
+                return JobCancellationResult.QUEUED
+            }
+
+            val running =
+                db.update(
+                    "capture_jobs",
+                    ContentValues().apply {
+                        put("status", "cancelling")
+                        putNull("next_attempt_at")
+                        put("updated_at", now)
+                    },
+                    "id = ? AND status IN ('fetching', 'downloading', 'committing')",
+                    arrayOf(jobId),
+                )
+            db.setTransactionSuccessful()
+            if (running == 1) JobCancellationResult.RUNNING else null
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    fun completeJobCancellation(jobId: String, attemptCount: Int): Boolean =
+        writableDatabase.update(
+            "capture_jobs",
+            cancelledJobValues(System.currentTimeMillis()),
+            "id = ? AND attempt_count = ? AND status = 'cancelling'",
+            arrayOf(jobId, attemptCount.toString()),
+        ) == 1
+
+    fun deleteJob(jobId: String): Boolean =
+        writableDatabase.delete(
+            "capture_jobs",
+            "id = ? AND status = 'failed'",
+            arrayOf(jobId),
+        ) == 1
 
     fun retryJob(jobId: String): Boolean {
         val values =
@@ -201,10 +302,20 @@ class ArchiveDatabase(context: Context) :
         readableDatabase.rawQuery(
             """
             SELECT COUNT(*) FROM capture_jobs
-            WHERE status IN ('queued', 'fetching', 'downloading', 'committing')
+            WHERE status IN ('queued', 'fetching', 'downloading', 'committing', 'cancelling')
             """.trimIndent(),
             null,
         ).use { cursor -> if (cursor.moveToFirst()) cursor.getInt(0) else 0 }
+
+    fun hasRunningCaptureJob(): Boolean =
+        readableDatabase.rawQuery(
+            """
+            SELECT 1 FROM capture_jobs
+            WHERE status IN ('fetching', 'downloading', 'committing', 'cancelling')
+            LIMIT 1
+            """.trimIndent(),
+            null,
+        ).use(Cursor::moveToFirst)
 
     fun failedJobCount(): Int =
         readableDatabase.rawQuery(
@@ -225,11 +336,20 @@ class ArchiveDatabase(context: Context) :
             (cursor.getLong(0) - now).coerceAtLeast(0)
         }
 
-    fun commitCompletedJob(jobId: String, post: PreparedPost, deviceId: String) {
+    fun commitCompletedJob(
+        jobId: String,
+        attemptCount: Int,
+        post: PreparedPost,
+        deviceId: String,
+    ): Boolean {
         val db = writableDatabase
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
+            if (!isJobAttemptActive(db, jobId, attemptCount, "committing")) {
+                db.setTransactionSuccessful()
+                return false
+            }
             val seq = nextLocalSeq(db)
             val version = nextLogicalVersion(db)
             val previousMediaIds = mediaIdsForPost(db, post.id).toSet()
@@ -337,6 +457,7 @@ class ArchiveDatabase(context: Context) :
             db.update("capture_jobs", jobValues, "id = ?", arrayOf(jobId))
             writeMeta(db, "local_sync_seq", seq.toString())
             db.setTransactionSuccessful()
+            return true
         } finally {
             db.endTransaction()
         }
@@ -1695,6 +1816,15 @@ class ArchiveDatabase(context: Context) :
         val index = getColumnIndexOrThrow(column)
         return if (isNull(index)) null else getString(index)
     }
+
+    private fun cancelledJobValues(now: Long): ContentValues =
+        ContentValues().apply {
+            put("status", "failed")
+            put("error_code", "CANCELLED")
+            put("error_message", "任务已由用户取消")
+            putNull("next_attempt_at")
+            put("updated_at", now)
+        }
 
     companion object {
         const val DATABASE_NAME = "photobook.db"

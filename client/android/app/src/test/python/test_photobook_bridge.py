@@ -177,7 +177,9 @@ class SessionBridgeTest(unittest.TestCase):
         loader = _FakeLoader()
         post = _post(is_private=False)
         with (
-            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(
+                photobook_bridge.instaloader, "Instaloader", return_value=loader
+            ) as loader_factory,
             patch.object(
                 photobook_bridge.instaloader.Post,
                 "from_shortcode",
@@ -189,6 +191,10 @@ class SessionBridgeTest(unittest.TestCase):
         self.assertEqual(payload["post"]["sourcePostId"], "PublicPost")
         self.assertIsNone(payload["refreshedSession"])
         self.assertIsNone(loader.loaded_session)
+        loader_factory.assert_called_once_with(
+            max_connection_attempts=1,
+            request_timeout=30.0,
+        )
 
     def test_authenticated_fetch_loads_and_refreshes_session(self) -> None:
         loader = _FakeLoader()

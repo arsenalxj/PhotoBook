@@ -10,6 +10,8 @@ MethodChannel：`com.mantou.photobook/archive`
 |---|---|---|---|
 | `getRuntimeState` | 无 | JSON map | 获取活动/失败任务数、Instagram Session 和 R2 配置摘要 |
 | `retryJob` | `jobId` | 无 | 将失败任务重新排队并启动服务 |
+| `cancelJob` | `jobId` | 无 | 排队任务直接改为 `failed + CANCELLED`；运行任务先改为 `cancelling`，清理完成后再收口为已取消 |
+| `deleteJob` | `jobId` | 无 | 删除一条 `failed` 任务记录，不删除帖子或媒体 |
 | `beginInstagramLogin` | 无 | 无 | 清理 WebView 数据并开始新的官方网页登录 |
 | `captureInstagramSession` | 无 | Session 摘要 | 从 Android WebView CookieManager 验证并加密保存登录态 |
 | `cancelInstagramLogin` | 无 | 无 | 取消登录并清理 WebView 数据，不改变已保存 Session |
@@ -25,7 +27,7 @@ MethodChannel：`com.mantou.photobook/archive`
 
 EventChannel：`com.mantou.photobook/archive_events`
 
-事件类型为 `archiveChanged`、`runStarted` 和 `runFinished`。事件只用于驱动刷新和即时反馈，不作为权威状态；Flutter 收到事件后重新查询 SQLite。`runFinished` 可携带脱敏后的同步错误，冷启动仍从 `app_meta.last_sync_error` 恢复错误状态。
+事件类型为 `archiveChanged`、`jobChanged`、`runStarted` 和 `runFinished`。事件只用于驱动刷新和即时反馈，不作为权威状态；`jobChanged` 不携带任务快照，Flutter 收到后合并连续刷新请求并重新查询 SQLite。阶段或媒体项进度落库、入队、取消、删除、重试和任务结束时发送 `jobChanged`，不复用 `archiveChanged` 上报下载进度。`runFinished` 可携带脱敏后的同步错误，冷启动仍从 `app_meta.last_sync_error` 恢复错误状态。
 
 `getRuntimeState.instagramSession` 只返回非敏感摘要：未配置时为 `null`，否则为 `{status: "ready" | "needs_refresh", username, validatedAt}`。Flutter 侧不存在读取 Cookie 的接口。
 

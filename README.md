@@ -12,7 +12,7 @@ PhotoBook 解决的是“看到一条帖子，分享到手机 App 后长期保�
 - 接收 Android 系统分享，任务进入后台或锁屏后仍由前台服务继续执行。
 - 默认只保存在本机，不要求 PhotoBook 账号、设备配对、Worker、D1 或下载服务器。
 - 可选配置私有 Cloudflare R2，在多个设备之间同步帖子、预览和原媒体。
-- 支持查看、筛选、逻辑删除、保存原媒体和通过 Android 系统面板分享原文件。
+- 支持查看、筛选、逻辑删除、保存原媒体和通过 Android 系统面板分享原文件，并可在首页任务列表查看阶段、取消、重试或删除归档任务。
 - 使用 Android 默认网络；系统 VPN 是否接管流量由手机系统决定。
 
 当前只归档公开内容。每个帖子先匿名解析；只有 Instagram 明确要求登录时，才会使用用户通过官方 WebView 建立并加密保存在本机的 Session 重试一次。即使当前账号有权查看，私密账号帖子也不会归档。
@@ -65,7 +65,7 @@ flowchart TD
 | Instaloader | 解析 Instagram 帖子、作者、媒体列表和可选登录 Session |
 | Chaquopy / Python 桥 | 在 APK 内运行 Instaloader，并把 Python 结果转换成稳定的 JSON 协议 |
 | Kotlin Android 层 | 分享接收、前台服务、任务恢复、媒体下载、SQLite、Keystore、R2 同步和应用更新 |
-| Flutter | 首页、详情、失败任务、Instagram 登录页、R2 设置及状态展示 |
+| Flutter | 首页、详情、任务列表、Instagram 登录页、R2 设置及状态展示 |
 | SQLite | 本机帖子、媒体清单、抓取任务、错误记录和同步状态的权威数据源 |
 | Cloudflare R2 | 用户可选的多设备共享资料库，不参与本地归档是否成功的判断 |
 
@@ -101,8 +101,9 @@ docs/                                     中文架构、构建和运维文档
 1. 从 [GitHub Releases](https://github.com/arsenalxj/PhotoBook/releases/latest) 下载并安装适合 `arm64-v8a` Android 手机的最新 APK。
 2. 在 Instagram 或浏览器中打开公开帖子，点击“分享”，选择 PhotoBook。
 3. PhotoBook 会显示前台通知并在本机完成解析、下载和入库；完成后通知自动消失。
-4. 需要提高公开帖解析成功率时，可在设置页通过 Instagram 官方网页建立本机会话。
-5. 需要多设备同步时，可在设置页填写自己的 Cloudflare R2 endpoint、bucket、prefix 和对象读写凭证。
+4. 首页右上角任务列表可查看当前阶段，并取消、重试或删除任务记录。
+5. 需要提高公开帖解析成功率时，可在设置页通过 Instagram 官方网页建立本机会话。
+6. 需要多设备同步时，可在设置页填写自己的 Cloudflare R2 endpoint、bucket、prefix 和对象读写凭证。
 
 ## 开发与验证
 

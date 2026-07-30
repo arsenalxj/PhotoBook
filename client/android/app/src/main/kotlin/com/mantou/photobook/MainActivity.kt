@@ -66,6 +66,7 @@ class MainActivity : FlutterActivity() {
         val link = InstagramShareParser.parse(sharedText) ?: return
         ArchiveDatabase(this).use { database ->
             val job = database.enqueue(link.canonicalUrl, link.sourcePostId)
+            ArchiveEventBus.emitJobChanged()
             if (job.status != "completed") ArchiveForegroundService.start(this)
         }
         intent.removeExtra(Intent.EXTRA_TEXT)

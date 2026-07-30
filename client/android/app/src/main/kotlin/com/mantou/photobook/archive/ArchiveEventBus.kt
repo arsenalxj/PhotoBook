@@ -22,6 +22,10 @@ object ArchiveEventBus : EventChannel.StreamHandler {
         emit("archiveChanged")
     }
 
+    fun emitJobChanged() {
+        emit("jobChanged")
+    }
+
     fun emitRunStarted() {
         emit("runStarted")
     }

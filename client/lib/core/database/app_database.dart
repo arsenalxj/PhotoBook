@@ -232,12 +232,31 @@ class AppDatabase {
         .toList(growable: false);
   }
 
-  Future<List<ArchiveJob>> listFailedJobs() async {
+  Future<List<ArchiveJob>> listVisibleJobs() async {
     final rows = await _db.query(
       'capture_jobs',
-      columns: const ['id', 'source_post_id', 'error_code', 'error_message'],
-      where: "status = 'failed'",
-      orderBy: 'updated_at DESC',
+      columns: const [
+        'id',
+        'source_post_id',
+        'status',
+        'progress_current',
+        'progress_total',
+        'next_attempt_at',
+        'error_code',
+        'error_message',
+      ],
+      where:
+          "status IN ('queued', 'fetching', 'downloading', 'committing', 'cancelling', 'failed')",
+      orderBy: '''
+        CASE
+          WHEN status IN ('fetching', 'downloading', 'committing', 'cancelling') THEN 0
+          WHEN status = 'queued' THEN 1
+          ELSE 2
+        END,
+        CASE WHEN status != 'failed' THEN created_at END ASC,
+        CASE WHEN status = 'failed' THEN updated_at END DESC,
+        id ASC
+      ''',
     );
     return rows.map(ArchiveJob.fromDatabase).toList(growable: false);
   }
@@ -246,7 +265,7 @@ class AppDatabase {
       Sqflite.firstIntValue(
         await _db.rawQuery('''
           SELECT COUNT(*) FROM capture_jobs
-          WHERE status IN ('queued', 'fetching', 'downloading', 'committing')
+          WHERE status IN ('queued', 'fetching', 'downloading', 'committing', 'cancelling')
         '''),
       ) ??
       0;

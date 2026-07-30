@@ -28,7 +28,10 @@ def health_check() -> str:
 def validate_session(cookie_header: str) -> str:
     try:
         cookies = _cookies_from_header(cookie_header)
-        loader = instaloader.Instaloader(max_connection_attempts=1)
+        loader = instaloader.Instaloader(
+            max_connection_attempts=1,
+            request_timeout=30.0,
+        )
         loader.context.update_cookies(cookies)
         username = loader.test_login()
         if not username:
@@ -59,7 +62,10 @@ def fetch_post(shortcode: str, session_json: str | None = None) -> str:
 
     session = None
     try:
-        loader = instaloader.Instaloader(max_connection_attempts=1)
+        loader = instaloader.Instaloader(
+            max_connection_attempts=1,
+            request_timeout=30.0,
+        )
         session = _session_from_json(session_json)
         if session is not None:
             loader.load_session(session["username"], session["cookies"])

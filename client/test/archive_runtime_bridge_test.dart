@@ -16,6 +16,16 @@ void main() {
     expect(event.error, 'R2 读取失败');
   });
 
+  test('解析任务失效通知且不依赖任务快照', () {
+    final event = ArchiveRuntimeEvent.fromMap({
+      'type': 'jobChanged',
+      'timestamp': 1750000000000,
+    });
+
+    expect(event.type, ArchiveRuntimeEventType.jobChanged);
+    expect(event.error, isNull);
+  });
+
   test('解析 Instagram Session 非敏感摘要', () {
     final runtime = ArchiveRuntimeState.fromMap({
       'activeJobCount': 1,
@@ -70,6 +80,9 @@ void main() {
     final session = await bridge.captureInstagramSession();
     await bridge.cancelInstagramLogin();
     await bridge.clearInstagramSession();
+    await bridge.cancelJob('job-active');
+    await bridge.retryJob('job-failed');
+    await bridge.deleteJob('job-cancelled');
     await bridge.deletePost('post-1');
     final deleted = await bridge.deleteMedia('media-1');
     await bridge.shareMedia(['media-1', 'media-2']);
@@ -85,16 +98,22 @@ void main() {
       'captureInstagramSession',
       'cancelInstagramLogin',
       'clearInstagramSession',
+      'cancelJob',
+      'retryJob',
+      'deleteJob',
       'deletePost',
       'deleteMedia',
       'shareMedia',
       'saveMedia',
     ]);
-    expect(calls[4].arguments, {'postId': 'post-1'});
-    expect(calls[5].arguments, {'mediaId': 'media-1'});
-    expect(calls[6].arguments, {
+    expect(calls[4].arguments, {'jobId': 'job-active'});
+    expect(calls[5].arguments, {'jobId': 'job-failed'});
+    expect(calls[6].arguments, {'jobId': 'job-cancelled'});
+    expect(calls[7].arguments, {'postId': 'post-1'});
+    expect(calls[8].arguments, {'mediaId': 'media-1'});
+    expect(calls[9].arguments, {
       'mediaIds': ['media-1', 'media-2'],
     });
-    expect(calls[7].arguments, {'mediaId': 'media-1'});
+    expect(calls[10].arguments, {'mediaId': 'media-1'});
   });
 }

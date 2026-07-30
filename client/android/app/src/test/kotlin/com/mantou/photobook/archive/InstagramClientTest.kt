@@ -27,6 +27,37 @@ class InstagramClientTest {
     }
 
     @Test
+    fun `cancelled attempt does not start anonymous request`() {
+        val sessions = FakeSessions(session())
+        val gateway = FakeGateway { InstagramFetchResult(post(), null) }
+
+        assertThrows(ArchiveAttemptStoppedException::class.java) {
+            InstagramClient(gateway, sessions).fetchPost("Post123") { false }
+        }
+
+        assertTrue(gateway.calls.isEmpty())
+        assertEquals(0, sessions.readCount)
+    }
+
+    @Test
+    fun `cancellation after anonymous login wall prevents session retry`() {
+        var active = true
+        val sessions = FakeSessions(session())
+        val gateway =
+            FakeGateway {
+                active = false
+                throw ArchiveException("LOGIN_REQUIRED", "需要登录")
+            }
+
+        assertThrows(ArchiveAttemptStoppedException::class.java) {
+            InstagramClient(gateway, sessions).fetchPost("Post123") { active }
+        }
+
+        assertEquals(1, gateway.calls.size)
+        assertEquals(0, sessions.readCount)
+    }
+
+    @Test
     fun `non login anonymous error never reads or retries session`() {
         val sessions = FakeSessions(session())
         val gateway = FakeGateway { throw ArchiveException("NETWORK_ERROR", "网络失败") }
@@ -59,6 +90,46 @@ class InstagramClientTest {
         assertEquals(1, sessions.saved.size)
         assertEquals(200, sessions.saved.single().validatedAt)
         assertEquals(InstagramSessionStatus.READY, sessions.saved.single().status)
+    }
+
+    @Test
+    fun `cancellation after authenticated response does not save refreshed session`() {
+        var active = true
+        val sessions = FakeSessions(session())
+        val refreshed = session(sessionId = "new-session")
+        val gateway =
+            FakeGateway { supplied ->
+                if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
+                active = false
+                InstagramFetchResult(post(), refreshed)
+            }
+
+        assertThrows(ArchiveAttemptStoppedException::class.java) {
+            InstagramClient(gateway, sessions).fetchPost("Post123") { active }
+        }
+
+        assertEquals(2, gateway.calls.size)
+        assertTrue(sessions.saved.isEmpty())
+        assertEquals(0, sessions.markCount)
+    }
+
+    @Test
+    fun `cancellation after authenticated login error preserves session state`() {
+        var active = true
+        val sessions = FakeSessions(session())
+        val gateway =
+            FakeGateway { supplied ->
+                if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
+                active = false
+                throw ArchiveException("LOGIN_REQUIRED", "Session 失效")
+            }
+
+        assertThrows(ArchiveAttemptStoppedException::class.java) {
+            InstagramClient(gateway, sessions).fetchPost("Post123") { active }
+        }
+
+        assertEquals(0, sessions.markCount)
+        assertEquals(InstagramSessionStatus.READY, sessions.current?.status)
     }
 
     @Test

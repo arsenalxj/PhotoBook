@@ -10,6 +10,11 @@ data class CaptureJob(
     val attemptCount: Int,
 )
 
+enum class JobCancellationResult {
+    QUEUED,
+    RUNNING,
+}
+
 data class RemotePost(
     val sourcePostId: String,
     val sourceUrl: String,
@@ -158,6 +163,8 @@ class ArchiveException(
     override val message: String,
     cause: Throwable? = null,
 ) : Exception(message, cause)
+
+class ArchiveAttemptStoppedException : Exception()
 
 private fun JSONObject.optionalString(key: String): String? {
     if (isNull(key)) return null

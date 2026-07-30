@@ -53,6 +53,8 @@ class ArchivePlatformHandler(
             when (call.method) {
                 "getRuntimeState" -> result.success(runtimeState())
                 "retryJob" -> retryJob(call, result)
+                "cancelJob" -> cancelJob(call, result)
+                "deleteJob" -> deleteJob(call, result)
                 "beginInstagramLogin" -> beginInstagramLogin(result)
                 "cancelInstagramLogin" -> cancelInstagramLogin(result)
                 "captureInstagramSession" -> captureInstagramSession(result)
@@ -61,11 +63,7 @@ class ArchivePlatformHandler(
                 "clearR2Config" -> {
                     configStore.clear()
                     database.clearSyncResult()
-                    ArchiveRecoveryScheduler.scheduleIfNeeded(
-                        applicationContext,
-                        database,
-                        null,
-                    )
+                    ArchiveRecoveryScheduler.scheduleSyncIfNeeded(applicationContext, null)
                     result.success(null)
                 }
                 "ensureOriginal" -> ensureOriginal(call, result)
@@ -311,7 +309,36 @@ class ArchivePlatformHandler(
             result.error("JOB_NOT_FOUND", "失败任务不存在或已被处理", null)
             return
         }
+        ArchiveEventBus.emitJobChanged()
         ArchiveForegroundService.start(applicationContext)
+        result.success(null)
+    }
+
+    private fun cancelJob(call: MethodCall, result: MethodChannel.Result) {
+        val jobId = call.argument<String>("jobId").orEmpty()
+        val cancellation = jobId.takeIf(String::isNotBlank)?.let(database::cancelJob)
+        if (cancellation == null) {
+            result.error("JOB_NOT_FOUND", "活动任务不存在或已结束", null)
+            return
+        }
+        if (cancellation == JobCancellationResult.QUEUED) {
+            try {
+                ArchiveRecoveryScheduler.scheduleCaptureIfNeeded(applicationContext, database)
+            } catch (error: Exception) {
+                Log.w(TAG, "任务已取消，但刷新抓取恢复调度失败", error)
+            }
+        }
+        ArchiveEventBus.emitJobChanged()
+        result.success(null)
+    }
+
+    private fun deleteJob(call: MethodCall, result: MethodChannel.Result) {
+        val jobId = call.argument<String>("jobId").orEmpty()
+        if (jobId.isBlank() || !database.deleteJob(jobId)) {
+            result.error("JOB_NOT_FOUND", "失败任务不存在或已被处理", null)
+            return
+        }
+        ArchiveEventBus.emitJobChanged()
         result.success(null)
     }
 

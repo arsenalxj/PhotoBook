@@ -2,7 +2,12 @@ import 'dart:async';
 
 import 'package:flutter/services.dart';
 
-enum ArchiveRuntimeEventType { archiveChanged, runStarted, runFinished }
+enum ArchiveRuntimeEventType {
+  archiveChanged,
+  jobChanged,
+  runStarted,
+  runFinished,
+}
 
 class ArchiveRuntimeEvent {
   const ArchiveRuntimeEvent({
@@ -18,6 +23,7 @@ class ArchiveRuntimeEvent {
   factory ArchiveRuntimeEvent.fromMap(Map<Object?, Object?> map) {
     final type = switch (map['type']) {
       'archiveChanged' => ArchiveRuntimeEventType.archiveChanged,
+      'jobChanged' => ArchiveRuntimeEventType.jobChanged,
       'runStarted' => ArchiveRuntimeEventType.runStarted,
       'runFinished' => ArchiveRuntimeEventType.runFinished,
       _ => throw FormatException('未知原生运行事件'),
@@ -190,6 +196,12 @@ class ArchiveRuntimeBridge {
 
   Future<void> retryJob(String jobId) =>
       _methodChannel.invokeMethod<void>('retryJob', {'jobId': jobId});
+
+  Future<void> cancelJob(String jobId) =>
+      _methodChannel.invokeMethod<void>('cancelJob', {'jobId': jobId});
+
+  Future<void> deleteJob(String jobId) =>
+      _methodChannel.invokeMethod<void>('deleteJob', {'jobId': jobId});
 
   Future<void> beginInstagramLogin() =>
       _methodChannel.invokeMethod<void>('beginInstagramLogin');
