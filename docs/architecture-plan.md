@@ -31,7 +31,7 @@ flowchart LR
 首版包含：
 
 - 接收 Instagram 和小红书 `text/plain` 分享。
-- 匿名优先抓取 Instagram 公开图片帖、多图帖和 Reel；登录墙出现时可使用已验证的本机会话重试一次。
+- 匿名优先抓取 Instagram 公开图片帖、多图帖和 Reel；登录墙出现时可使用已验证的本机会话重试一次。GraphQL 明确返回 `4630001 + Media should not be an HtmlResponse` 时按登录兼容错误处理；登录重试仍失败时，Python 返回结构化阶段，Kotlin 在确认任务未取消后才使用独立 authenticated media-info 调用补齐。其他不可访问错误不得触发 Session。
 - 匿名抓取小红书公开图片、视频、原生 GIF 和 Live Photo；不提供小红书登录或验证码绕过。
 - 设置页提供 Instagram 官方 WebView 登录、登录状态、重新登录、复制Cookie 和清除会话。复制只允许在会话可用时由用户主动触发。
 - App 退到后台或锁屏后继续下载，完成后自动停止前台服务。

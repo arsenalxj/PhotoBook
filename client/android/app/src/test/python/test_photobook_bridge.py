@@ -9,9 +9,11 @@ from unittest.mock import patch
 import photobook_bridge
 from instaloader.exceptions import (
     AbortDownloadException,
+    BadResponseException,
     ConnectionException,
     LoginRequiredException,
     PrivateProfileNotFollowedException,
+    QueryReturnedBadRequestException,
     QueryReturnedNotFoundException,
     TooManyRequestsException,
 )
@@ -27,10 +29,41 @@ class _PostWithoutLocation(SimpleNamespace):
 class _FakeContext:
     def __init__(self) -> None:
         self.username = None
+        self.iphone_support = True
         self.cookies: dict[str, str] = {}
+        self.errors: list[str] = []
+        self.metadata_response: dict[str, object] = {}
+        self.iphone_response: dict[str, object] = {"items": []}
+        self.metadata_calls: list[tuple[str, dict[str, object]]] = []
+        self.iphone_calls: list[tuple[str, dict[str, object]]] = []
 
     def update_cookies(self, cookies: dict[str, str]) -> None:
         self.cookies.update(cookies)
+
+    def error(self, message: str) -> None:
+        self.errors.append(message)
+
+    @property
+    def is_logged_in(self) -> bool:
+        return self.username is not None
+
+    def doc_id_graphql_query(
+        self,
+        doc_id: str,
+        variables: dict[str, object],
+        referer: str | None = None,
+    ) -> dict[str, object]:
+        del referer
+        self.metadata_calls.append((doc_id, variables))
+        return self.metadata_response
+
+    def get_iphone_json(
+        self,
+        path: str,
+        params: dict[str, object],
+    ) -> dict[str, object]:
+        self.iphone_calls.append((path, params))
+        return self.iphone_response
 
 
 class _FakeLoader:
@@ -100,6 +133,7 @@ class BridgePayloadTest(unittest.TestCase):
 
         self.assertEqual(payload["sourcePostId"], "Abc_123")
         self.assertEqual(payload["authorUsername"], "author")
+        self.assertEqual(payload["authorDisplayName"], "Author")
         self.assertEqual(payload["locationName"], "Shanghai")
         self.assertEqual([item["mediaType"] for item in payload["media"]], ["image", "video"])
         self.assertEqual(payload["media"][1]["durationMs"], 3250)
@@ -222,6 +256,207 @@ class SessionBridgeTest(unittest.TestCase):
         self.assertEqual(loader.loaded_session[0], "archive_user")
         self.assertEqual(payload["refreshedSession"]["cookies"]["sessionid"], "refreshed-session")
 
+    def test_anonymous_html_media_response_requests_login_retry(self) -> None:
+        loader = _FakeLoader()
+        loader.context.metadata_response = _html_media_error_response()
+        with (
+            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(
+                photobook_bridge.instaloader.Post,
+                "from_shortcode",
+                side_effect=_raise_metadata_failure,
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post("PublicPost")
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "LOGIN_REQUIRED")
+        self.assertEqual(len(loader.context.metadata_calls), 1)
+        self.assertEqual(loader.context.iphone_calls, [])
+
+    def test_authenticated_html_media_response_stages_media_info(self) -> None:
+        loader = _FakeLoader()
+        loader.context.metadata_response = _html_media_error_response()
+        with (
+            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(
+                photobook_bridge.instaloader.Post,
+                "from_shortcode",
+                side_effect=_raise_metadata_failure,
+            ) as from_shortcode,
+        ):
+            payload = json.loads(
+                photobook_bridge.fetch_post("PublicPost", _session_json())
+            )
+
+        from_shortcode.assert_called_once()
+        self.assertEqual(len(loader.context.metadata_calls), 1)
+        self.assertEqual(loader.context.iphone_calls, [])
+        self.assertEqual(payload, {"mediaInfoRequired": True})
+
+    def test_authenticated_media_info_fetches_post(self) -> None:
+        loader = _FakeLoader()
+        loader.context.iphone_response = {"items": [_iphone_media(is_private=False)]}
+        with patch.object(
+            photobook_bridge.instaloader,
+            "Instaloader",
+            return_value=loader,
+        ):
+            payload = json.loads(
+                photobook_bridge.fetch_post_media_info(
+                    "PublicPost",
+                    _session_json(),
+                )
+            )
+
+        self.assertEqual(len(loader.context.iphone_calls), 1)
+        self.assertEqual(payload["post"]["sourcePostId"], "PublicPost")
+        self.assertEqual(payload["post"]["locationName"], "Shanghai")
+        self.assertEqual(payload["post"]["media"][0]["width"], 1080)
+        self.assertEqual(payload["post"]["media"][0]["height"], 1350)
+
+    def test_authenticated_media_info_still_rejects_private_profile(self) -> None:
+        loader = _FakeLoader()
+        loader.context.iphone_response = {"items": [_iphone_media(is_private=True)]}
+        with patch.object(
+            photobook_bridge.instaloader,
+            "Instaloader",
+            return_value=loader,
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post_media_info(
+                    "PrivatePost",
+                    _session_json(),
+                )
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "POST_UNAVAILABLE")
+
+    def test_authenticated_media_info_without_items_is_unavailable(self) -> None:
+        loader = _FakeLoader()
+        with patch.object(
+            photobook_bridge.instaloader,
+            "Instaloader",
+            return_value=loader,
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post_media_info(
+                    "MissingPost",
+                    _session_json(),
+                )
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "POST_UNAVAILABLE")
+        self.assertEqual(len(loader.context.iphone_calls), 1)
+
+    def test_media_info_without_session_never_starts_request(self) -> None:
+        loader = _FakeLoader()
+        with patch.object(
+            photobook_bridge.instaloader,
+            "Instaloader",
+            return_value=loader,
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post_media_info("PublicPost")
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "LOGIN_REQUIRED")
+        self.assertEqual(loader.context.iphone_calls, [])
+
+    def test_media_info_maps_wrapped_login_required_to_expired_session(self) -> None:
+        loader = _FakeLoader()
+        bad_request = QueryReturnedBadRequestException(
+            "400 Bad Request - login_required"
+        )
+        wrapped = ConnectionException("JSON Query failed: login_required")
+        wrapped.__cause__ = bad_request
+        with (
+            patch.object(
+                photobook_bridge.instaloader,
+                "Instaloader",
+                return_value=loader,
+            ),
+            patch.object(
+                loader.context,
+                "get_iphone_json",
+                side_effect=wrapped,
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post_media_info(
+                    "PublicPost",
+                    _session_json(),
+                )
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "LOGIN_REQUIRED")
+        self.assertIsNotNone(loader.loaded_session)
+
+    def test_authenticated_media_info_serializes_reel(self) -> None:
+        loader = _FakeLoader()
+        loader.context.iphone_response = {"items": [_iphone_reel()]}
+        with patch.object(
+            photobook_bridge.instaloader,
+            "Instaloader",
+            return_value=loader,
+        ):
+            payload = json.loads(
+                photobook_bridge.fetch_post_media_info(
+                    "ReelPost",
+                    _session_json(),
+                )
+            )["post"]
+
+        self.assertEqual(payload["sourceUrl"], "https://www.instagram.com/reel/ReelPost/")
+        self.assertEqual(payload["media"][0]["mediaType"], "video")
+        self.assertEqual(payload["media"][0]["url"], "https://cdn.example/reel.mp4")
+        self.assertEqual(payload["media"][0]["durationMs"], 4500)
+
+    def test_authenticated_media_info_serializes_sidecar(self) -> None:
+        loader = _FakeLoader()
+        loader.context.iphone_response = {"items": [_iphone_sidecar()]}
+        with patch.object(
+            photobook_bridge.instaloader,
+            "Instaloader",
+            return_value=loader,
+        ):
+            payload = json.loads(
+                photobook_bridge.fetch_post_media_info(
+                    "SidecarPost",
+                    _session_json(),
+                )
+            )["post"]
+
+        self.assertEqual(
+            [media["mediaType"] for media in payload["media"]],
+            ["image", "video"],
+        )
+        self.assertEqual(payload["media"][0]["url"], "https://cdn.example/sidecar.jpg")
+        self.assertEqual(payload["media"][1]["url"], "https://cdn.example/sidecar.mp4")
+
+    def test_other_missing_metadata_never_uses_media_info_fallback(self) -> None:
+        loader = _FakeLoader()
+        loader.context.metadata_response = {
+            "status": "ok",
+            "data": None,
+            "errors": [{"message": "execution error"}],
+        }
+        with (
+            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(
+                photobook_bridge.instaloader.Post,
+                "from_shortcode",
+                side_effect=_raise_metadata_failure,
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post("MissingPost", _session_json())
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "POST_UNAVAILABLE")
+        self.assertEqual(loader.context.iphone_calls, [])
+
     def test_rejects_private_profile_even_with_session(self) -> None:
         loader = _FakeLoader()
         session = json.dumps(
@@ -316,6 +551,25 @@ class SessionBridgeTest(unittest.TestCase):
                 self.assertEqual(authenticated_code, "LOGIN_REQUIRED")
                 self.assertEqual(anonymous_code, "INSTAGRAM_ERROR")
 
+    def test_classifies_wrapped_authenticated_login_required_as_expired_login(self) -> None:
+        bad_request = QueryReturnedBadRequestException(
+            "400 Bad Request - login_required"
+        )
+        wrapped = ConnectionException("JSON Query failed: login_required")
+        wrapped.__cause__ = bad_request
+
+        authenticated_code, _ = photobook_bridge._classify_error(
+            wrapped,
+            authenticated=True,
+        )
+        anonymous_code, _ = photobook_bridge._classify_error(
+            wrapped,
+            authenticated=False,
+        )
+
+        self.assertEqual(authenticated_code, "LOGIN_REQUIRED")
+        self.assertEqual(anonymous_code, "NETWORK_ERROR")
+
     def test_classifies_feedback_required_as_rate_limit(self) -> None:
         error = AbortDownloadException("400 Bad Request - feedback_required")
 
@@ -369,6 +623,116 @@ def _post(*, is_private: bool) -> SimpleNamespace:
         display_url="https://cdn.example/image.jpg",
         _node={"dimensions": {"width": 1080, "height": 1350}},
     )
+
+
+def _raise_metadata_failure(context: _FakeContext, shortcode: str):
+    context.doc_id_graphql_query(
+        "27128499623469141",
+        {
+            "shortcode": shortcode,
+            "__relay_internal__pv__PolarisAIGMMediaWebLabelEnabledrelayprovider": False,
+        },
+    )
+    raise BadResponseException("Fetching Post metadata failed.")
+
+
+def _html_media_error_response() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "data": None,
+        "errors": [
+            {
+                "code": 4630001,
+                "description": "Media should not be an HtmlResponse",
+            }
+        ],
+    }
+
+
+def _session_json() -> str:
+    return json.dumps(
+        {
+            "username": "archive_user",
+            "cookies": {
+                "sessionid": "session-value",
+                "csrftoken": "csrf-value",
+            },
+        }
+    )
+
+
+def _iphone_media(*, is_private: bool) -> dict[str, object]:
+    return {
+        "code": "PrivatePost" if is_private else "PublicPost",
+        "pk": "123",
+        "media_type": 1,
+        "taken_at": 1735776000,
+        "caption": {"text": "兼容帖子"},
+        "has_liked": False,
+        "like_count": 1,
+        "comment_count": 0,
+        "product_type": "feed",
+        "original_width": 1080,
+        "original_height": 1350,
+        "image_versions2": {
+            "candidates": [
+                {
+                    "url": "https://cdn.example/image.jpg",
+                    "width": 1080,
+                    "height": 1350,
+                }
+            ]
+        },
+        "location": {"name": "Shanghai"},
+        "user": {
+            "pk": "456",
+            "username": "author",
+            "is_private": is_private,
+            "full_name": "Author",
+            "profile_pic_url": "https://cdn.example/avatar.jpg",
+        },
+    }
+
+
+def _iphone_reel() -> dict[str, object]:
+    media = _iphone_media(is_private=False)
+    media.update(
+        {
+            "code": "ReelPost",
+            "media_type": 2,
+            "product_type": "clips",
+            "video_duration": 4.5,
+            "view_count": 10,
+            "video_versions": [{"url": "https://cdn.example/reel.mp4"}],
+        }
+    )
+    return media
+
+
+def _iphone_sidecar() -> dict[str, object]:
+    media = _iphone_media(is_private=False)
+    media.update(
+        {
+            "code": "SidecarPost",
+            "media_type": 8,
+            "carousel_media": [
+                {
+                    "media_type": 1,
+                    "image_versions2": {
+                        "candidates": [{"url": "https://cdn.example/sidecar.jpg"}]
+                    },
+                },
+                {
+                    "media_type": 2,
+                    "image_versions2": {
+                        "candidates": [{"url": "https://cdn.example/sidecar-video.jpg"}]
+                    },
+                    "video_versions": [{"url": "https://cdn.example/sidecar.mp4"}],
+                },
+            ],
+        }
+    )
+    return media
 
 
 if __name__ == "__main__":

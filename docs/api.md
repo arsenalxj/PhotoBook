@@ -101,7 +101,7 @@ fetch_post(shortcode: str, session_json: str | None = None) -> str
 }
 ```
 
-传入 Session 时，成功响应的 `refreshedSession` 包含 Instaloader 更新后的 Cookie，只允许 Kotlin 立即重新加密保存。调用策略固定为匿名请求优先；只有匿名调用返回 `LOGIN_REQUIRED`，Kotlin 才读取 `ready` Session 并调用第二次。Python 层不得写数据库、下载媒体、读取 R2 密钥或保存默认 Instaloader session 文件。异常由 Kotlin 映射为稳定错误码：`NETWORK_ERROR`、`POST_UNAVAILABLE`、`LOGIN_REQUIRED`、`RATE_LIMITED` 或 `INVALID_RESPONSE`。
+传入 Session 时，成功响应的 `refreshedSession` 包含 Instaloader 更新后的 Cookie，只允许 Kotlin 立即重新加密保存。调用策略固定为匿名请求优先；只有匿名调用返回 `LOGIN_REQUIRED`，Kotlin 才读取 `ready` Session 并调用第二次。Instagram GraphQL 返回 `4630001 + Media should not be an HtmlResponse` 时，Python 将匿名结果精确映射为 `LOGIN_REQUIRED`；登录重试仍收到同一错误时，`fetch_post` 返回 `{"mediaInfoRequired":true}`，不在同一次 Python 调用内继续请求。Kotlin 重新检查任务未取消后，才使用同一已验证 Session 调用 `fetch_post_media_info(shortcode, session_json)`；该函数通过 Instaloader authenticated media-info 读取同一 shortcode，且仍拒绝私密账号帖子。其他 `POST_UNAVAILABLE` 不得读取 Session。authenticated 响应中的 `login_required`、登录重定向或账号登出必须映射为 `LOGIN_REQUIRED`，不能降级为 `NETWORK_ERROR`。Python 层不得写数据库、下载媒体、读取 R2 密钥或保存默认 Instaloader session 文件。异常由 Kotlin 映射为稳定错误码：`NETWORK_ERROR`、`POST_UNAVAILABLE`、`LOGIN_REQUIRED`、`RATE_LIMITED` 或 `INVALID_RESPONSE`。
 
 ### 小红书公开页桥
 

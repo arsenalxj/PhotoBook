@@ -23,22 +23,18 @@ internal class PythonInstagramClient(context: Context) : InstagramGateway {
         }
     }
 
-    override fun fetchPost(shortcode: String, session: InstagramSession?): InstagramFetchResult {
+    override fun fetchPost(shortcode: String, session: InstagramSession?): InstagramFetchOutcome {
         try {
             val raw =
                 module().callAttr("fetch_post", shortcode, session?.toPythonJson() ?: "").toString()
             val envelope = JSONObject(raw)
-            val post = RemotePost.fromJson(envelope.getJSONObject("post").toString())
-            val refreshedSession =
-                if (envelope.isNull("refreshedSession")) {
-                    null
-                } else {
-                    InstagramSession.fromPythonJson(
-                        envelope.getJSONObject("refreshedSession").toString(),
-                        session?.validatedAt ?: System.currentTimeMillis(),
-                    )
+            if (envelope.optBoolean("mediaInfoRequired", false)) {
+                if (session == null) {
+                    throw ArchiveException("INVALID_RESPONSE", "Instagram 匿名解析返回了认证阶段")
                 }
-            return InstagramFetchResult(post, refreshedSession)
+                return InstagramMediaInfoRequired
+            }
+            return parseFetchResult(envelope, session)
         } catch (error: PyException) {
             throw parsePythonError(error)
         } catch (error: ArchiveException) {
@@ -46,6 +42,40 @@ internal class PythonInstagramClient(context: Context) : InstagramGateway {
         } catch (error: Exception) {
             throw ArchiveException("INVALID_RESPONSE", "Instagram 返回的数据无法解析", error)
         }
+    }
+
+    override fun fetchPostMediaInfo(
+        shortcode: String,
+        session: InstagramSession,
+    ): InstagramFetchResult {
+        try {
+            val raw =
+                module().callAttr("fetch_post_media_info", shortcode, session.toPythonJson()).toString()
+            return parseFetchResult(JSONObject(raw), session)
+        } catch (error: PyException) {
+            throw parsePythonError(error)
+        } catch (error: ArchiveException) {
+            throw error
+        } catch (error: Exception) {
+            throw ArchiveException("INVALID_RESPONSE", "Instagram 返回的数据无法解析", error)
+        }
+    }
+
+    private fun parseFetchResult(
+        envelope: JSONObject,
+        session: InstagramSession?,
+    ): InstagramFetchResult {
+        val post = RemotePost.fromJson(envelope.getJSONObject("post").toString())
+        val refreshedSession =
+            if (envelope.isNull("refreshedSession")) {
+                null
+            } else {
+                InstagramSession.fromPythonJson(
+                    envelope.getJSONObject("refreshedSession").toString(),
+                    session?.validatedAt ?: System.currentTimeMillis(),
+                )
+            }
+        return InstagramFetchResult(post, refreshedSession)
     }
 
     private fun module(): PyObject =

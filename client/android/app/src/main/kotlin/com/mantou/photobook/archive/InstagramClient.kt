@@ -6,12 +6,18 @@ import android.util.Log
 internal data class InstagramFetchResult(
     val post: RemotePost,
     val refreshedSession: InstagramSession?,
-)
+) : InstagramFetchOutcome
+
+internal sealed interface InstagramFetchOutcome
+
+internal data object InstagramMediaInfoRequired : InstagramFetchOutcome
 
 internal interface InstagramGateway {
     fun validateSession(cookieHeader: String, validatedAt: Long): InstagramSession
 
-    fun fetchPost(shortcode: String, session: InstagramSession?): InstagramFetchResult
+    fun fetchPost(shortcode: String, session: InstagramSession?): InstagramFetchOutcome
+
+    fun fetchPostMediaInfo(shortcode: String, session: InstagramSession): InstagramFetchResult
 }
 
 internal class InstagramClient internal constructor(
@@ -50,9 +56,12 @@ internal class InstagramClient internal constructor(
         ensureAttemptActive(isAttemptActive)
         val anonymousFailure =
             try {
-                val post = gateway.fetchPost(shortcode, null).post
+                val outcome = gateway.fetchPost(shortcode, null)
                 ensureAttemptActive(isAttemptActive)
-                return post
+                if (outcome !is InstagramFetchResult) {
+                    throw ArchiveException("INVALID_RESPONSE", "Instagram 匿名解析阶段无效")
+                }
+                return outcome.post
             } catch (error: ArchiveException) {
                 ensureAttemptActive(isAttemptActive)
                 if (error.code != "LOGIN_REQUIRED") throw error
@@ -69,8 +78,17 @@ internal class InstagramClient internal constructor(
         ensureAttemptActive(isAttemptActive)
         val authenticated =
             try {
-                gateway.fetchPost(shortcode, session).also {
+                val outcome = gateway.fetchPost(shortcode, session).also {
                     ensureAttemptActive(isAttemptActive)
+                }
+                when (outcome) {
+                    is InstagramFetchResult -> outcome
+                    InstagramMediaInfoRequired -> {
+                        ensureAttemptActive(isAttemptActive)
+                        gateway.fetchPostMediaInfo(shortcode, session).also {
+                            ensureAttemptActive(isAttemptActive)
+                        }
+                    }
                 }
             } catch (error: ArchiveException) {
                 ensureAttemptActive(isAttemptActive)

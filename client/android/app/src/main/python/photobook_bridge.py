@@ -13,6 +13,31 @@ from requests import exceptions as requests_exceptions
 
 _SHORTCODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _FORK_COMMIT = "b1d233362e335cbbccba5c5e4b614a1032764118"
+_POST_METADATA_DOC_ID = "27128499623469141"
+_HTML_MEDIA_ERROR_CODE = "4630001"
+_HTML_MEDIA_ERROR_DESCRIPTION = "Media should not be an HtmlResponse"
+_MEDIA_INFO_REQUIRED = object()
+
+
+class _MetadataResponseContext:
+    def __init__(self, context: Any, shortcode: str) -> None:
+        self._context = context
+        self._shortcode = shortcode
+        self.response: dict[str, Any] | None = None
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._context, name)
+
+    def doc_id_graphql_query(
+        self,
+        doc_id: str,
+        variables: dict[str, Any],
+        referer: str | None = None,
+    ) -> dict[str, Any]:
+        response = self._context.doc_id_graphql_query(doc_id, variables, referer)
+        if doc_id == _POST_METADATA_DOC_ID and variables.get("shortcode") == self._shortcode:
+            self.response = response
+        return response
 
 
 def health_check() -> str:
@@ -63,34 +88,73 @@ def fetch_post(shortcode: str, session_json: str | None = None) -> str:
 
     session = None
     try:
-        loader = instaloader.Instaloader(
-            max_connection_attempts=1,
-            request_timeout=30.0,
+        loader, session = _loader_with_session(session_json)
+        post = _fetch_post_metadata(
+            loader,
+            normalized,
+            authenticated=session is not None,
         )
-        session = _session_from_json(session_json)
-        if session is not None:
-            loader.load_session(session["username"], session["cookies"])
-        post = instaloader.Post.from_shortcode(loader.context, normalized)
-        profile = post.owner_profile
-        if bool(getattr(profile, "is_private", False)):
-            raise RuntimeError(_error_json("POST_UNAVAILABLE", "当前版本只支持公开帖子"))
-        return json.dumps(
-            {
-                "post": _post_payload(post, expected_shortcode=normalized),
-                "refreshedSession": (
-                    _session_payload(session["username"], loader.save_session())
-                    if session is not None
-                    else None
-                ),
-            },
-            ensure_ascii=False,
-            separators=(",", ":"),
-        )
+        if post is _MEDIA_INFO_REQUIRED:
+            return json.dumps({"mediaInfoRequired": True}, separators=(",", ":"))
+        return _fetch_result_json(loader, session, post, normalized)
     except RuntimeError:
         raise
     except Exception as error:
         code, message = _classify_error(error, authenticated=session is not None)
         raise RuntimeError(_error_json(code, message)) from error
+
+
+def fetch_post_media_info(shortcode: str, session_json: str | None = None) -> str:
+    normalized = str(shortcode).strip()
+    if not _SHORTCODE_PATTERN.fullmatch(normalized):
+        raise RuntimeError(_error_json("INVALID_URL", "Instagram 帖子编号无效"))
+
+    session = None
+    try:
+        loader, session = _loader_with_session(session_json)
+        if session is None:
+            raise RuntimeError(_error_json("LOGIN_REQUIRED", "Instagram 要求登录"))
+        post = _post_from_media_info(loader.context, normalized)
+        return _fetch_result_json(loader, session, post, normalized)
+    except RuntimeError:
+        raise
+    except Exception as error:
+        code, message = _classify_error(error, authenticated=session is not None)
+        raise RuntimeError(_error_json(code, message)) from error
+
+
+def _loader_with_session(session_json: str | None) -> tuple[Any, dict[str, Any] | None]:
+    loader = instaloader.Instaloader(
+        max_connection_attempts=1,
+        request_timeout=30.0,
+    )
+    session = _session_from_json(session_json)
+    if session is not None:
+        loader.load_session(session["username"], session["cookies"])
+    return loader, session
+
+
+def _fetch_result_json(
+    loader: Any,
+    session: dict[str, Any] | None,
+    post: Any,
+    shortcode: str,
+) -> str:
+    profile = post.owner_profile
+    if bool(getattr(profile, "is_private", False)):
+        raise RuntimeError(_error_json("POST_UNAVAILABLE", "当前版本只支持公开帖子"))
+    return json.dumps(
+        {
+            "post": _post_payload(post, expected_shortcode=shortcode),
+            "refreshedSession": (
+                _session_payload(session["username"], loader.save_session())
+                if session is not None
+                else None
+            ),
+        },
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
 
 
 def _post_payload(post: Any, *, expected_shortcode: str) -> dict[str, Any]:
@@ -123,9 +187,68 @@ def _post_payload(post: Any, *, expected_shortcode: str) -> dict[str, Any]:
         "authorAvatarUrl": _optional_text(getattr(profile, "profile_pic_url", None)),
         "caption": str(getattr(post, "caption", None) or ""),
         "publishedAt": _timestamp_ms(getattr(post, "date_utc", None)),
-        "locationName": _location_name(_optional_attribute(post, "location")),
+        "locationName": _location_name(_post_location(post, raw)),
         "media": media,
     }
+
+
+def _fetch_post_metadata(loader: Any, shortcode: str, *, authenticated: bool) -> Any:
+    context = _MetadataResponseContext(loader.context, shortcode)
+    try:
+        return instaloader.Post.from_shortcode(context, shortcode)
+    except instaloader_exceptions.BadResponseException as error:
+        if not _is_html_media_response(context.response):
+            raise
+        if not authenticated:
+            raise RuntimeError(
+                _error_json("LOGIN_REQUIRED", "Instagram 要求登录以兼容解析该公开帖子")
+            ) from error
+        return _MEDIA_INFO_REQUIRED
+
+
+def _post_from_media_info(context: Any, shortcode: str) -> Any:
+    media_id = instaloader.Post.shortcode_to_mediaid(shortcode)
+    response = context.get_iphone_json(
+        path=f"api/v1/media/{media_id}/info/",
+        params={},
+    )
+    items = response.get("items") if isinstance(response, dict) else None
+    if not isinstance(items, list) or not items or not isinstance(items[0], dict):
+        raise instaloader_exceptions.QueryReturnedNotFoundException(
+            "Instagram authenticated media info did not return the post"
+        )
+    return instaloader.Post.from_iphone_struct(context, items[0])
+
+
+def _is_html_media_response(response: Any) -> bool:
+    if not isinstance(response, dict):
+        return False
+    errors = response.get("errors")
+    if not isinstance(errors, list):
+        return False
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        if str(error.get("code")) != _HTML_MEDIA_ERROR_CODE:
+            continue
+        if _HTML_MEDIA_ERROR_DESCRIPTION in _error_descriptions(error):
+            return True
+    return False
+
+
+def _error_descriptions(error: dict[str, Any]) -> set[str]:
+    descriptions = {_optional_text(error.get("description"))}
+    extensions = error.get("extensions")
+    if isinstance(extensions, dict):
+        additional = extensions.get("additional_info_do_not_use_except_for_migration")
+        if isinstance(additional, str):
+            try:
+                parsed = json.loads(additional)
+            except (TypeError, ValueError):
+                parsed = None
+            if isinstance(parsed, dict):
+                descriptions.add(_optional_text(parsed.get("message")))
+    return {item for item in descriptions if item is not None}
 
 
 def _cookies_from_header(cookie_header: str) -> dict[str, str]:
@@ -202,28 +325,52 @@ def _media_payload(media: Any, index: int) -> dict[str, Any]:
 
 
 def _dimensions(raw: Any) -> tuple[int | None, int | None]:
-    if not isinstance(raw, dict):
+    media = _raw_media(raw)
+    if not isinstance(media, dict):
         return None, None
-    dimensions = raw.get("dimensions")
-    if not isinstance(dimensions, dict):
+    dimensions = media.get("dimensions")
+    if isinstance(dimensions, dict):
+        return _positive_int(dimensions.get("width")), _positive_int(dimensions.get("height"))
+    width = _positive_int(media.get("original_width"))
+    height = _positive_int(media.get("original_height"))
+    if width is not None or height is not None:
+        return width, height
+    candidates = (media.get("image_versions2") or {}).get("candidates")
+    first = candidates[0] if isinstance(candidates, list) and candidates else None
+    if not isinstance(first, dict):
         return None, None
-    return _positive_int(dimensions.get("width")), _positive_int(dimensions.get("height"))
+    return _positive_int(first.get("width")), _positive_int(first.get("height"))
 
 
 def _duration_ms(raw: Any) -> int | None:
-    if not isinstance(raw, dict):
+    media = _raw_media(raw)
+    if not isinstance(media, dict):
         return None
-    value = raw.get("video_duration")
+    value = media.get("video_duration")
     if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
         return None
     return round(float(value) * 1000)
 
 
 def _post_kind(post: Any, raw: Any) -> str:
-    product_type = str(raw.get("product_type", "")) if isinstance(raw, dict) else ""
+    media = _raw_media(raw)
+    product_type = str(media.get("product_type", "")) if isinstance(media, dict) else ""
     if getattr(post, "typename", "") == "GraphVideo" and product_type == "clips":
         return "reel"
     return "p"
+
+
+def _raw_media(raw: Any) -> Any:
+    if not isinstance(raw, dict):
+        return raw
+    iphone = raw.get("iphone_struct")
+    return iphone if isinstance(iphone, dict) else raw
+
+
+def _post_location(post: Any, raw: Any) -> Any:
+    if isinstance(raw, dict) and isinstance(raw.get("iphone_struct"), dict):
+        return raw["iphone_struct"].get("location")
+    return _optional_attribute(post, "location")
 
 
 def _location_name(location: Any) -> str | None:
@@ -284,7 +431,14 @@ def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]
     ) or "feedback_required" in message:
         return "RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试"
     if authenticated and any(
-        isinstance(item, instaloader_exceptions.AbortDownloadException)
+        isinstance(
+            item,
+            (
+                instaloader_exceptions.AbortDownloadException,
+                instaloader_exceptions.ConnectionException,
+                instaloader_exceptions.QueryReturnedBadRequestException,
+            ),
+        )
         for item in chain
     ) and any(
         marker in message

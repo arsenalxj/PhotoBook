@@ -93,6 +93,54 @@ class InstagramClientTest {
     }
 
     @Test
+    fun `authenticated metadata stage continues with media info`() {
+        val original = session(sessionId = "old-session", validatedAt = 100)
+        val refreshed = session(sessionId = "new-session", validatedAt = 100)
+        val sessions = FakeSessions(original)
+        val gateway =
+            FakeGateway(
+                fetch = { supplied ->
+                    if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
+                    InstagramMediaInfoRequired
+                },
+                fetchMediaInfo = { InstagramFetchResult(post(), refreshed) },
+            )
+
+        val result = InstagramClient(gateway, sessions) { 200 }.fetchPost("Post123")
+
+        assertEquals("Post123", result.sourcePostId)
+        assertEquals(2, gateway.calls.size)
+        assertEquals(1, gateway.mediaInfoCalls.size)
+        assertTrue(gateway.mediaInfoCalls.single() === original)
+        assertEquals(1, sessions.saved.size)
+        assertTrue(sessions.saved.single().cookieHeader().contains("sessionid=new-session"))
+    }
+
+    @Test
+    fun `cancellation after authenticated metadata prevents media info request`() {
+        var active = true
+        val sessions = FakeSessions(session())
+        val gateway =
+            FakeGateway(
+                fetch = { supplied ->
+                    if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
+                    active = false
+                    InstagramMediaInfoRequired
+                },
+                fetchMediaInfo = { InstagramFetchResult(post(), null) },
+            )
+
+        assertThrows(ArchiveAttemptStoppedException::class.java) {
+            InstagramClient(gateway, sessions).fetchPost("Post123") { active }
+        }
+
+        assertEquals(2, gateway.calls.size)
+        assertTrue(gateway.mediaInfoCalls.isEmpty())
+        assertEquals(0, sessions.markCount)
+        assertEquals(InstagramSessionStatus.READY, sessions.current?.status)
+    }
+
+    @Test
     fun `cancellation after authenticated response does not save refreshed session`() {
         var active = true
         val sessions = FakeSessions(session())
@@ -202,6 +250,11 @@ class InstagramClientTest {
                 override fun fetchPost(
                     shortcode: String,
                     session: InstagramSession?,
+                ): InstagramFetchOutcome = throw UnsupportedOperationException()
+
+                override fun fetchPostMediaInfo(
+                    shortcode: String,
+                    session: InstagramSession,
                 ): InstagramFetchResult = throw UnsupportedOperationException()
             }
         val client = InstagramClient(gateway, sessions)
@@ -292,9 +345,13 @@ class InstagramClientTest {
         )
 
     private class FakeGateway(
-        private val fetch: (InstagramSession?) -> InstagramFetchResult,
+        private val fetchMediaInfo: (InstagramSession) -> InstagramFetchResult = {
+            throw UnsupportedOperationException()
+        },
+        private val fetch: (InstagramSession?) -> InstagramFetchOutcome,
     ) : InstagramGateway {
         val calls = mutableListOf<InstagramSession?>()
+        val mediaInfoCalls = mutableListOf<InstagramSession>()
 
         override fun validateSession(cookieHeader: String, validatedAt: Long): InstagramSession =
             throw UnsupportedOperationException()
@@ -302,9 +359,17 @@ class InstagramClientTest {
         override fun fetchPost(
             shortcode: String,
             session: InstagramSession?,
-        ): InstagramFetchResult {
+        ): InstagramFetchOutcome {
             calls += session
             return fetch(session)
+        }
+
+        override fun fetchPostMediaInfo(
+            shortcode: String,
+            session: InstagramSession,
+        ): InstagramFetchResult {
+            mediaInfoCalls += session
+            return fetchMediaInfo(session)
         }
     }
 
