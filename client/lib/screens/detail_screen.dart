@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
@@ -40,40 +41,49 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     }
     if (post == null) {
       return Scaffold(
-        appBar: AppBar(),
-        body: const Center(child: Text('帖子不存在')),
+        appBar: AppBar(leading: _detailBackButton(context)),
+        body: const _MissingPost(),
       );
     }
     final currentMedia = _resolveCurrentMedia(post);
 
     return Scaffold(
       appBar: AppBar(
+        leading: _detailBackButton(context),
         title: Text(
           post.sourcePlatform == PostSourcePlatform.instagram
               ? '@${post.authorUsername}'
               : post.authorDisplayName,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(
+            fontFamily: 'monospace',
+            fontSize: 16,
+            fontWeight: FontWeight.w700,
+          ),
         ),
         actions: [
           IconButton(
             key: const ValueKey('share-post-media'),
             tooltip: '分享媒体',
             onPressed: () => _sharePost(post!, currentMedia.id),
-            icon: const Icon(Icons.share_outlined),
+            icon: const Icon(LucideIcons.share),
           ),
           IconButton(
             key: const ValueKey('save-post-media'),
             tooltip: '保存媒体',
             onPressed: () => _savePostMedia(post!),
-            icon: const Icon(Icons.download_outlined),
+            icon: const Icon(LucideIcons.download),
           ),
           IconButton(
             key: const ValueKey('delete-post-media'),
             tooltip: '删除媒体',
             onPressed: () => _deletePostMedia(post!),
-            icon: const Icon(Icons.delete_outline),
+            icon: const Icon(LucideIcons.trash),
           ),
           PopupMenuButton<_DetailMenuAction>(
             tooltip: '更多',
+            icon: const Icon(LucideIcons.ellipsisVertical),
             onSelected: (action) {
               if (action == _DetailMenuAction.openSource) {
                 unawaited(_openSource(post!.sourceUrl));
@@ -84,7 +94,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                 value: _DetailMenuAction.openSource,
                 child: ListTile(
                   contentPadding: EdgeInsets.zero,
-                  leading: Icon(Icons.open_in_new),
+                  leading: Icon(LucideIcons.externalLink),
                   title: Text('打开原帖'),
                 ),
               ),
@@ -133,12 +143,12 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                   runSpacing: 8,
                   children: [
                     _MetaItem(
-                      icon: Icons.calendar_today_outlined,
+                      icon: LucideIcons.calendarDays,
                       label: _formatDate(post.publishedAt),
                     ),
                     if (post.locationName != null)
                       _MetaItem(
-                        icon: Icons.location_on_outlined,
+                        icon: LucideIcons.mapPin,
                         label: post.locationName!,
                       ),
                   ],
@@ -246,6 +256,47 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
 
 enum _DetailMenuAction { openSource }
 
+class _MissingPost extends StatelessWidget {
+  const _MissingPost();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Padding(
+      padding: const EdgeInsets.all(32),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          DecoratedBox(
+            decoration: BoxDecoration(
+              border: Border.all(color: AppTheme.border),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            ),
+            child: const SizedBox.square(
+              dimension: 56,
+              child: Icon(
+                LucideIcons.zoomOut,
+                size: 26,
+                color: AppTheme.foreground,
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            '帖子不存在',
+            style: TextStyle(color: AppTheme.muted, fontSize: 14),
+          ),
+          const SizedBox(height: 12),
+          const Text(
+            '它可能已被删除，或尚未同步到本机。',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: AppTheme.muted, fontSize: 13),
+          ),
+        ],
+      ),
+    ),
+  );
+}
+
 double _mediaViewerHeight({
   required Size screenSize,
   required List<PostMedia> media,
@@ -267,19 +318,29 @@ class _AuthorHeader extends StatelessWidget {
     final avatar = post.localAvatarPath == null
         ? null
         : File(post.localAvatarPath!);
+    final hasAvatar = avatar != null && avatar.existsSync();
+    final avatarSource = post.authorDisplayName.trim().isEmpty
+        ? post.authorUsername.trim()
+        : post.authorDisplayName.trim();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
       child: Row(
         children: [
           CircleAvatar(
-            radius: 22,
-            backgroundColor: AppTheme.divider,
-            foregroundImage: avatar != null && avatar.existsSync()
-                ? FileImage(avatar)
-                : null,
-            child: avatar == null || !avatar.existsSync()
-                ? const Icon(Icons.person_outline, color: AppTheme.muted)
-                : null,
+            radius: 20,
+            backgroundColor: AppTheme.accent,
+            foregroundColor: AppTheme.accentOn,
+            foregroundImage: hasAvatar ? FileImage(avatar) : null,
+            child: hasAvatar
+                ? null
+                : Text(
+                    avatarSource.isEmpty ? '?' : avatarSource.characters.first,
+                    style: const TextStyle(
+                      color: AppTheme.accentOn,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
           ),
           const SizedBox(width: 12),
           Expanded(
@@ -299,7 +360,11 @@ class _AuthorHeader extends StatelessWidget {
                       : '小红书 · ${post.authorUsername}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+                  style: const TextStyle(
+                    color: AppTheme.muted,
+                    fontFamily: 'monospace',
+                    fontSize: 12,
+                  ),
                 ),
               ],
             ),
@@ -443,7 +508,7 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
       (item) => item.id == widget.currentMediaId,
     );
     return ColoredBox(
-      color: const Color(0xFF111111),
+      color: AppTheme.accent,
       child: Stack(
         children: [
           PageView.builder(
@@ -467,8 +532,8 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
               top: 12,
               child: DecoratedBox(
                 decoration: BoxDecoration(
-                  color: const Color(0x99000000),
-                  borderRadius: BorderRadius.circular(4),
+                  color: AppTheme.accent.withValues(alpha: 0.62),
+                  borderRadius: BorderRadius.circular(999),
                 ),
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
@@ -477,7 +542,11 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
                   ),
                   child: Text(
                     '${(currentIndex < 0 ? 0 : currentIndex) + 1}/${widget.post.media.length}',
-                    style: const TextStyle(color: Colors.white, fontSize: 12),
+                    style: const TextStyle(
+                      color: AppTheme.accentOn,
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
                   ),
                 ),
               ),
@@ -534,15 +603,69 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
                       fit: BoxFit.contain,
                       gaplessPlayback: true,
                     ),
-                    if (media.hasLiveMotion)
-                      const Positioned(
+                    if (media.hasLiveMotion) ...[
+                      Positioned(
                         left: 12,
                         top: 12,
-                        child: Icon(
-                          Icons.motion_photos_on,
-                          color: Colors.white,
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: AppTheme.accent.withValues(alpha: 0.62),
+                            borderRadius: BorderRadius.circular(999),
+                          ),
+                          child: const Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 5,
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  LucideIcons.radio,
+                                  color: AppTheme.accentOn,
+                                  size: 15,
+                                ),
+                                SizedBox(width: 6),
+                                Text(
+                                  'Live Photo',
+                                  style: TextStyle(
+                                    color: AppTheme.accentOn,
+                                    fontFamily: 'monospace',
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
                         ),
                       ),
+                      Positioned(
+                        bottom: 14,
+                        left: 0,
+                        right: 0,
+                        child: Center(
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(
+                              color: AppTheme.accent.withValues(alpha: 0.62),
+                              borderRadius: BorderRadius.circular(999),
+                            ),
+                            child: const Padding(
+                              padding: EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 6,
+                              ),
+                              child: Text(
+                                '长按播放动态部分',
+                                style: TextStyle(
+                                  color: AppTheme.accentOn,
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                   ],
                 ),
         );
@@ -568,13 +691,74 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
       children: [
         _MediaPlaceholder(thumbnailPath: media.localThumbnailPath),
         if (isCurrent && _downloading.contains(media.id))
-          const Center(child: CircularProgressIndicator(color: Colors.white)),
+          const ColoredBox(
+            color: AppTheme.accent,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  SizedBox.square(
+                    dimension: 28,
+                    child: CircularProgressIndicator(
+                      strokeWidth: 3,
+                      color: AppTheme.accentOn,
+                    ),
+                  ),
+                  SizedBox(height: 14),
+                  Text(
+                    '正在下载原图…',
+                    style: TextStyle(color: AppTheme.accentOn, fontSize: 14),
+                  ),
+                ],
+              ),
+            ),
+          ),
         if (isCurrent && _errors.containsKey(media.id))
-          Center(
-            child: IconButton.filled(
-              tooltip: '重新下载',
-              onPressed: () => _ensureMedia(media.id),
-              icon: const Icon(Icons.refresh),
+          ColoredBox(
+            color: AppTheme.accent,
+            child: Center(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  DecoratedBox(
+                    decoration: BoxDecoration(
+                      border: Border.all(
+                        color: AppTheme.accentOn.withValues(alpha: 0.28),
+                      ),
+                      borderRadius: BorderRadius.circular(
+                        AppTheme.radiusMedium,
+                      ),
+                    ),
+                    child: const SizedBox.square(
+                      dimension: 56,
+                      child: Icon(
+                        LucideIcons.imageOff,
+                        color: AppTheme.accentOn,
+                        size: 26,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    '原图下载失败，请检查网络后重试',
+                    style: TextStyle(color: AppTheme.accentOn, fontSize: 14),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox.square(
+                    dimension: 64,
+                    child: OutlinedButton(
+                      onPressed: () => _ensureMedia(media.id),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppTheme.accentOn,
+                        side: const BorderSide(color: AppTheme.accentOn),
+                        shape: const CircleBorder(),
+                        padding: EdgeInsets.zero,
+                      ),
+                      child: const Icon(LucideIcons.rotateCw, size: 24),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
       ],
@@ -591,8 +775,12 @@ class _MediaPlaceholder extends StatelessWidget {
   Widget build(BuildContext context) {
     final file = thumbnailPath == null ? null : File(thumbnailPath!);
     if (file == null || !file.existsSync()) {
-      return const Center(
-        child: Icon(Icons.image_outlined, color: Colors.white54, size: 42),
+      return Center(
+        child: Icon(
+          LucideIcons.image,
+          color: AppTheme.accentOn.withValues(alpha: 0.55),
+          size: 42,
+        ),
       );
     }
     return Image.file(file, fit: BoxFit.contain, gaplessPlayback: true);
@@ -698,10 +886,10 @@ class _LocalVideoState extends State<_LocalVideo> {
   Widget build(BuildContext context) {
     late final Widget content;
     if (_failed) {
-      content = const Center(
+      content = Center(
         child: Icon(
-          Icons.broken_image_outlined,
-          color: Colors.white54,
+          LucideIcons.imageOff,
+          color: AppTheme.accentOn.withValues(alpha: 0.55),
           size: 42,
         ),
       );
@@ -710,7 +898,9 @@ class _LocalVideoState extends State<_LocalVideo> {
         fit: StackFit.expand,
         children: [
           _MediaPlaceholder(thumbnailPath: widget.thumbnailPath),
-          const Center(child: CircularProgressIndicator(color: Colors.white)),
+          const Center(
+            child: CircularProgressIndicator(color: AppTheme.accentOn),
+          ),
         ],
       );
     } else {
@@ -724,7 +914,11 @@ class _LocalVideoState extends State<_LocalVideo> {
             ),
           ),
           if (!_isPlaying)
-            const Icon(Icons.play_circle_fill, color: Colors.white, size: 54),
+            const Icon(
+              LucideIcons.circlePlay,
+              color: AppTheme.accentOn,
+              size: 54,
+            ),
         ],
       );
     }
@@ -746,6 +940,12 @@ class _LocalVideoState extends State<_LocalVideo> {
     );
   }
 }
+
+Widget _detailBackButton(BuildContext context) => IconButton(
+  tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+  onPressed: () => Navigator.maybePop(context),
+  icon: const Icon(LucideIcons.chevronLeft),
+);
 
 class _MetaItem extends StatelessWidget {
   const _MetaItem({required this.icon, required this.label});

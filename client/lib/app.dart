@@ -153,7 +153,7 @@ class _PhotoBookAppState extends ConsumerState<PhotoBookApp> {
               dimension: 18,
               child: CircularProgressIndicator(
                 strokeWidth: 2,
-                color: Colors.white,
+                color: AppTheme.accentOn,
               ),
             ),
             const SizedBox(width: 12),

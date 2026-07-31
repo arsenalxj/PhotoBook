@@ -8,6 +8,7 @@ import 'package:photobook/screens/task_list_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 void main() {
   testWidgets('首页没有 Tab，任务列表从右上角入口进入并显示总数', (tester) async {
@@ -34,13 +35,13 @@ void main() {
     );
 
     expect(find.byType(TabBar), findsNothing);
-    expect(find.byIcon(Icons.format_list_bulleted), findsOneWidget);
+    expect(find.byIcon(LucideIcons.alignLeft), findsOneWidget);
     expect(find.text('2'), findsOneWidget);
     expect(
       tester.widget<Badge>(find.byType(Badge)).backgroundColor,
       AppTheme.light.colorScheme.error,
     );
-    expect(find.byIcon(Icons.settings_outlined), findsOneWidget);
+    expect(find.byIcon(LucideIcons.settings), findsOneWidget);
     expect(find.byTooltip('粘贴链接'), findsOneWidget);
     expect(find.text('PhotoBook'), findsOneWidget);
 
@@ -48,7 +49,7 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.byType(TaskListScreen), findsOneWidget);
-    expect(find.text('任务列表'), findsOneWidget);
+    expect(find.text('任务'), findsOneWidget);
   });
 
   testWidgets('首页粘贴按钮触发剪贴板导入', (tester) async {
@@ -104,12 +105,15 @@ void main() {
 
     final chip = find.byKey(const ValueKey('author-filter-chip'));
     expect(chip, findsOneWidget);
-    expect(find.text('Bob'), findsOneWidget);
+    expect(
+      find.descendant(of: chip, matching: find.text('@bob')),
+      findsOneWidget,
+    );
     expect(find.byKey(const ValueKey('post-a')), findsNothing);
     expect(find.byKey(const ValueKey('post-b')), findsOneWidget);
 
     await tester.tap(
-      find.descendant(of: chip, matching: find.byIcon(Icons.close)),
+      find.descendant(of: chip, matching: find.byIcon(LucideIcons.x)),
     );
     await tester.pump();
 
@@ -129,7 +133,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('delete-post-action')));
     await tester.pumpAndSettle();
 
-    expect(find.text('删除这条帖子？'), findsOneWidget);
+    expect(find.text('删除这条帖子?'), findsOneWidget);
     expect(controller.deletedPostIds, isEmpty);
 
     await tester.tap(find.byKey(const ValueKey('confirm-delete-post')));

@@ -1,0 +1,519 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<title>PhotoBook · 设置 — Android 原型</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-warm: var(--surface);
+    --fg: #111827;
+    --fg-2: var(--fg);
+    --muted: #64748b;
+    --meta: var(--muted);
+    --border: #e5e7eb;
+    --border-soft: var(--border);
+    --accent: #000000;
+    --accent-on: #ffffff;
+    --accent-hover: color-mix(in oklab, var(--accent), white 10%);
+    --accent-active: color-mix(in oklab, var(--accent), white 18%);
+    --success: #16a34a;
+    --warn: #d97706;
+    --danger: #dc2626;
+    --font-display: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
+    --font-body: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
+    --font-mono: "Fira Code", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+    --text-xs: 12px; --text-sm: 14px; --text-base: 16px; --text-lg: 20px;
+    --text-xl: 24px; --text-2xl: 32px; --text-3xl: 40px; --text-4xl: 48px;
+    --leading-body: 1.5; --leading-tight: 1.2; --tracking-display: -0.02em;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+    --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 9999px;
+    --elev-flat: none;
+    --elev-ring: 0 0 0 1px var(--border);
+    --elev-raised:
+      0 1px 2px 0 color-mix(in oklab, var(--fg), transparent 92%),
+      0 1px 3px 0 color-mix(in oklab, var(--fg), transparent 88%);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+    --motion-fast: 150ms; --motion-base: 200ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --container-max: 1280px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: color-mix(in oklab, var(--fg) 3%, var(--bg)); color: var(--fg);
+    font-family: var(--font-body); font-size: 15px; line-height: var(--leading-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; cursor: pointer; }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+  /* ─── 页面外壳(设备之外) ─── */
+  .proto-bar {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .proto-bar-inner {
+    max-width: var(--container-max); margin-inline: auto; padding: var(--space-3) var(--space-6);
+    display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+  }
+  .proto-title { font-weight: 700; font-size: 15px; letter-spacing: var(--tracking-display); }
+  .proto-sub { color: var(--muted); font-size: 13px; }
+  .state-switch { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-left: auto; }
+  .state-btn {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--muted); font-size: 13px; min-height: 36px;
+    transition: color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+  }
+  .state-btn:hover { border-color: var(--fg); color: var(--fg); }
+  .state-btn.active { border-color: var(--accent); color: var(--accent-on); background: var(--accent); }
+  .stage { display: flex; justify-content: center; padding: 40px 24px 64px; }
+  .hint { max-width: var(--container-max); margin: 0 auto; padding: 0 24px 24px; color: var(--muted); font-size: 13px; }
+
+  /* ─── Android 设备框 ─── */
+  .device {
+    position: relative; width: 400px; height: 844px; flex: none;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 24px 64px color-mix(in oklab, var(--fg) 14%, transparent);
+  }
+  .statusbar {
+    height: 28px; flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding-inline: 20px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg);
+  }
+  .statusbar .icons { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  .appbar {
+    height: 56px; flex: none; display: flex; align-items: center; gap: var(--space-2);
+    padding-inline: 8px 16px; border-bottom: 1px solid var(--border); background: var(--bg);
+  }
+  .appbar-title { font-size: var(--text-lg); font-weight: 700; letter-spacing: var(--tracking-display); }
+  .appbar .spacer { flex: 1; }
+  .icon-btn {
+    width: 44px; height: 44px; display: grid; place-items: center; position: relative;
+    background: none; border: 0; border-radius: var(--radius-md); color: var(--fg);
+    transition: background var(--motion-fast) var(--ease-standard);
+  }
+  .icon-btn:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+  .icon-btn svg { width: 22px; height: 22px; }
+
+  .screen { flex: 1; overflow-y: auto; position: relative; padding: 16px; display: flex; flex-direction: column; gap: 16px; }
+
+  /* ─── 分组卡片 ─── */
+  .section-card {
+    border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg);
+    box-shadow: var(--elev-raised); padding: var(--space-3) 0 var(--space-2);
+  }
+  .section-title {
+    margin: 0; padding: 0 16px 8px; color: var(--muted);
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .08em; text-transform: uppercase;
+  }
+  .row {
+    display: flex; align-items: center; gap: 12px; width: 100%; min-height: 56px;
+    padding: 10px 16px; background: none; border: 0; text-align: left; color: var(--fg);
+    transition: background var(--motion-fast) var(--ease-standard);
+  }
+  .row:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+  .row .row-icon {
+    width: 36px; height: 36px; flex: none; border-radius: var(--radius-md);
+    display: grid; place-items: center;
+    background: color-mix(in oklab, var(--fg) 5%, var(--bg)); color: var(--fg);
+  }
+  .row .row-icon.ok { background: color-mix(in oklab, var(--success) 10%, var(--bg)); color: var(--success); }
+  .row .row-icon.danger { background: color-mix(in oklab, var(--danger) 10%, var(--bg)); color: var(--danger); }
+  .row .row-text { flex: 1; min-width: 0; }
+  .row .row-main { display: block; font-size: 15px; font-weight: 600; }
+  .row .row-sub { display: block; font-size: 13px; color: var(--muted); margin-top: 1px; }
+  .row .row-sub.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+  .row .row-sub.ok { color: var(--success); font-family: var(--font-mono); font-size: var(--text-xs); }
+  .row .row-sub.danger { color: var(--danger); }
+  .row .chev { color: var(--muted); flex: none; }
+  .row .row-trail { flex: none; display: grid; place-items: center; width: 28px; height: 28px; color: var(--muted); }
+
+  /* ─── 按钮 ─── */
+  .btn {
+    min-height: 44px; padding: 10px 20px; border-radius: var(--radius-sm); font-size: var(--text-sm); font-weight: 600;
+    display: inline-flex; align-items: center; justify-content: center; gap: 8px;
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+    transition: background var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+  }
+  .btn:hover { border-color: var(--fg); }
+  .btn.primary { background: var(--accent); color: var(--accent-on); border-color: var(--accent); }
+  .btn.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+  .btn.primary:active { background: var(--accent-active); }
+  .btn.danger { background: var(--danger); color: var(--accent-on); border-color: var(--danger); }
+  .btn.danger:hover { background: color-mix(in oklab, var(--danger), white 10%); }
+  .btn:disabled { opacity: .6; cursor: default; }
+
+  /* ─── 更新对话框 ─── */
+  .modal-mask {
+    position: absolute; inset: 0; z-index: 25; display: none;
+    align-items: center; justify-content: center; padding: 24px;
+    background: color-mix(in oklab, var(--fg) 55%, transparent);
+  }
+  .dialog {
+    width: 100%; max-width: 320px; background: var(--bg); border-radius: var(--radius-md);
+    border: 1px solid var(--border); padding: 20px;
+    box-shadow: 0 24px 64px color-mix(in oklab, var(--fg) 30%, transparent);
+  }
+  .dialog h2 { margin: 0 0 12px; font-size: 17px; font-weight: 700; letter-spacing: var(--tracking-display); }
+  .dlg-pane { display: none; }
+  .dlg-pane .ver { font-family: var(--font-mono); font-size: var(--text-sm); font-weight: 700; margin: 0 0 8px; }
+  .dlg-pane ul { margin: 0 0 16px; padding-left: 18px; font-size: var(--text-sm); }
+  .dlg-pane ul li { margin-bottom: 4px; }
+  .dlg-pane .note { margin: 0 0 16px; font-size: var(--text-sm); color: var(--muted); }
+  .dlg-actions { display: flex; gap: 8px; justify-content: flex-end; }
+  .dlg-actions .btn { flex: 1; }
+  .progress-track {
+    height: 8px; border-radius: var(--radius-pill); overflow: hidden; margin: 12px 0 8px;
+    background: color-mix(in oklab, var(--fg) 8%, var(--bg));
+  }
+  .progress-fill {
+    height: 100%; width: 0%; border-radius: var(--radius-pill);
+    background: var(--accent); transition: width .08s linear;
+  }
+  .progress-meta {
+    display: flex; align-items: center; justify-content: space-between;
+    font-family: var(--font-mono); font-size: 13px; color: var(--muted); margin-bottom: 16px;
+  }
+  .center-pane { display: none; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; text-align: center; }
+  .center-pane .big-icon {
+    width: 48px; height: 48px; border-radius: var(--radius-md); display: grid; place-items: center;
+    background: color-mix(in oklab, var(--danger) 10%, var(--bg)); color: var(--danger);
+  }
+  .center-pane p { margin: 0; font-size: var(--text-sm); }
+
+  /* ─── SnackBar ─── */
+  .snackbar {
+    position: absolute; left: 16px; right: 16px; bottom: 24px; z-index: 30;
+    display: flex; align-items: center; gap: 12px; min-height: 52px;
+    background: var(--fg); color: var(--bg);
+    border-radius: var(--radius-md); padding: 13px 16px; font-size: var(--text-sm);
+    box-shadow: 0 8px 24px color-mix(in oklab, var(--fg) 30%, transparent);
+    opacity: 0; visibility: hidden; transform: translateY(10px); pointer-events: none;
+    transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), visibility var(--motion-base) var(--ease-standard);
+  }
+  .device[data-state="latest"] .snackbar { opacity: 1; visibility: visible; transform: translateY(0); }
+  .snackbar-status { width: 24px; height: 24px; flex: none; display: grid; place-items: center; color: var(--bg); }
+  .snackbar-text { min-width: 0; flex: 1; line-height: 1.35; font-weight: 500; }
+  .snackbar-status svg { width: 17px; height: 17px; }
+  .spin {
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    border: 2px solid color-mix(in oklab, currentColor 25%, transparent);
+    border-top-color: currentColor; animation: rot 0.8s linear infinite;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  /* ─── 状态驱动:Instagram 卡片三态 ─── */
+  .ig-variant { display: contents; }
+  .device:not([data-state="ig-logged-out"]) .ig-out { display: none; }
+  .device[data-state="ig-logged-out"] .ig-ok,
+  .device[data-state="ig-expired"] .ig-ok { display: none; }
+  .device:not([data-state="ig-expired"]) .ig-expired { display: none; }
+
+  /* ─── 状态驱动:R2 卡片三态 ─── */
+  .r2-variant { display: contents; }
+  .device:not([data-state="r2-unconfigured"]) .r2-empty { display: none; }
+  .device[data-state="r2-unconfigured"] .r2-ok,
+  .device[data-state="r2-failed"] .r2-ok { display: none; }
+  .device:not([data-state="r2-failed"]) .r2-failed { display: none; }
+
+  /* ─── 状态驱动:检查更新卡片 ─── */
+  .check-busy { display: none; }
+  .device[data-state="checking"] .check-idle.row-sub { display: none; }
+  .device[data-state="checking"] .check-busy { display: block; }
+  .check-row .spin { margin-right: var(--space-2); color: var(--muted); }
+  .device[data-state="checking"] .check-row { pointer-events: none; }
+
+  /* ─── 状态驱动:更新对话框 ─── */
+  .device[data-state^="upd-"] .modal-mask { display: flex; }
+  .device[data-state="upd-available"] .pane-available,
+  .device[data-state="upd-downloading"] .pane-downloading,
+  .device[data-state="upd-ready"] .pane-ready,
+  .device[data-state="upd-permission"] .pane-permission,
+  .device[data-state="upd-failed"] .pane-failed { display: block; }
+  .device[data-state="upd-installing"] .pane-installing { display: flex; }
+
+  .gesture-bar { height: 18px; flex: none; display: grid; place-items: center; background: var(--bg); }
+  .gesture-bar span { width: 108px; height: 4px; border-radius: var(--radius-pill); background: var(--border); }
+</style>
+</head>
+<body>
+<header class="proto-bar" data-od-id="proto-bar">
+  <div class="proto-bar-inner">
+    <span class="proto-title">PhotoBook · 设置</span>
+    <span class="proto-sub">Android 原型 · 界面 4 / 7</span>
+    <nav class="state-switch" data-od-id="state-switch">
+      <button class="state-btn active" data-state="default">默认</button>
+      <button class="state-btn" data-state="ig-logged-out">IG 未登录</button>
+      <button class="state-btn" data-state="ig-expired">IG 登录已失效</button>
+      <button class="state-btn" data-state="r2-unconfigured">R2 未配置</button>
+      <button class="state-btn" data-state="r2-failed">R2 同步失败</button>
+      <button class="state-btn" data-state="checking">检查更新中</button>
+      <button class="state-btn" data-state="upd-available">更新-新版本</button>
+      <button class="state-btn" data-state="upd-downloading">更新-下载中</button>
+      <button class="state-btn" data-state="upd-ready">更新-已就绪</button>
+      <button class="state-btn" data-state="upd-permission">更新-需权限</button>
+      <button class="state-btn" data-state="upd-installing">更新-安装中</button>
+      <button class="state-btn" data-state="upd-failed">更新-失败</button>
+      <button class="state-btn" data-state="latest">已是最新</button>
+    </nav>
+  </div>
+</header>
+
+<div class="stage">
+  <div class="device" id="device" data-state="default" data-od-id="device-settings">
+    <div class="statusbar"><span>9:41</span><span class="icons">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h3v4H2zM7.5 13h3v8h-3zM13 9h3v12h-3zM18.5 5h3v16h-3z"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 18.5 8.5 15a5 5 0 0 1 7 0zM12 12a9 9 0 0 0-6.4 2.6l-1.8-1.9A12 12 0 0 1 12 9a12 12 0 0 1 8.2 3.7l-1.8 1.9A9 9 0 0 0 12 12zM12 5a15 15 0 0 0-9.4 3.3L.8 6.4A18 18 0 0 1 12 2a18 18 0 0 1 11.2 4.4l-1.8 1.9A15 15 0 0 0 12 5z"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="8" width="17" height="9" rx="2"></rect><rect x="20" y="11" width="2.5" height="3" rx="1"></rect></svg>
+    </span></div>
+
+    <div class="appbar" data-od-id="appbar">
+      <a class="icon-btn" href="photobook-home.html" aria-label="返回" data-od-id="back-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5m6-7-7 7 7 7"/></svg>
+      </a>
+      <span class="appbar-title">设置</span>
+      <span class="spacer"></span>
+    </div>
+
+    <div class="screen" data-od-id="settings-screen">
+      <!-- Instagram -->
+      <section class="section-card" data-od-id="section-instagram">
+        <h3 class="section-title">Instagram</h3>
+        <a class="row" href="photobook-instagram.html" data-od-id="instagram-row">
+          <span class="ig-variant ig-out" data-od-id="ig-state-out">
+            <span class="row-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            </span>
+            <span class="row-text">
+              <span class="row-main">Instagram 账号</span>
+              <span class="row-sub">未登录</span>
+            </span>
+          </span>
+          <span class="ig-variant ig-ok" data-od-id="ig-state-ok">
+            <span class="row-icon ok">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            </span>
+            <span class="row-text">
+              <span class="row-main">Instagram 账号</span>
+              <span class="row-sub ok">@wander_chen</span>
+            </span>
+          </span>
+          <span class="ig-variant ig-expired" data-od-id="ig-state-expired">
+            <span class="row-icon danger">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 8h3l2-3h6l2 3h3v11H4z"/><circle cx="12" cy="13" r="3.5"/></svg>
+            </span>
+            <span class="row-text">
+              <span class="row-main">Instagram 账号</span>
+              <span class="row-sub danger">@wander_chen · 登录已失效</span>
+            </span>
+          </span>
+          <svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 5 7 7-7 7"/></svg>
+        </a>
+      </section>
+
+      <!-- 云同步 -->
+      <section class="section-card" data-od-id="section-sync">
+        <h3 class="section-title">云同步</h3>
+        <a class="row" href="photobook-r2-settings.html" data-od-id="r2-row">
+          <span class="r2-variant r2-empty" data-od-id="r2-state-empty">
+            <span class="row-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 18a4.5 4.5 0 1 1 .6-8.96A6 6 0 0 1 19 11a3.5 3.5 0 0 1-1 6.9z"/></svg>
+            </span>
+            <span class="row-text">
+              <span class="row-main">Cloudflare R2</span>
+              <span class="row-sub">未配置</span>
+            </span>
+          </span>
+          <span class="r2-variant r2-ok" data-od-id="r2-state-ok">
+            <span class="row-icon">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 18a4.5 4.5 0 1 1 .6-8.96A6 6 0 0 1 19 11a3.5 3.5 0 0 1-1 6.9z"/></svg>
+            </span>
+            <span class="row-text">
+              <span class="row-main">Cloudflare R2</span>
+              <span class="row-sub mono">photobook-backup / photobook</span>
+            </span>
+          </span>
+          <span class="r2-variant r2-failed" data-od-id="r2-state-failed">
+            <span class="row-icon danger">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 18a4.5 4.5 0 1 1 .6-8.96A6 6 0 0 1 19 11a3.5 3.5 0 0 1-1 6.9z"/><path d="m10.5 13.5 3 3m0-3-3 3"/></svg>
+            </span>
+            <span class="row-text">
+              <span class="row-main">Cloudflare R2</span>
+              <span class="row-sub danger">同步失败</span>
+            </span>
+          </span>
+          <svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 5 7 7-7 7"/></svg>
+        </a>
+      </section>
+
+      <!-- 关于 -->
+      <section class="section-card" data-od-id="section-about">
+        <h3 class="section-title">关于</h3>
+        <button class="row check-row" id="checkUpdate" data-od-id="check-update-row">
+          <span class="row-icon check-idle">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+          </span>
+          <span class="row-text">
+            <span class="row-main">检查更新</span>
+            <span class="row-sub check-idle">当前版本 1.3.0 (130)</span>
+            <span class="row-sub check-busy">正在检查…</span>
+          </span>
+          <span class="spin check-busy" aria-hidden="true"></span>
+          <span class="row-trail">
+            <svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 5 7 7-7 7"/></svg>
+          </span>
+        </button>
+      </section>
+    </div>
+
+    <!-- 更新对话框 -->
+    <div class="modal-mask" id="modalMask" data-od-id="update-dialog">
+      <div class="dialog" role="dialog" aria-modal="true" aria-label="应用更新">
+        <h2>应用更新</h2>
+
+        <div class="dlg-pane pane-available" data-od-id="pane-available">
+          <p class="ver">1.4.0 (140)</p>
+          <ul data-od-id="release-notes">
+            <li>支持 Instagram 合集批量归档</li>
+            <li>R2 同步新增断点续传</li>
+            <li>修复下载中断后的进度显示问题</li>
+          </ul>
+          <div class="dlg-actions">
+            <button class="btn" id="laterBtn" data-od-id="later-btn">稍后</button>
+            <button class="btn primary" id="downloadBtn" data-od-id="download-btn">下载更新</button>
+          </div>
+        </div>
+
+        <div class="dlg-pane pane-downloading" data-od-id="pane-downloading">
+          <p class="note">正在安全下载 APK…</p>
+          <div class="progress-track"><div class="progress-fill" id="progressFill"></div></div>
+          <div class="progress-meta"><span>1.4.0 (140)</span><span id="progressPct">已下载 0%</span></div>
+          <div class="dlg-actions">
+            <button class="btn" id="cancelDownloadBtn" data-od-id="cancel-download-btn">取消下载</button>
+          </div>
+        </div>
+
+        <div class="dlg-pane pane-ready" data-od-id="pane-ready">
+          <p class="note">APK 已通过大小和 SHA-256 校验。安装前还会核对包名、版本和签名证书。</p>
+          <div class="dlg-actions">
+            <button class="btn" id="readyLaterBtn" data-od-id="ready-later-btn">稍后</button>
+            <button class="btn primary" id="installBtn" data-od-id="install-btn">安装</button>
+          </div>
+        </div>
+
+        <div class="dlg-pane pane-permission" data-od-id="pane-permission">
+          <p class="note">请在系统页面允许 PhotoBook 安装未知应用,授权完成后返回本页面继续。</p>
+          <div class="dlg-actions">
+            <button class="btn" id="permLaterBtn" data-od-id="perm-later-btn">稍后</button>
+            <button class="btn primary" id="continueInstallBtn" data-od-id="continue-install-btn">继续安装</button>
+          </div>
+        </div>
+
+        <div class="dlg-pane center-pane pane-installing" data-od-id="pane-installing">
+          <span class="spin" style="width:26px;height:26px;"></span>
+          <p>请在 Android 系统安装页面确认更新。</p>
+        </div>
+
+        <div class="dlg-pane pane-failed" data-od-id="pane-failed">
+          <div class="center-pane" style="display:flex; padding:0 0 12px;">
+            <span class="big-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="m9 9 6 6m0-6-6 6"/></svg>
+            </span>
+            <p style="font-weight:700;">更新失败</p>
+            <p class="note" style="margin:0;">安装包校验未通过,请重新下载后再试。</p>
+          </div>
+          <div class="dlg-actions">
+            <button class="btn" id="closeFailBtn" data-od-id="close-fail-btn">关闭</button>
+            <button class="btn primary" id="retryBtn" data-od-id="retry-btn">重试</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="snackbar" role="status" aria-live="polite" aria-atomic="true" data-od-id="latest-snackbar">
+      <span class="snackbar-status" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 12.5l5 5L20 6.5"/></svg></span>
+      <span class="snackbar-text">当前已是最新版本 1.3.0</span>
+    </div>
+    <div class="gesture-bar"><span></span></div>
+  </div>
+</div>
+<p class="hint">交互:点击「检查更新」走完整更新流程(新版本 → 下载 → 校验 → 权限 → 系统安装器);下载中与安装中点击遮罩不会关闭对话框;顶部状态切换按钮可直接预览各卡片副标题与对话框状态。</p>
+
+<script>
+  const device = document.getElementById('device');
+  const modalMask = document.getElementById('modalMask');
+  const checkBtn = document.getElementById('checkUpdate');
+  const progressFill = document.getElementById('progressFill');
+  const progressPct = document.getElementById('progressPct');
+
+  let progressTimer = null;
+  let installTimer = null;
+  let checkTimer = null;
+
+  function stopTimers() {
+    clearInterval(progressTimer); progressTimer = null;
+    clearTimeout(installTimer); installTimer = null;
+    clearTimeout(checkTimer); checkTimer = null;
+  }
+
+  function setState(s, opts) {
+    stopTimers();
+    device.dataset.state = s;
+    document.querySelectorAll('.state-btn').forEach(b => b.classList.toggle('active', b.dataset.state === s));
+    if (s === 'upd-downloading') startProgress(opts && typeof opts.from === 'number' ? opts.from : 0);
+    if (s === 'upd-installing') {
+      installTimer = setTimeout(() => setState('default'), 1800);
+    }
+  }
+
+  function startProgress(from) {
+    let pct = from;
+    progressFill.style.width = pct + '%';
+    progressPct.textContent = '已下载 ' + pct + '%';
+    progressTimer = setInterval(() => {
+      pct = Math.min(100, pct + 2);
+      progressFill.style.width = pct + '%';
+      progressPct.textContent = '已下载 ' + pct + '%';
+      if (pct >= 100) setState('upd-ready');
+    }, 60);
+  }
+
+  // 状态切换
+  document.querySelectorAll('.state-btn').forEach(b => b.addEventListener('click', () => {
+    // 直接预览下载中状态时从 64% 开始
+    setState(b.dataset.state, b.dataset.state === 'upd-downloading' ? { from: 64 } : undefined);
+  }));
+
+  // 检查更新:检查中 1 秒 → 发现新版本
+  checkBtn.addEventListener('click', () => {
+    if (device.dataset.state === 'checking') return;
+    setState('checking');
+    checkTimer = setTimeout(() => setState('upd-available'), 1000);
+  });
+
+  // 对话框流程
+  document.getElementById('laterBtn').addEventListener('click', () => setState('default'));
+  document.getElementById('downloadBtn').addEventListener('click', () => setState('upd-downloading'));
+  document.getElementById('cancelDownloadBtn').addEventListener('click', () => setState('upd-available'));
+  document.getElementById('readyLaterBtn').addEventListener('click', () => setState('default'));
+  document.getElementById('installBtn').addEventListener('click', () => setState('upd-permission'));
+  document.getElementById('permLaterBtn').addEventListener('click', () => setState('default'));
+  document.getElementById('continueInstallBtn').addEventListener('click', () => setState('upd-installing'));
+  document.getElementById('closeFailBtn').addEventListener('click', () => setState('default'));
+  document.getElementById('retryBtn').addEventListener('click', () => setState('upd-downloading'));
+
+  // 遮罩点击:下载中与安装中不可关闭
+  modalMask.addEventListener('click', e => {
+    if (e.target !== modalMask) return;
+    const s = device.dataset.state;
+    if (s === 'upd-downloading' || s === 'upd-installing') return;
+    setState('default');
+  });
+</script>
+</body></html>

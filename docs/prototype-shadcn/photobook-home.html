@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<title>PhotoBook · 图库 — Android 原型</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-warm: var(--surface);
+    --fg: #111827;
+    --fg-2: var(--fg);
+    --muted: #64748b;
+    --meta: var(--muted);
+    --border: #e5e7eb;
+    --border-soft: var(--border);
+    --accent: #000000;
+    --accent-on: #ffffff;
+    --accent-hover: color-mix(in oklab, var(--accent), white 10%);
+    --accent-active: color-mix(in oklab, var(--accent), white 18%);
+    --success: #16a34a;
+    --warn: #d97706;
+    --danger: #dc2626;
+    --font-display: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
+    --font-body: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
+    --font-mono: "Fira Code", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+    --text-xs: 12px; --text-sm: 14px; --text-base: 16px; --text-lg: 20px;
+    --text-xl: 24px; --text-2xl: 32px; --text-3xl: 40px; --text-4xl: 48px;
+    --leading-body: 1.5; --leading-tight: 1.2; --tracking-display: -0.02em;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+    --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 9999px;
+    --elev-flat: none;
+    --elev-ring: 0 0 0 1px var(--border);
+    --elev-raised:
+      0 1px 2px 0 color-mix(in oklab, var(--fg), transparent 92%),
+      0 1px 3px 0 color-mix(in oklab, var(--fg), transparent 88%);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+    --motion-fast: 150ms; --motion-base: 200ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --container-max: 1280px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: color-mix(in oklab, var(--fg) 3%, var(--bg)); color: var(--fg);
+    font-family: var(--font-body); font-size: 15px; line-height: var(--leading-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; cursor: pointer; }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+  /* ─── 页面外壳(设备之外) ─── */
+  .proto-bar {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .proto-bar-inner {
+    max-width: var(--container-max); margin-inline: auto; padding: var(--space-3) var(--space-6);
+    display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+  }
+  .proto-title { font-weight: 700; font-size: 15px; letter-spacing: var(--tracking-display); }
+  .proto-sub { color: var(--muted); font-size: 13px; }
+  .state-switch { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-left: auto; }
+  .state-btn {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--muted); font-size: 13px; min-height: 36px;
+    transition: color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+  }
+  .state-btn:hover { border-color: var(--fg); color: var(--fg); }
+  .state-btn.active { border-color: var(--accent); color: var(--accent-on); background: var(--accent); }
+  .stage { display: flex; justify-content: center; padding: 40px 24px 64px; }
+  .hint { max-width: var(--container-max); margin: 0 auto; padding: 0 24px 24px; color: var(--muted); font-size: 13px; }
+
+  /* ─── Android 设备框 ─── */
+  .device {
+    position: relative; width: 400px; height: 844px; flex: none;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 24px 64px color-mix(in oklab, var(--fg) 14%, transparent);
+  }
+  .statusbar {
+    height: 28px; flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding-inline: 20px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg);
+  }
+  .statusbar .icons { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  .appbar {
+    height: 56px; flex: none; display: flex; align-items: center; gap: var(--space-2);
+    padding-inline: 16px 8px; border-bottom: 1px solid var(--border); background: var(--bg);
+  }
+  .appbar-title { font-size: var(--text-lg); font-weight: 700; letter-spacing: var(--tracking-display); }
+  .appbar .spacer { flex: 1; }
+  .icon-btn {
+    width: 44px; height: 44px; display: grid; place-items: center; position: relative;
+    background: none; border: 0; border-radius: var(--radius-md); color: var(--fg);
+    transition: background var(--motion-fast) var(--ease-standard);
+  }
+  .icon-btn:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+  .icon-btn svg { width: 22px; height: 22px; }
+  .badge {
+    position: absolute; top: 4px; right: 2px; min-width: 18px; height: 18px; padding-inline: 5px;
+    border-radius: var(--radius-pill); background: var(--accent); color: var(--accent-on);
+    font-family: var(--font-mono); font-size: 11px; display: grid; place-items: center;
+  }
+  .badge.danger { background: var(--danger); }
+  .filter-chip {
+    display: inline-flex; align-items: center; gap: 6px; max-width: 200px;
+    padding: 5px 6px 5px 12px; border: 1px solid var(--border); border-radius: var(--radius-md);
+    font-size: var(--text-sm); font-weight: 600; background: var(--bg); box-shadow: var(--elev-raised);
+  }
+  .filter-chip button { border: 0; background: none; color: var(--muted); width: 28px; height: 28px; border-radius: var(--radius-sm); font-size: 15px; }
+  .filter-chip button:hover { color: var(--fg); background: color-mix(in oklab, var(--fg) 6%, transparent); }
+
+  .screen { flex: 1; overflow-y: auto; position: relative; }
+
+  /* ─── 图库网格 ─── */
+  .grid { column-count: 2; column-gap: 8px; padding: 8px; }
+  .post-card {
+    break-inside: avoid; margin-bottom: 8px; position: relative;
+    border: 1px solid var(--border); border-radius: var(--radius-md); overflow: hidden;
+    background: var(--bg); cursor: pointer; box-shadow: var(--elev-raised);
+    transition: border-color var(--motion-fast) var(--ease-standard);
+  }
+  .post-card:hover { border-color: var(--muted); }
+  .cover { position: relative; display: grid; place-items: center; color: var(--muted); font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em; }
+  .cover .play { position: absolute; inset: 0; display: grid; place-items: center; }
+  .cover .play span {
+    width: 40px; height: 40px; border-radius: var(--radius-pill); display: grid; place-items: center;
+    background: color-mix(in oklab, var(--fg) 78%, transparent); color: var(--accent-on);
+  }
+  .count-badge {
+    position: absolute; top: 8px; right: 8px; display: inline-flex; align-items: center; gap: 4px;
+    padding: 3px 8px; border-radius: var(--radius-pill); font-family: var(--font-mono); font-size: 11px;
+    background: color-mix(in oklab, var(--fg) 78%, transparent); color: var(--accent-on);
+  }
+  .post-meta { padding: 10px 12px 12px; }
+  .caption {
+    margin: 0 0 8px; font-size: 13px; line-height: 1.45;
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+  }
+  .author { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .avatar {
+    width: 24px; height: 24px; border-radius: var(--radius-pill); flex: none;
+    display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--accent-on);
+    background: var(--accent);
+  }
+  .author .uname { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .platform-tag {
+    flex: none; margin-left: auto; padding: 1px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    font-family: var(--font-mono); font-size: 10px; color: var(--muted); letter-spacing: .02em;
+  }
+
+  /* 长按操作覆盖层 */
+  .card-overlay {
+    position: absolute; inset: 0; z-index: 5; display: none;
+    background: color-mix(in oklab, var(--fg) 78%, transparent);
+    flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  }
+  .post-card.pressed .card-overlay { display: flex; }
+  .overlay-btn {
+    min-width: 128px; min-height: 44px; padding: 10px 20px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg); font-size: var(--text-sm); font-weight: 600;
+  }
+  .overlay-btn:hover { border-color: var(--fg); }
+  .overlay-btn.danger { color: var(--accent-on); background: var(--danger); border-color: var(--danger); }
+
+  /* ─── 空状态 ─── */
+  .empty {
+    display: none; height: 100%; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; color: var(--muted); text-align: center; padding: 32px;
+  }
+  .empty .mark {
+    width: 56px; height: 56px; border-radius: var(--radius-md); border: 1px solid var(--border);
+    display: grid; place-items: center; color: var(--fg); background: var(--bg);
+  }
+  .empty p { margin: 0; font-size: var(--text-sm); }
+
+  /* ─── 状态驱动 ─── */
+  .device[data-state="empty"] .grid,
+  .device[data-state="filter-empty"] .grid { display: none; }
+  .device[data-state="empty"] .empty-default { display: flex; }
+  .device[data-state="filter-empty"] .empty-filter { display: flex; }
+  .device:not([data-state="filter"]):not([data-state="filter-empty"]) .filter-chip { display: none; }
+  .device[data-state="filter"] .appbar-title,
+  .device[data-state="filter-empty"] .appbar-title { display: none; }
+  .sync-spin { display: none; }
+  .device[data-state="syncing"] .sync-spin { display: grid; }
+  .snackbar {
+    position: absolute; left: 16px; right: 16px; bottom: 24px; z-index: 30;
+    display: flex; align-items: center; gap: 12px; min-height: 52px;
+    background: var(--fg); color: var(--bg);
+    border-radius: var(--radius-md); padding: 13px 16px; font-size: var(--text-sm);
+    box-shadow: 0 8px 24px color-mix(in oklab, var(--fg) 30%, transparent);
+    opacity: 0; visibility: hidden; transform: translateY(10px); pointer-events: none;
+    transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), visibility var(--motion-base) var(--ease-standard);
+  }
+  .device[data-state="saving"] .snackbar { opacity: 1; visibility: visible; transform: translateY(0); }
+  .snackbar-status { width: 24px; height: 24px; flex: none; display: grid; place-items: center; color: var(--bg); }
+  .snackbar-text { min-width: 0; flex: 1; line-height: 1.35; font-weight: 500; }
+  .snackbar-status .spin { width: 16px; height: 16px; }
+  .spin {
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    border: 2px solid color-mix(in oklab, currentColor 25%, transparent);
+    border-top-color: currentColor; animation: rot 0.8s linear infinite;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  .gesture-bar { height: 18px; flex: none; display: grid; place-items: center; background: var(--bg); }
+  .gesture-bar span { width: 108px; height: 4px; border-radius: var(--radius-pill); background: var(--border); }
+</style>
+</head>
+<body>
+<header class="proto-bar" data-od-id="proto-bar">
+  <div class="proto-bar-inner">
+    <span class="proto-title">PhotoBook · 图库</span>
+    <span class="proto-sub">Android 原型 · 界面 1 / 7</span>
+    <nav class="state-switch" data-od-id="state-switch">
+      <button class="state-btn active" data-state="default">默认</button>
+      <button class="state-btn" data-state="syncing">同步中</button>
+      <button class="state-btn" data-state="saving">保存中</button>
+      <button class="state-btn" data-state="filter">博主筛选</button>
+      <button class="state-btn" data-state="empty">空图库</button>
+      <button class="state-btn" data-state="filter-empty">筛选无结果</button>
+    </nav>
+  </div>
+</header>
+
+<div class="stage">
+  <div class="device" id="device" data-state="default" data-od-id="device-home">
+    <div class="statusbar"><span>9:41</span><span class="icons">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h3v4H2zM7.5 13h3v8h-3zM13 9h3v12h-3zM18.5 5h3v16h-3z"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 18.5 8.5 15a5 5 0 0 1 7 0zM12 12a9 9 0 0 0-6.4 2.6l-1.8-1.9A12 12 0 0 1 12 9a12 12 0 0 1 8.2 3.7l-1.8 1.9A9 9 0 0 0 12 12zM12 5a15 15 0 0 0-9.4 3.3L.8 6.4A18 18 0 0 1 12 2a18 18 0 0 1 11.2 4.4l-1.8 1.9A15 15 0 0 0 12 5z"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="8" width="17" height="9" rx="2"></rect><rect x="20" y="11" width="2.5" height="3" rx="1"></rect></svg>
+    </span></div>
+
+    <div class="appbar" data-od-id="appbar">
+      <span class="appbar-title">PhotoBook</span>
+      <span class="filter-chip" data-od-id="filter-chip">@wander_chen <button id="clearFilter" aria-label="清除筛选">×</button></span>
+      <span class="spacer"></span>
+      <span class="icon-btn sync-spin" aria-label="同步中"><span class="spin"></span></span>
+      <a class="icon-btn" href="photobook-tasks.html" aria-label="任务列表" data-od-id="tasks-entry">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>
+        <span class="badge num">2</span>
+      </a>
+      <a class="icon-btn" href="photobook-settings.html" aria-label="设置" data-od-id="settings-entry">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"></circle><path d="M19 12a7 7 0 0 0-.1-1.2l2-1.5-2-3.4-2.3 1a7 7 0 0 0-2-1.2L14.2 3h-4l-.4 2.7a7 7 0 0 0-2 1.2l-2.3-1-2 3.4 2 1.5A7 7 0 0 0 5 12c0 .4 0 .8.1 1.2l-2 1.5 2 3.4 2.3-1a7 7 0 0 0 2 1.2l.4 2.7h4l.4-2.7a7 7 0 0 0 2-1.2l2.3 1 2-3.4-2-1.5c.1-.4.1-.8.1-1.2z"></path></svg>
+      </a>
+    </div>
+
+    <div class="screen">
+      <div class="grid" id="grid" data-od-id="post-grid"></div>
+      <div class="empty empty-default" data-od-id="empty-library">
+        <div class="mark"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 3h12a1 1 0 0 1 1 1v17l-7-4-7 4V4a1 1 0 0 1 1-1z"></path></svg></div>
+        <p>还没有保存的帖子</p>
+        <p style="font-size:13px;">在 Instagram 或小红书里把帖子「分享」到 PhotoBook,即可归档到本机。</p>
+      </div>
+      <div class="empty empty-filter" data-od-id="empty-filter">
+        <div class="mark"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"></circle><path d="m20 20-3.5-3.5"></path></svg></div>
+        <p>没有该博主的帖子</p>
+      </div>
+    </div>
+
+    <div class="snackbar" role="status" aria-live="polite" aria-atomic="true" data-od-id="saving-snackbar">
+      <span class="snackbar-status" aria-hidden="true"><span class="spin"></span></span>
+      <span class="snackbar-text">正在保存 2 条帖子</span>
+    </div>
+    <div class="gesture-bar"><span></span></div>
+  </div>
+</div>
+<p class="hint">交互:点击卡片进入帖子详情;长按卡片(约 0.5 秒)弹出「只看TA / 删除」操作;右上角进入任务列表与设置。</p>
+
+<script>
+  const POSTS = [
+    { id: 1, user: 'wander_chen', name: '陈漫游', platform: 'IG',   caption: '雨后的武功山草甸,云从山谷里一层一层漫上来。', count: 4, video: false, ratio: '4/5',  tint: 18 },
+    { id: 2, user: 'kitchen.lab', name: '厨房实验室', platform: 'IG',   caption: '第 12 次调整配方:脆皮年糕外皮的关键是二次复炸,油温 190℃。', count: 1, video: true,  ratio: '1/1',  tint: 30 },
+    { id: 3, user: '山丘日记',   name: '山丘日记', platform: '小红书', caption: '日出前四十分钟赶到观景台是值得的。', count: 1, video: false, ratio: '3/4',  tint: 10 },
+    { id: 4, user: 'type.daily', name: '字体日报', platform: 'IG',   caption: '一家开在深圳的旧印刷厂,还保留着整套铅字。', count: 7, video: false, ratio: '4/3',  tint: 24 },
+    { id: 5, user: 'sea.mail',   name: '海上邮局', platform: 'IG',   caption: '轮渡离港前的十分钟,所有人都安静了。', count: 1, video: true,  ratio: '4/5',  tint: 40 },
+    { id: 6, user: '梅子酒记账', name: '梅子酒记账', platform: '小红书', caption: '青梅酒满三个月,开坛。颜色比预想深一些。', count: 3, video: false, ratio: '1/1',  tint: 14 },
+    { id: 7, user: 'type.daily', name: '字体日报', platform: 'IG',   caption: '招牌手写体采集计划 · 广州站,第 214 块。', count: 1, video: false, ratio: '3/4',  tint: 34 },
+    { id: 8, user: 'sea.mail',   name: '海上邮局', platform: 'IG',   caption: '灯塔看守人的一天(图集)。', count: 9, video: false, ratio: '4/5',  tint: 8 },
+  ];
+
+  const grid = document.getElementById('grid');
+  const device = document.getElementById('device');
+
+  function coverStyle(p) {
+    return `aspect-ratio:${p.ratio};background:linear-gradient(135deg,
+      color-mix(in oklab, var(--muted) ${p.tint}%, var(--bg)),
+      color-mix(in oklab, var(--fg) 8%, var(--bg)));`;
+  }
+
+  function render(filterUser) {
+    grid.innerHTML = '';
+    POSTS.filter(p => !filterUser || p.user === filterUser).forEach(p => {
+      const card = document.createElement('article');
+      card.className = 'post-card';
+      card.dataset.odId = 'post-card-' + p.id;
+      card.innerHTML = `
+        <div class="cover" style="${coverStyle(p)}">
+          <span>${p.video ? '视频封面' : '照片 ' + p.id}</span>
+          ${p.video ? '<div class="play"><span><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span></div>' : ''}
+          ${p.count > 1 ? `<span class="count-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/></svg>${p.count}</span>` : ''}
+        </div>
+        <div class="post-meta">
+          <p class="caption">${p.caption}</p>
+          <div class="author"><span class="avatar">${p.name[0]}</span><span class="uname">${p.platform === 'IG' ? '@' + p.user : p.user}</span><span class="platform-tag">${p.platform}</span></div>
+        </div>
+        <div class="card-overlay">
+          <button class="overlay-btn" data-act="only">只看TA</button>
+          <button class="overlay-btn danger" data-act="del">删除</button>
+        </div>`;
+      grid.appendChild(card);
+
+      card.addEventListener('click', e => {
+        if (card.classList.contains('pressed') || e.target.closest('.overlay-btn')) return;
+        location.href = 'photobook-detail.html';
+      });
+      let timer = null;
+      card.addEventListener('pointerdown', () => {
+        timer = setTimeout(() => { document.querySelectorAll('.post-card.pressed').forEach(c => c.classList.remove('pressed')); card.classList.add('pressed'); }, 500);
+      });
+      ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => card.addEventListener(ev, () => clearTimeout(timer)));
+      card.addEventListener('contextmenu', e => e.preventDefault());
+      card.querySelector('[data-act="only"]').addEventListener('click', () => { card.classList.remove('pressed'); setState('filter'); });
+      card.querySelector('[data-act="del"]').addEventListener('click', () => { card.remove(); });
+    });
+  }
+
+  function setState(s) {
+    device.dataset.state = s;
+    document.querySelectorAll('.state-btn').forEach(b => b.classList.toggle('active', b.dataset.state === s));
+    render(s === 'filter' ? 'wander_chen' : null);
+  }
+
+  document.querySelectorAll('.state-btn').forEach(b => b.addEventListener('click', () => setState(b.dataset.state)));
+  document.getElementById('clearFilter').addEventListener('click', () => setState('default'));
+  document.addEventListener('pointerdown', e => {
+    if (!e.target.closest('.post-card')) document.querySelectorAll('.post-card.pressed').forEach(c => c.classList.remove('pressed'));
+  });
+
+  render();
+</script>
+
+</body></html>

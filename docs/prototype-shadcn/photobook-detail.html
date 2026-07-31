@@ -1,0 +1,1003 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<title>PhotoBook · 帖子详情 — Android 原型</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-warm: var(--surface);
+    --fg: #111827;
+    --fg-2: var(--fg);
+    --muted: #64748b;
+    --meta: var(--muted);
+    --border: #e5e7eb;
+    --border-soft: var(--border);
+    --accent: #000000;
+    --accent-on: #ffffff;
+    --accent-hover: color-mix(in oklab, var(--accent), white 10%);
+    --accent-active: color-mix(in oklab, var(--accent), white 18%);
+    --success: #16a34a;
+    --warn: #d97706;
+    --danger: #dc2626;
+    --font-display: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
+    --font-body: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
+    --font-mono: "Fira Code", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+    --text-xs: 12px; --text-sm: 14px; --text-base: 16px; --text-lg: 20px;
+    --text-xl: 24px; --text-2xl: 32px; --text-3xl: 40px; --text-4xl: 48px;
+    --leading-body: 1.5; --leading-tight: 1.2; --tracking-display: -0.02em;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+    --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 9999px;
+    --elev-flat: none;
+    --elev-ring: 0 0 0 1px var(--border);
+    --elev-raised:
+      0 1px 2px 0 color-mix(in oklab, var(--fg), transparent 92%),
+      0 1px 3px 0 color-mix(in oklab, var(--fg), transparent 88%);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+    --motion-fast: 150ms; --motion-base: 200ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --container-max: 1280px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: color-mix(in oklab, var(--fg) 3%, var(--bg)); color: var(--fg);
+    font-family: var(--font-body); font-size: 15px; line-height: var(--leading-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; cursor: pointer; }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+  /* ─── 页面外壳(设备之外) ─── */
+  .proto-bar {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .proto-bar-inner {
+    max-width: var(--container-max); margin-inline: auto; padding: var(--space-3) var(--space-6);
+    display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+  }
+  .proto-title { font-weight: 700; font-size: 15px; letter-spacing: var(--tracking-display); }
+  .proto-sub { color: var(--muted); font-size: 13px; }
+  .state-switch { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-left: auto; }
+  .state-btn {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--muted); font-size: 13px; min-height: 36px;
+    transition: color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+  }
+  .state-btn:hover { border-color: var(--fg); color: var(--fg); }
+  .state-btn.active { border-color: var(--accent); color: var(--accent-on); background: var(--accent); }
+  .stage { display: flex; justify-content: center; padding: 40px 24px 64px; }
+  .hint { max-width: var(--container-max); margin: 0 auto; padding: 0 24px 24px; color: var(--muted); font-size: 13px; }
+
+  /* ─── Android 设备框 ─── */
+  .device {
+    position: relative; width: 400px; height: 844px; flex: none;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 24px 64px color-mix(in oklab, var(--fg) 14%, transparent);
+  }
+  .statusbar {
+    height: 28px; flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding-inline: 20px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg);
+  }
+  .statusbar .icons { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  .appbar {
+    height: 56px; flex: none; display: flex; align-items: center; gap: var(--space-2);
+    padding-inline: 8px; border-bottom: 1px solid var(--border); background: var(--bg);
+  }
+  .appbar-title {
+    font-size: var(--text-base); font-weight: 700; letter-spacing: var(--tracking-display);
+    font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .appbar .spacer { flex: 1; }
+  .icon-btn {
+    width: 44px; height: 44px; display: grid; place-items: center; position: relative;
+    background: none; border: 0; border-radius: var(--radius-md); color: var(--fg);
+    transition: background var(--motion-fast) var(--ease-standard);
+  }
+  .icon-btn:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+  .icon-btn svg { width: 22px; height: 22px; }
+
+  /* 溢出菜单 */
+  .menu-popup {
+    position: absolute; top: 92px; right: 12px; z-index: 25; display: none;
+    min-width: 168px; padding: 6px; background: var(--bg);
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    box-shadow: 0 12px 32px color-mix(in oklab, var(--fg) 18%, transparent);
+  }
+  .menu-popup.open { display: block; }
+  .menu-item {
+    display: flex; align-items: center; gap: 10px; width: 100%; min-height: 44px;
+    padding: 10px 12px; border: 0; border-radius: var(--radius-sm);
+    background: none; color: var(--fg); font-size: var(--text-sm); text-align: left;
+  }
+  .menu-item:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+
+  .screen { flex: 1; overflow-y: auto; position: relative; }
+
+  /* ─── 作者头部 ─── */
+  .author-head { display: flex; align-items: center; gap: 12px; padding: 14px 16px; }
+  .avatar {
+    width: 40px; height: 40px; border-radius: var(--radius-pill); flex: none;
+    display: grid; place-items: center; font-size: 15px; font-weight: 700; color: var(--accent-on);
+    background: var(--accent);
+  }
+  .author-head .name { font-size: 15px; font-weight: 700; }
+  .author-head .uname { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); }
+
+  /* ─── 媒体查看器 ─── */
+  .viewer {
+    position: relative; height: 400px; overflow: hidden;
+    background: var(--accent); color: var(--accent-on); touch-action: pan-y;
+    user-select: none; -webkit-user-select: none;
+  }
+  .pager-ui { height: 100%; }
+  .pager-track { display: flex; height: 100%; transition: transform var(--motion-base) var(--ease-standard); }
+  .pager-track.dragging { transition: none; }
+  .page { flex: 0 0 100%; height: 100%; position: relative; display: grid; place-items: center; }
+  .ph {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    color: color-mix(in oklab, var(--accent-on) 55%, transparent);
+    font-family: var(--font-mono); font-size: 12px; letter-spacing: .06em;
+  }
+  .ph-1 { background: linear-gradient(135deg,
+      color-mix(in oklab, var(--muted) 34%, var(--accent)),
+      color-mix(in oklab, var(--fg) 55%, var(--accent))); }
+  .ph-2 { background: linear-gradient(160deg,
+      color-mix(in oklab, var(--muted) 18%, var(--accent)),
+      color-mix(in oklab, var(--muted) 44%, var(--accent))); }
+  .ph-3 { background: linear-gradient(200deg,
+      color-mix(in oklab, var(--fg) 40%, var(--accent)),
+      color-mix(in oklab, var(--muted) 30%, var(--accent))); }
+  .ph-4 { background: linear-gradient(135deg,
+      color-mix(in oklab, var(--muted) 44%, var(--accent)),
+      color-mix(in oklab, var(--fg) 60%, var(--accent))); }
+  .counter {
+    position: absolute; top: 12px; right: 12px; z-index: 2;
+    padding: 4px 10px; border-radius: var(--radius-pill);
+    background: color-mix(in oklab, var(--accent) 62%, transparent); color: var(--accent-on);
+    font-family: var(--font-mono); font-size: 12px;
+  }
+
+  /* 视频态 */
+  .view-video { display: none; height: 100%; position: relative; }
+  .video-toggle {
+    position: relative; z-index: 2; width: 72px; height: 72px; border-radius: var(--radius-pill);
+    border: 0; display: grid; place-items: center; margin: auto;
+    background: color-mix(in oklab, var(--accent-on) 92%, transparent); color: var(--accent);
+  }
+  .video-toggle:hover { background: var(--accent-on); }
+  .video-toggle svg { width: 30px; height: 30px; }
+  .video-toggle .icon-pause { display: none; margin: 0; }
+  .video-toggle .icon-play { margin-left: 3px; }
+  .view-video.playing .video-toggle .icon-play { display: none; }
+  .view-video.playing .video-toggle .icon-pause { display: block; }
+  .playing-chip {
+    display: none; position: absolute; left: 12px; bottom: 12px; z-index: 2;
+    align-items: center; gap: 8px; padding: 6px 12px; border-radius: var(--radius-pill);
+    background: color-mix(in oklab, var(--accent) 62%, transparent);
+    font-size: 12px; color: var(--accent-on); font-family: var(--font-mono);
+  }
+  .view-video.playing .playing-chip { display: inline-flex; }
+
+  /* Live Photo 态 */
+  .view-live { display: none; height: 100%; position: relative; }
+  .live-badge {
+    position: absolute; top: 12px; left: 12px; z-index: 2;
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border-radius: var(--radius-pill);
+    background: color-mix(in oklab, var(--accent) 62%, transparent); color: var(--accent-on);
+    font-size: 12px; font-family: var(--font-mono);
+  }
+  .live-badge svg { width: 15px; height: 15px; }
+  .live-hint {
+    position: absolute; left: 50%; bottom: 14px; transform: translateX(-50%); z-index: 2;
+    padding: 6px 14px; border-radius: var(--radius-pill); white-space: nowrap;
+    background: color-mix(in oklab, var(--accent) 62%, transparent); color: var(--accent-on);
+    font-size: 12px;
+  }
+  .view-live.playing .live-hint { display: none; }
+
+  /* 原图下载中 / 下载失败 覆盖层 */
+  .viewer-loading, .viewer-failed {
+    position: absolute; inset: 0; z-index: 3; display: none;
+    flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+    text-align: center; padding: 24px; background: var(--accent);
+  }
+  .viewer-loading p, .viewer-failed p {
+    margin: 0; font-size: var(--text-sm); color: color-mix(in oklab, var(--accent-on) 78%, transparent);
+  }
+  .viewer-loading .spin { width: 28px; height: 28px; color: var(--accent-on); border-width: 3px; }
+  .viewer-failed .mark {
+    width: 56px; height: 56px; border-radius: var(--radius-md); display: grid; place-items: center;
+    border: 1px solid color-mix(in oklab, var(--accent-on) 28%, transparent);
+    color: color-mix(in oklab, var(--accent-on) 72%, transparent);
+  }
+  .retry-round {
+    width: 64px; height: 64px; border-radius: var(--radius-pill); display: grid; place-items: center;
+    border: 1.5px solid color-mix(in oklab, var(--accent-on) 60%, transparent);
+    background: none; color: var(--accent-on);
+    transition: background var(--motion-fast) var(--ease-standard);
+  }
+  .retry-round:hover { background: color-mix(in oklab, var(--accent-on) 12%, transparent); }
+  .retry-round svg { width: 24px; height: 24px; }
+
+  /* 状态驱动 */
+  .device:not([data-state="default"]) .pager-ui { display: none; }
+  .device[data-state="video"] .view-video { display: grid; }
+  .device[data-state="livephoto"] .view-live { display: grid; }
+  .device[data-state="loading"] .viewer-loading { display: flex; }
+  .device[data-state="failed"] .viewer-failed { display: flex; }
+  .device[data-state="missing"] .detail-body { display: none; }
+  .device[data-state="missing"] .appbar .spacer ~ * { visibility: hidden; }
+  .empty-missing {
+    display: none; height: 100%; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; color: var(--muted); text-align: center; padding: 32px;
+  }
+  .empty-missing .mark {
+    width: 56px; height: 56px; border-radius: var(--radius-md); border: 1px solid var(--border);
+    display: grid; place-items: center; color: var(--fg); background: var(--bg);
+  }
+  .empty-missing p { margin: 0; font-size: var(--text-sm); }
+  .device[data-state="missing"] .empty-missing { display: flex; }
+
+  /* ─── 正文与 meta ─── */
+  .caption-block { padding: 14px 16px 4px; font-size: 15px; line-height: 1.6; user-select: text; -webkit-user-select: text; }
+  .caption-block p { margin: 0; }
+  .caption-copy-hint { margin: 8px 0 0; font-size: var(--text-xs); color: var(--muted); }
+  .meta-row {
+    display: flex; align-items: center; gap: 8px;
+    padding: 8px 16px 24px; color: var(--muted);
+    font-family: var(--font-mono); font-size: var(--text-xs);
+  }
+  .meta-row svg { width: 14px; height: 14px; flex: none; }
+
+  /* ─── 底部弹层 ─── */
+  .scrim {
+    position: absolute; inset: 0; z-index: 40; display: none;
+    background: color-mix(in oklab, var(--fg) 45%, transparent);
+  }
+  .device.sheet-open .scrim { display: block; }
+  .sheet {
+    position: absolute; left: 0; right: 0; bottom: 0; z-index: 41; display: none;
+    background: var(--bg); border-radius: var(--radius-md) var(--radius-md) 0 0;
+    border-top: 1px solid var(--border);
+    padding: 8px 16px 20px; max-height: 82%; overflow-y: auto;
+    box-shadow: 0 -12px 40px color-mix(in oklab, var(--fg) 22%, transparent);
+    animation: sheet-in var(--motion-base) var(--ease-standard);
+  }
+  @keyframes sheet-in { from { transform: translateY(24px); opacity: .4; } to { transform: translateY(0); opacity: 1; } }
+  .sheet.open { display: block; }
+  .sheet .grabber {
+    width: 36px; height: 4px; border-radius: var(--radius-pill);
+    background: var(--border); margin: 4px auto 12px;
+  }
+  .sheet-head { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+  .sheet-title { flex: 1; font-size: var(--text-base); font-weight: 700; margin: 0; letter-spacing: var(--tracking-display); }
+  .sheet-sub { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
+  .sheet-close { width: 44px; height: 44px; margin: -8px -8px -8px 0; }
+  .sheet-close:disabled { opacity: .4; cursor: default; }
+
+  .selectall-row {
+    display: flex; align-items: center; gap: 10px; min-height: 44px;
+    padding: 6px 2px; margin-bottom: 4px;
+  }
+  .selectall-row label { display: flex; align-items: center; gap: 10px; min-height: 44px; font-size: var(--text-sm); font-weight: 600; cursor: pointer; }
+  .selectall-row input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--accent); }
+  .sel-count { margin-left: auto; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); }
+
+  /* 缩略图网格(保存 / 删除 / 分享共用) */
+  .thumb-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 8px 0 12px; }
+  .thumb-item {
+    position: relative; aspect-ratio: 1; border-radius: var(--radius-md); overflow: hidden;
+    cursor: pointer; border: 1px solid var(--border); padding: 0; background: none;
+  }
+  .thumb-item .thumb {
+    position: absolute; inset: 0; display: grid; place-items: center;
+    background: linear-gradient(135deg,
+      color-mix(in oklab, var(--muted) 16%, var(--bg)),
+      color-mix(in oklab, var(--muted) 38%, var(--bg)));
+    color: color-mix(in oklab, var(--accent-on) 88%, transparent);
+    font-family: var(--font-mono); font-size: 11px; letter-spacing: .04em;
+  }
+  .thumb-item .thumb.t-dark {
+    background: linear-gradient(160deg,
+      color-mix(in oklab, var(--fg) 82%, var(--muted)),
+      color-mix(in oklab, var(--fg) 92%, var(--muted)));
+  }
+  .thumb-item .thumb-label { text-shadow: 0 1px 2px color-mix(in oklab, var(--accent) 40%, transparent); }
+  .thumb-item.selected { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .thumb-item:disabled { cursor: default; }
+  .thumb-item .play-dot {
+    position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none;
+  }
+  .thumb-item .play-dot span {
+    width: 34px; height: 34px; border-radius: var(--radius-pill); display: grid; place-items: center;
+    background: color-mix(in oklab, var(--accent) 62%, transparent); color: var(--accent-on);
+  }
+  .thumb-item .play-dot svg { width: 15px; height: 15px; margin-left: 2px; }
+  .thumb-item .live-dot {
+    position: absolute; left: 6px; bottom: 6px; display: grid; place-items: center;
+    width: 24px; height: 24px; border-radius: var(--radius-pill);
+    background: color-mix(in oklab, var(--accent) 62%, transparent); color: var(--accent-on);
+    pointer-events: none;
+  }
+  .thumb-item .live-dot svg { width: 14px; height: 14px; }
+  .thumb-item .check {
+    position: absolute; top: 6px; right: 6px; width: 24px; height: 24px; border-radius: var(--radius-pill);
+    border: 2px solid var(--accent-on); display: grid; place-items: center;
+    background: color-mix(in oklab, var(--fg) 36%, transparent); color: var(--accent-on);
+    pointer-events: none;
+  }
+  .thumb-item .check svg { display: none; width: 13px; height: 13px; }
+  .thumb-item.selected .check { background: var(--accent); border-color: var(--accent); }
+  .thumb-item.selected .check svg { display: block; }
+  .thumb-item.saved .check { background: var(--success); border-color: var(--success); }
+  .thumb-item.saved .check svg { display: block; }
+  .thumb-item.saved::after {
+    content: "已保存"; position: absolute; left: 6px; bottom: 6px;
+    padding: 2px 7px; border-radius: var(--radius-pill);
+    background: color-mix(in oklab, var(--accent) 62%, transparent); color: var(--accent-on);
+    font-size: 10px; font-family: var(--font-mono);
+  }
+
+  /* 分段控件(Live Photo 方式) */
+  .seg-block { display: none; margin: 0 0 12px; }
+  .seg-block.show { display: block; }
+  .seg-label { margin: 0 0 8px; font-size: 13px; font-weight: 600; }
+  .seg {
+    display: inline-flex; padding: 3px; gap: 2px;
+    border: 1px solid var(--border); border-radius: var(--radius-md);
+    background: color-mix(in oklab, var(--fg) 4%, var(--bg));
+  }
+  .seg button {
+    border: 0; background: none; min-height: 36px; padding: 6px 16px;
+    border-radius: var(--radius-sm); font-size: 13px; color: var(--muted);
+    transition: color var(--motion-fast) var(--ease-standard);
+  }
+  .seg button:hover { color: var(--fg); }
+  .seg button.active { background: var(--accent); color: var(--accent-on); font-weight: 600; }
+
+  .inline-error {
+    display: none; align-items: flex-start; gap: 8px; margin: 0 0 12px;
+    padding: 10px 12px; border: 1px solid color-mix(in oklab, var(--danger) 35%, var(--border));
+    border-radius: var(--radius-md); font-size: 13px; line-height: 1.5;
+    color: var(--danger); background: color-mix(in oklab, var(--danger) 5%, var(--bg));
+  }
+  .inline-error.show { display: flex; }
+  .inline-error svg { width: 16px; height: 16px; flex: none; margin-top: 2px; }
+
+  .btn-primary {
+    display: flex; align-items: center; justify-content: center; gap: 8px;
+    width: 100%; min-height: 48px; border: 0; border-radius: var(--radius-sm);
+    background: var(--accent); color: var(--accent-on); font-size: 15px; font-weight: 600;
+    transition: background var(--motion-fast) var(--ease-standard);
+  }
+  .btn-primary:hover:not(:disabled) { background: var(--accent-hover); }
+  .btn-primary:disabled { opacity: .4; cursor: default; }
+  .btn-primary.danger { background: var(--danger); }
+  .btn-primary.danger:hover:not(:disabled) { background: color-mix(in oklab, var(--danger), white 10%); }
+  .sheet-btns { display: flex; gap: 10px; }
+  .btn-ghost {
+    flex: 1; min-height: 48px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--fg); font-size: 15px; font-weight: 600;
+  }
+  .btn-ghost:hover:not(:disabled) { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+  .btn-ghost:disabled { opacity: .4; cursor: default; }
+
+  /* 删除确认弹层作者行 */
+  .confirm-author {
+    display: flex; align-items: center; gap: 10px; margin: 0 0 12px;
+    padding: 10px 12px; border: 1px solid var(--border); border-radius: var(--radius-md);
+  }
+  .confirm-author .avatar { width: 32px; height: 32px; font-size: 13px; }
+  .confirm-author .name { font-size: var(--text-sm); font-weight: 700; }
+  .confirm-author .uname { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); }
+  .warn-text { margin: 0 0 16px; font-size: 13px; color: var(--muted); line-height: 1.6; }
+
+  /* ─── snackbar / spin ─── */
+  .snackbar {
+    position: absolute; left: 16px; right: 16px; bottom: 24px; z-index: 50;
+    display: flex; align-items: center; gap: 12px; min-height: 52px;
+    background: var(--fg); color: var(--bg);
+    border-radius: var(--radius-md); padding: 13px 16px; font-size: var(--text-sm);
+    box-shadow: 0 8px 24px color-mix(in oklab, var(--fg) 30%, transparent);
+    opacity: 0; visibility: hidden; transform: translateY(10px); pointer-events: none;
+    transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), visibility var(--motion-base) var(--ease-standard);
+  }
+  .snackbar.show { opacity: 1; visibility: visible; transform: translateY(0); }
+  .snackbar-status { width: 24px; height: 24px; flex: none; display: grid; place-items: center; color: var(--bg); }
+  .snackbar-status svg { width: 17px; height: 17px; }
+  .snackbar-text { min-width: 0; flex: 1; line-height: 1.35; font-weight: 500; }
+  .spin {
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    border: 2px solid color-mix(in oklab, currentColor 25%, transparent);
+    border-top-color: currentColor; animation: rot 0.8s linear infinite;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  .gesture-bar { height: 18px; flex: none; display: grid; place-items: center; background: var(--bg); }
+  .gesture-bar span { width: 108px; height: 4px; border-radius: var(--radius-pill); background: var(--border); }
+</style>
+</head>
+<body>
+<header class="proto-bar" data-od-id="proto-bar">
+  <div class="proto-bar-inner">
+    <span class="proto-title">PhotoBook · 帖子详情</span>
+    <span class="proto-sub">Android 原型 · 界面 2 / 7</span>
+    <nav class="state-switch" data-od-id="state-switch">
+      <button class="state-btn active" data-state="default">默认多图</button>
+      <button class="state-btn" data-state="video">视频</button>
+      <button class="state-btn" data-state="livephoto">Live Photo</button>
+      <button class="state-btn" data-state="loading">下载中</button>
+      <button class="state-btn" data-state="failed">下载失败</button>
+      <button class="state-btn" data-state="missing">帖子不存在</button>
+    </nav>
+  </div>
+</header>
+
+<div class="stage">
+  <div class="device" id="device" data-state="default" data-od-id="device-detail">
+    <div class="statusbar"><span>9:41</span><span class="icons">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h3v4H2zM7.5 13h3v8h-3zM13 9h3v12h-3zM18.5 5h3v16h-3z"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 18.5 8.5 15a5 5 0 0 1 7 0zM12 12a9 9 0 0 0-6.4 2.6l-1.8-1.9A12 12 0 0 1 12 9a12 12 0 0 1 8.2 3.7l-1.8 1.9A9 9 0 0 0 12 12zM12 5a15 15 0 0 0-9.4 3.3L.8 6.4A18 18 0 0 1 12 2a18 18 0 0 1 11.2 4.4l-1.8 1.9A15 15 0 0 0 12 5z"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="8" width="17" height="9" rx="2"></rect><rect x="20" y="11" width="2.5" height="3" rx="1"></rect></svg>
+    </span></div>
+
+    <div class="appbar" data-od-id="appbar">
+      <a class="icon-btn" href="photobook-home.html" aria-label="返回" data-od-id="back-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 5l-7 7 7 7"/></svg>
+      </a>
+      <span class="appbar-title">@wander_chen</span>
+      <span class="spacer"></span>
+      <button class="icon-btn" id="shareBtn" aria-label="分享媒体" data-od-id="share-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v13M7 8l5-5 5 5M5 13v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></svg>
+      </button>
+      <button class="icon-btn" id="saveBtn" aria-label="保存媒体" data-od-id="save-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>
+      </button>
+      <button class="icon-btn" id="deleteBtn" aria-label="删除媒体" data-od-id="delete-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/></svg>
+      </button>
+      <button class="icon-btn" id="overflowBtn" aria-label="更多" data-od-id="overflow-btn">
+        <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
+      </button>
+    </div>
+
+    <div class="menu-popup" id="overflowMenu" data-od-id="overflow-menu">
+      <button class="menu-item" id="openOriginal" data-od-id="open-original">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h6v6M20 4l-9 9M9 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
+        打开原帖
+      </button>
+    </div>
+
+    <div class="screen">
+      <div class="detail-body">
+        <div class="author-head" data-od-id="author-head">
+          <span class="avatar">陈</span>
+          <div>
+            <div class="name">陈漫游</div>
+            <div class="uname">@wander_chen</div>
+          </div>
+        </div>
+
+        <div class="viewer" id="viewer" data-od-id="media-viewer">
+          <div class="pager-ui">
+            <div class="pager-track" id="pagerTrack">
+              <div class="page"><div class="ph ph-1">照片 1</div></div>
+              <div class="page"><div class="ph ph-2">照片 2</div></div>
+              <div class="page"><div class="ph ph-3">照片 3</div></div>
+              <div class="page"><div class="ph ph-4">照片 4</div></div>
+            </div>
+            <span class="counter" id="pagerCounter" data-od-id="pager-counter">1 / 4</span>
+          </div>
+
+          <div class="view-video" id="viewVideo" data-od-id="view-video">
+            <div class="ph ph-2">视频封面</div>
+            <button class="video-toggle" id="videoToggle" aria-label="播放或暂停" data-od-id="video-toggle">
+              <svg class="icon-play" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg>
+              <svg class="icon-pause" viewBox="0 0 24 24" fill="currentColor"><path d="M7 5h4v14H7zM13 5h4v14h-4z"/></svg>
+            </button>
+            <span class="playing-chip"><span class="spin" style="width:13px;height:13px;"></span>播放中</span>
+          </div>
+
+          <div class="view-live" id="viewLive" data-od-id="view-live">
+            <div class="ph ph-3">Live Photo</div>
+            <span class="live-badge">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8a9.2 9.2 0 0 1 9.2 9.2M12 6a6 6 0 0 1 6 6"/></svg>
+              Live Photo
+            </span>
+            <span class="live-hint">长按播放动态部分</span>
+          </div>
+
+          <div class="viewer-loading" data-od-id="viewer-loading">
+            <span class="spin"></span>
+            <p>正在下载原图…</p>
+          </div>
+          <div class="viewer-failed" data-od-id="viewer-failed">
+            <div class="mark">
+              <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m3 16 5-5 4 4 3-3 6 6M3 4l18 16"/></svg>
+            </div>
+            <p>原图下载失败,请检查网络后重试</p>
+            <button class="retry-round" id="retryBtn" aria-label="重新下载" data-od-id="retry-download">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M20 12a8 8 0 1 1-2.3-5.6M20 3v4h-4"/></svg>
+            </button>
+          </div>
+        </div>
+
+        <div class="caption-block" data-od-id="caption">
+          <p>雨后的武功山草甸,云从山谷里一层一层漫上来。日出前四十分钟赶到观景台是值得的,金顶的风比想象中大,但云海就在脚下。</p>
+          <p class="caption-copy-hint">长按文字可选择并复制</p>
+        </div>
+        <div class="meta-row" data-od-id="meta-row">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></svg>
+          <span>2026-07-18</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 21s7-5.1 7-11a7 7 0 1 0-14 0c0 5.9 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
+          <span>江西·武功山</span>
+        </div>
+      </div>
+
+      <div class="empty-missing" data-od-id="empty-missing">
+        <div class="mark">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M8.5 11h5"/></svg>
+        </div>
+        <p>帖子不存在</p>
+        <p style="font-size:13px;">它可能已被删除,或尚未同步到本机。</p>
+      </div>
+    </div>
+
+    <!-- 遮罩 + 底部弹层 -->
+    <div class="scrim" id="scrim" data-od-id="scrim"></div>
+
+    <!-- ① 保存到系统相册 -->
+    <div class="sheet" id="sheet-save" data-od-id="sheet-save">
+      <div class="grabber"></div>
+      <div class="sheet-head">
+        <p class="sheet-title">保存到系统相册</p>
+        <button class="icon-btn sheet-close" data-close aria-label="关闭" data-od-id="save-close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <div class="selectall-row">
+        <label><input type="checkbox" id="saveAll" data-od-id="save-select-all">全选</label>
+        <span class="sel-count" id="saveCount">3/4</span>
+      </div>
+      <div class="thumb-grid" id="saveGrid" data-od-id="save-grid">
+        <button class="thumb-item selected" data-type="image" data-od-id="save-item-1">
+          <span class="thumb t-dark"><span class="thumb-label">照片 1</span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item saved" data-type="image" disabled data-od-id="save-item-2">
+          <span class="thumb"><span class="thumb-label" style="color:var(--muted);text-shadow:none;">照片 2</span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item selected" data-type="video" data-od-id="save-item-3">
+          <span class="thumb t-dark"><span class="thumb-label">视频</span></span>
+          <span class="play-dot"><span><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item selected" data-type="live" data-od-id="save-item-4">
+          <span class="thumb t-dark"><span class="thumb-label">Live Photo</span></span>
+          <span class="live-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8a9.2 9.2 0 0 1 9.2 9.2M12 6a6 6 0 0 1 6 6"/></svg></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+      </div>
+      <div class="seg-block show" id="saveSegBlock" data-od-id="save-live-seg">
+        <p class="seg-label">Live Photo 保存方式</p>
+        <div class="seg" id="saveSeg">
+          <button class="active" data-seg="still">静态图</button>
+          <button data-seg="gif">GIF</button>
+          <button data-seg="video">视频</button>
+        </div>
+      </div>
+      <div class="inline-error" id="saveError" data-od-id="save-error">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10.3 4.1 2.7 17.3A2 2 0 0 0 4.4 20h15.2a2 2 0 0 0 1.7-2.7L13.7 4.1a2 2 0 0 0-3.4 0Z"/><path d="M12 9v4M12 17h.01"/></svg>
+        <span>已保存 2 项,1 项失败。失败项已保留,可重试。</span>
+      </div>
+      <button class="btn-primary" id="saveSubmit" data-od-id="save-submit">保存 3 项</button>
+    </div>
+
+    <!-- ② 删除媒体 -->
+    <div class="sheet" id="sheet-delete-media" data-od-id="sheet-delete-media">
+      <div class="grabber"></div>
+      <div class="sheet-head">
+        <p class="sheet-title">删除媒体</p>
+        <button class="icon-btn sheet-close" data-close aria-label="关闭" data-od-id="delete-media-close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <p class="sheet-sub" id="deleteNote">将删除选中的 2 项媒体,并同步到同一 R2 资料库的其他设备。</p>
+      <div class="selectall-row">
+        <label><input type="checkbox" id="deleteAll" data-od-id="delete-select-all">全选</label>
+        <span class="sel-count" id="deleteCount">2/4</span>
+      </div>
+      <div class="thumb-grid" id="deleteGrid" data-od-id="delete-grid">
+        <button class="thumb-item selected" data-type="image" data-od-id="delete-item-1">
+          <span class="thumb t-dark"><span class="thumb-label">照片 1</span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item" data-type="image" data-od-id="delete-item-2">
+          <span class="thumb t-dark"><span class="thumb-label">照片 2</span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item selected" data-type="video" data-od-id="delete-item-3">
+          <span class="thumb t-dark"><span class="thumb-label">视频</span></span>
+          <span class="play-dot"><span><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item" data-type="live" data-od-id="delete-item-4">
+          <span class="thumb t-dark"><span class="thumb-label">Live Photo</span></span>
+          <span class="live-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8a9.2 9.2 0 0 1 9.2 9.2M12 6a6 6 0 0 1 6 6"/></svg></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+      </div>
+      <button class="btn-primary danger" id="deleteSubmit" data-od-id="delete-submit">删除 2 项</button>
+    </div>
+
+    <!-- ③ 分享媒体 -->
+    <div class="sheet" id="sheet-share" data-od-id="sheet-share">
+      <div class="grabber"></div>
+      <div class="sheet-head">
+        <p class="sheet-title">分享媒体</p>
+        <button class="icon-btn sheet-close" data-close aria-label="关闭" data-od-id="share-close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <p class="sheet-sub">图片可多选,视频每次选择一个。</p>
+      <div class="thumb-grid" id="shareGrid" data-od-id="share-grid">
+        <button class="thumb-item selected" data-type="image" data-od-id="share-item-1">
+          <span class="thumb t-dark"><span class="thumb-label">照片 1</span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item" data-type="image" data-od-id="share-item-2">
+          <span class="thumb t-dark"><span class="thumb-label">照片 2</span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item" data-type="video" data-od-id="share-item-3">
+          <span class="thumb t-dark"><span class="thumb-label">视频</span></span>
+          <span class="play-dot"><span><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+        <button class="thumb-item selected" data-type="live" data-od-id="share-item-4">
+          <span class="thumb t-dark"><span class="thumb-label">Live Photo</span></span>
+          <span class="live-dot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.8a9.2 9.2 0 0 1 9.2 9.2M12 6a6 6 0 0 1 6 6"/></svg></span>
+          <span class="check"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M4 12.5 10 18 20 6"/></svg></span>
+        </button>
+      </div>
+      <div class="seg-block" id="shareSegBlock" data-od-id="share-live-seg">
+        <p class="seg-label">Live Photo 分享方式</p>
+        <div class="seg" id="shareSeg">
+          <button class="active" data-seg="still">静态图</button>
+          <button data-seg="gif">GIF</button>
+          <button data-seg="video">视频</button>
+        </div>
+      </div>
+      <button class="btn-primary" id="shareSubmit" data-od-id="share-submit">分享 2 项</button>
+    </div>
+
+    <!-- 删除这条帖子?确认弹层 -->
+    <div class="sheet" id="sheet-confirm" data-od-id="sheet-confirm">
+      <div class="grabber"></div>
+      <div class="sheet-head">
+        <p class="sheet-title">删除这条帖子?</p>
+      </div>
+      <div class="confirm-author" data-od-id="confirm-author">
+        <span class="avatar">陈</span>
+        <div>
+          <div class="name">陈漫游</div>
+          <div class="uname">@wander_chen</div>
+        </div>
+      </div>
+      <p class="warn-text">帖子会从本机和同一 R2 资料库的其他设备移除,已保存到系统相册的副本不受影响。</p>
+      <div class="sheet-btns">
+        <button class="btn-ghost" id="cancelDelete" data-od-id="cancel-delete">取消</button>
+        <button class="btn-primary danger" id="confirmDelete" data-od-id="confirm-delete">删除帖子</button>
+      </div>
+    </div>
+
+    <div class="snackbar" id="snackbar" role="status" aria-live="polite" aria-atomic="true" data-od-id="snackbar">
+      <span class="snackbar-status" id="snackbarIcon" aria-hidden="true"></span>
+      <span class="snackbar-text" id="snackbarText"></span>
+    </div>
+    <div class="gesture-bar"><span></span></div>
+  </div>
+</div>
+<p class="hint">交互:默认态媒体区左右拖拽翻页(1/4);右上角依次为分享媒体、保存媒体、删除媒体、更多(打开原帖);删除媒体弹层中全选后点删除,会进入「删除这条帖子?」确认。</p>
+
+<script>
+  const device = document.getElementById('device');
+
+  /* ─── snackbar ─── */
+  const snackbarEl = document.getElementById('snackbar');
+  const snackbarIcon = document.getElementById('snackbarIcon');
+  const snackbarText = document.getElementById('snackbarText');
+  const ICON_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 12.5l5 5L20 6.5"/></svg>';
+  const ICON_INFO = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 10.5V17M12 7h.01"/></svg>';
+  let snackTimer = null;
+  function snackbar(msg, ok = true) {
+    snackbarIcon.innerHTML = ok ? ICON_OK : ICON_INFO;
+    snackbarText.textContent = msg;
+    snackbarEl.classList.add('show');
+    clearTimeout(snackTimer);
+    snackTimer = setTimeout(() => snackbarEl.classList.remove('show'), 2200);
+  }
+
+  /* ─── 状态切换 ─── */
+  function setState(s) {
+    device.dataset.state = s;
+    document.querySelectorAll('.state-btn').forEach(b => b.classList.toggle('active', b.dataset.state === s));
+    closeSheet(true); closeMenu();
+  }
+  document.querySelectorAll('.state-btn').forEach(b => b.addEventListener('click', () => setState(b.dataset.state)));
+  document.getElementById('retryBtn').addEventListener('click', () => setState('loading'));
+
+  /* ─── 底部弹层管理(操作中禁止关闭) ─── */
+  const scrim = document.getElementById('scrim');
+  let currentSheet = null;
+  let sheetBusy = false;
+  function openSheet(id) {
+    closeSheet(true);
+    currentSheet = id;
+    sheetBusy = false;
+    device.classList.add('sheet-open');
+    document.getElementById(id).classList.add('open');
+  }
+  function closeSheet(force) {
+    if (!currentSheet) return;
+    if (sheetBusy && !force) return;
+    document.getElementById(currentSheet).classList.remove('open');
+    currentSheet = null;
+    sheetBusy = false;
+    device.classList.remove('sheet-open');
+  }
+  scrim.addEventListener('click', () => closeSheet(false));
+  document.querySelectorAll('[data-close]').forEach(btn =>
+    btn.addEventListener('click', () => closeSheet(false)));
+
+  /* busy 按钮通用手法:spinner 替换文案并锁定弹层 */
+  function busy(btn, html, ms, done) {
+    sheetBusy = true;
+    btn.disabled = true;
+    const sheet = btn.closest('.sheet');
+    sheet.querySelectorAll('[data-close], .btn-ghost').forEach(b => b.disabled = true);
+    const orig = btn.innerHTML;
+    btn.innerHTML = html;
+    setTimeout(() => {
+      sheetBusy = false;
+      btn.disabled = false;
+      btn.innerHTML = orig;
+      sheet.querySelectorAll('[data-close], .btn-ghost').forEach(b => b.disabled = false);
+      if (done) done();
+    }, ms);
+  }
+
+  /* ─── 溢出菜单 ─── */
+  const overflowMenu = document.getElementById('overflowMenu');
+  function closeMenu() { overflowMenu.classList.remove('open'); }
+  document.getElementById('overflowBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    overflowMenu.classList.toggle('open');
+  });
+  document.getElementById('openOriginal').addEventListener('click', () => {
+    closeMenu();
+    snackbar('已在外部浏览器打开原帖', false);
+  });
+  document.addEventListener('pointerdown', e => {
+    if (!e.target.closest('#overflowMenu') && !e.target.closest('#overflowBtn')) closeMenu();
+  });
+
+  /* ─── 多图分页器(默认态) ─── */
+  const viewer = document.getElementById('viewer');
+  const track = document.getElementById('pagerTrack');
+  const counter = document.getElementById('pagerCounter');
+  const PAGES = 4;
+  let index = 0;
+  function go(i) {
+    index = Math.max(0, Math.min(PAGES - 1, i));
+    track.style.transform = 'translateX(' + (-index * 100) + '%)';
+    counter.textContent = (index + 1) + ' / ' + PAGES;
+  }
+  let startX = 0, dx = 0, dragging = false, moved = false;
+  viewer.addEventListener('pointerdown', e => {
+    if (device.dataset.state !== 'default') return;
+    startX = e.clientX; dx = 0; moved = false; dragging = true;
+  });
+  viewer.addEventListener('pointermove', e => {
+    if (!dragging) return;
+    dx = e.clientX - startX;
+    if (Math.abs(dx) > 8) { moved = true; track.classList.add('dragging'); }
+    if (moved) track.style.transform = 'translateX(calc(' + (-index * 100) + '% + ' + dx + 'px))';
+  });
+  function endDrag() {
+    if (!dragging) return;
+    dragging = false;
+    track.classList.remove('dragging');
+    if (moved) {
+      if (dx < -48) go(index + 1);
+      else if (dx > 48) go(index - 1);
+      else go(index);
+    }
+    moved = false;
+  }
+  viewer.addEventListener('pointerup', endDrag);
+  viewer.addEventListener('pointercancel', endDrag);
+  viewer.addEventListener('contextmenu', e => e.preventDefault());
+  viewer.addEventListener('click', e => {
+    if (device.dataset.state !== 'default') return;
+    const r = viewer.getBoundingClientRect();
+    const x = e.clientX - r.left;
+    if (x < r.width * 0.25) go(index - 1);
+    else if (x > r.width * 0.75) go(index + 1);
+  });
+
+  /* ─── 视频态:播放 / 暂停 ─── */
+  const viewVideo = document.getElementById('viewVideo');
+  document.getElementById('videoToggle').addEventListener('click', e => {
+    e.stopPropagation();
+    viewVideo.classList.toggle('playing');
+  });
+
+  /* ─── Live Photo 态:长按播放动态部分 ─── */
+  const viewLive = document.getElementById('viewLive');
+  let liveTimer = null, livePlaying = false;
+  viewLive.addEventListener('pointerdown', () => {
+    liveTimer = setTimeout(() => {
+      livePlaying = true;
+      viewLive.classList.add('playing');
+      viewLive.querySelector('.live-hint').textContent = '正在播放动态部分';
+    }, 500);
+  });
+  ['pointerup', 'pointerleave', 'pointercancel'].forEach(ev => viewLive.addEventListener(ev, () => {
+    clearTimeout(liveTimer);
+    if (livePlaying) {
+      livePlaying = false;
+      viewLive.classList.remove('playing');
+      viewLive.querySelector('.live-hint').textContent = '长按播放动态部分';
+    }
+  }));
+
+  /* ─── 分段控件通用 ─── */
+  function wireSeg(segId) {
+    const seg = document.getElementById(segId);
+    seg.addEventListener('click', e => {
+      const btn = e.target.closest('button');
+      if (!btn) return;
+      seg.querySelectorAll('button').forEach(b => b.classList.toggle('active', b === btn));
+    });
+  }
+  wireSeg('saveSeg');
+  wireSeg('shareSeg');
+
+  /* ─── ① 保存到系统相册 ─── */
+  document.getElementById('saveBtn').addEventListener('click', () => openSheet('sheet-save'));
+  const saveItems = Array.from(document.querySelectorAll('#saveGrid .thumb-item'));
+  const saveAll = document.getElementById('saveAll');
+  const saveCount = document.getElementById('saveCount');
+  const saveSubmit = document.getElementById('saveSubmit');
+  const saveError = document.getElementById('saveError');
+  const saveSegBlock = document.getElementById('saveSegBlock');
+  const saveSelectable = saveItems.filter(i => !i.classList.contains('saved'));
+  function updateSave() {
+    const sel = saveSelectable.filter(i => i.classList.contains('selected'));
+    saveCount.textContent = sel.length + '/' + saveItems.length;
+    saveAll.checked = sel.length === saveSelectable.length;
+    saveSubmit.disabled = sel.length === 0;
+    saveSubmit.textContent = sel.length === 0 ? '保存' : '保存 ' + sel.length + ' 项';
+    saveSegBlock.classList.toggle('show', sel.some(i => i.dataset.type === 'live'));
+  }
+  saveItems.forEach(item => item.addEventListener('click', () => {
+    if (item.classList.contains('saved')) return;
+    item.classList.toggle('selected');
+    saveError.classList.remove('show');
+    updateSave();
+  }));
+  saveAll.addEventListener('change', () => {
+    saveSelectable.forEach(i => i.classList.toggle('selected', saveAll.checked));
+    saveError.classList.remove('show');
+    updateSave();
+  });
+  saveSubmit.addEventListener('click', () => {
+    if (saveSubmit.disabled) return;
+    const retry = saveError.classList.contains('show');
+    busy(saveSubmit, '<span class="spin"></span>' + (retry ? '正在保存 1/1' : '正在保存 2/3'), 1400, () => {
+      if (retry) {
+        saveError.classList.remove('show');
+        closeSheet(true);
+        snackbar('已保存到系统相册');
+      } else {
+        saveError.classList.add('show');
+      }
+      updateSave();
+    });
+  });
+  updateSave();
+
+  /* ─── ② 删除媒体 ─── */
+  document.getElementById('deleteBtn').addEventListener('click', () => openSheet('sheet-delete-media'));
+  const deleteItems = Array.from(document.querySelectorAll('#deleteGrid .thumb-item'));
+  const deleteAll = document.getElementById('deleteAll');
+  const deleteCount = document.getElementById('deleteCount');
+  const deleteNote = document.getElementById('deleteNote');
+  const deleteSubmit = document.getElementById('deleteSubmit');
+  function updateDelete() {
+    const n = deleteItems.filter(i => i.classList.contains('selected')).length;
+    deleteCount.textContent = n + '/' + deleteItems.length;
+    deleteAll.checked = n === deleteItems.length;
+    deleteSubmit.disabled = n === 0;
+    deleteSubmit.textContent = n === 0 ? '删除' : '删除 ' + n + ' 项';
+    deleteNote.textContent = n === deleteItems.length
+      ? '将删除整条帖子,并同步到同一 R2 资料库的其他设备。'
+      : '将删除选中的 ' + n + ' 项媒体,并同步到同一 R2 资料库的其他设备。';
+  }
+  deleteItems.forEach(item => item.addEventListener('click', () => {
+    item.classList.toggle('selected');
+    updateDelete();
+  }));
+  deleteAll.addEventListener('change', () => {
+    deleteItems.forEach(i => i.classList.toggle('selected', deleteAll.checked));
+    updateDelete();
+  });
+  deleteSubmit.addEventListener('click', () => {
+    if (deleteSubmit.disabled) return;
+    const n = deleteItems.filter(i => i.classList.contains('selected')).length;
+    if (n === deleteItems.length) {
+      // 全选 = 删除整条帖子,进入确认弹层
+      openSheet('sheet-confirm');
+      return;
+    }
+    busy(deleteSubmit, '<span class="spin"></span>正在删除', 1200, () => {
+      closeSheet(true);
+      snackbar('已删除 ' + n + ' 项媒体');
+    });
+  });
+  updateDelete();
+
+  /* ─── ③ 分享媒体 ─── */
+  document.getElementById('shareBtn').addEventListener('click', () => openSheet('sheet-share'));
+  const shareItems = Array.from(document.querySelectorAll('#shareGrid .thumb-item'));
+  const shareSubmit = document.getElementById('shareSubmit');
+  const shareSegBlock = document.getElementById('shareSegBlock');
+  function updateShare() {
+    const sel = shareItems.filter(i => i.classList.contains('selected'));
+    shareSubmit.disabled = sel.length === 0;
+    shareSubmit.textContent = sel.length === 0 ? '分享' : '分享 ' + sel.length + ' 项';
+    shareSegBlock.classList.toggle('show', sel.length === 1 && sel[0].dataset.type === 'live');
+  }
+  shareItems.forEach(item => item.addEventListener('click', () => {
+    const isVideo = item.dataset.type === 'video';
+    if (item.classList.contains('selected')) {
+      item.classList.remove('selected');
+    } else if (isVideo) {
+      shareItems.forEach(i => i.classList.remove('selected'));
+      item.classList.add('selected');
+    } else {
+      shareItems.forEach(i => { if (i.dataset.type === 'video') i.classList.remove('selected'); });
+      item.classList.add('selected');
+    }
+    updateShare();
+  }));
+  shareSubmit.addEventListener('click', () => {
+    if (shareSubmit.disabled) return;
+    busy(shareSubmit, '<span class="spin"></span>正在准备媒体', 1200, () => {
+      closeSheet(true);
+      snackbar('已调出系统分享');
+    });
+  });
+  updateShare();
+
+  /* ─── 删除这条帖子?确认弹层 ─── */
+  document.getElementById('cancelDelete').addEventListener('click', () => closeSheet(false));
+  document.getElementById('confirmDelete').addEventListener('click', function () {
+    busy(this, '<span class="spin"></span>正在删除', 1200, () => {
+      location.href = 'photobook-home.html';
+    });
+  });
+</script>
+
+</body></html>

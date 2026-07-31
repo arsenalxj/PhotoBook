@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 
 import '../controllers/providers.dart';
@@ -26,7 +27,7 @@ class InstagramSettingsScreen extends ConsumerWidget {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('清除 Instagram 登录？'),
+        title: const Text('清除 Instagram 登录?'),
         content: const Text('已归档的帖子不会删除。'),
         actions: [
           TextButton(
@@ -34,6 +35,10 @@ class InstagramSettingsScreen extends ConsumerWidget {
             child: const Text('取消'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.danger,
+              foregroundColor: AppTheme.accentOn,
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('清除'),
           ),
@@ -58,67 +63,136 @@ class InstagramSettingsScreen extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(appControllerProvider).instagramSession;
-    final ready = session?.status == InstagramSessionStatus.ready;
     final status = switch (session?.status) {
-      InstagramSessionStatus.ready => '@${session!.username}',
-      InstagramSessionStatus.needsRefresh => '@${session!.username} · 登录已失效',
-      null => '未登录',
-    };
-    final color = switch (session?.status) {
-      InstagramSessionStatus.ready => const Color(0xFF217A66),
-      InstagramSessionStatus.needsRefresh => Theme.of(
-        context,
-      ).colorScheme.error,
-      null => AppTheme.muted,
+      InstagramSessionStatus.ready => (
+        icon: LucideIcons.check,
+        title: '已登录',
+        subtitle: '@${session!.username}',
+        color: AppTheme.success,
+      ),
+      InstagramSessionStatus.needsRefresh => (
+        icon: LucideIcons.clock,
+        title: '@${session!.username}',
+        subtitle: '登录已失效',
+        color: AppTheme.danger,
+      ),
+      null => (
+        icon: LucideIcons.user,
+        title: '未登录',
+        subtitle: '尚未登录 Instagram',
+        color: AppTheme.muted,
+      ),
     };
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Instagram')),
+      appBar: AppBar(
+        leading: _instagramBackButton(context),
+        title: const Text('Instagram'),
+      ),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(20, 20, 20, 40),
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 32),
         children: [
-          Row(
-            children: [
-              Icon(
-                ready ? Icons.verified_user_outlined : Icons.person_outline,
-                size: 28,
-                color: color,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  status,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    color: color,
-                    fontSize: 16,
-                    fontWeight: FontWeight.w600,
-                  ),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              border: Border.all(color: AppTheme.border),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.foreground.withValues(alpha: 0.08),
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
                 ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Row(
+                    children: [
+                      DecoratedBox(
+                        decoration: BoxDecoration(
+                          color: status.color.withValues(alpha: 0.10),
+                          borderRadius: BorderRadius.circular(
+                            AppTheme.radiusMedium,
+                          ),
+                        ),
+                        child: SizedBox.square(
+                          dimension: 44,
+                          child: Icon(
+                            status.icon,
+                            size: 22,
+                            color: status.color,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              status.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(
+                                fontSize: 15,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                            Text(
+                              status.subtitle,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: status.color == AppTheme.danger
+                                    ? AppTheme.danger
+                                    : AppTheme.muted,
+                                fontFamily: 'monospace',
+                                fontSize: 13,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  const Text(
+                    '登录后可保存需要登录才能查看的帖子。',
+                    style: TextStyle(
+                      color: AppTheme.muted,
+                      fontSize: 13,
+                      height: 1.6,
+                    ),
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    height: 48,
+                    child: FilledButton(
+                      onPressed: () => _login(context, ref),
+                      child: Text(session == null ? '登录 Instagram' : '重新登录'),
+                    ),
+                  ),
+                  if (session != null) ...[
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 48,
+                      child: OutlinedButton(
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: AppTheme.danger,
+                        ),
+                        onPressed: () => _clear(context, ref),
+                        child: const Text('清除登录'),
+                      ),
+                    ),
+                  ],
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 28),
-          SizedBox(
-            height: 48,
-            child: FilledButton.icon(
-              onPressed: () => _login(context, ref),
-              icon: Icon(ready ? Icons.sync : Icons.login),
-              label: Text(ready ? '重新登录' : '登录 Instagram'),
             ),
           ),
-          if (session != null) ...[
-            const SizedBox(height: 12),
-            SizedBox(
-              height: 48,
-              child: OutlinedButton.icon(
-                onPressed: () => _clear(context, ref),
-                icon: const Icon(Icons.logout),
-                label: const Text('清除登录'),
-              ),
-            ),
-          ],
         ],
       ),
     );
@@ -163,7 +237,7 @@ class _InstagramLoginScreenState extends ConsumerState<InstagramLoginScreen> {
     super.initState();
     _webViewController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setBackgroundColor(Colors.white)
+      ..setBackgroundColor(AppTheme.surface)
       ..setNavigationDelegate(
         NavigationDelegate(
           onProgress: (progress) {
@@ -372,13 +446,14 @@ class _InstagramLoginScreenState extends ConsumerState<InstagramLoginScreen> {
       },
       child: Scaffold(
         appBar: AppBar(
+          leading: _instagramBackButton(context),
           title: const Text('登录 Instagram'),
           actions: [
             if (_error != null)
               IconButton(
                 tooltip: retryTooltip,
                 onPressed: busy ? null : _retry,
-                icon: const Icon(Icons.refresh),
+                icon: const Icon(LucideIcons.rotateCw),
               ),
           ],
         ),
@@ -387,7 +462,7 @@ class _InstagramLoginScreenState extends ConsumerState<InstagramLoginScreen> {
             Positioned.fill(
               child: _ready
                   ? WebViewWidget(controller: _webViewController)
-                  : const ColoredBox(color: Colors.white),
+                  : const ColoredBox(color: AppTheme.surface),
             ),
             if (_progress < 100)
               Align(
@@ -397,7 +472,7 @@ class _InstagramLoginScreenState extends ConsumerState<InstagramLoginScreen> {
             if (busy)
               Positioned.fill(
                 child: ColoredBox(
-                  color: Colors.white.withValues(alpha: 0.88),
+                  color: AppTheme.surface.withValues(alpha: 0.78),
                   child: Center(
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
@@ -416,22 +491,24 @@ class _InstagramLoginScreenState extends ConsumerState<InstagramLoginScreen> {
                 child: SafeArea(
                   minimum: const EdgeInsets.all(12),
                   child: Material(
-                    color: Theme.of(context).colorScheme.errorContainer,
-                    borderRadius: BorderRadius.circular(6),
+                    color: AppTheme.danger,
+                    borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(14, 12, 8, 12),
                       child: Row(
                         children: [
-                          Icon(
-                            Icons.error_outline,
-                            color: Theme.of(context).colorScheme.error,
+                          const Icon(
+                            LucideIcons.circleAlert,
+                            color: AppTheme.accentOn,
                           ),
                           const SizedBox(width: 10),
                           Expanded(
                             child: Text(
                               error,
-                              style: TextStyle(
-                                color: Theme.of(context).colorScheme.error,
+                              style: const TextStyle(
+                                color: AppTheme.accentOn,
+                                fontSize: 13,
+                                height: 1.45,
                               ),
                             ),
                           ),
@@ -440,7 +517,10 @@ class _InstagramLoginScreenState extends ConsumerState<InstagramLoginScreen> {
                             child: IconButton(
                               tooltip: retryTooltip,
                               onPressed: busy ? null : _retry,
-                              icon: const Icon(Icons.refresh),
+                              icon: const Icon(
+                                LucideIcons.rotateCw,
+                                color: AppTheme.accentOn,
+                              ),
                             ),
                           ),
                         ],
@@ -455,3 +535,9 @@ class _InstagramLoginScreenState extends ConsumerState<InstagramLoginScreen> {
     );
   }
 }
+
+Widget _instagramBackButton(BuildContext context) => IconButton(
+  tooltip: MaterialLocalizations.of(context).backButtonTooltip,
+  onPressed: () => Navigator.maybePop(context),
+  icon: const Icon(LucideIcons.chevronLeft),
+);

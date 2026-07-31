@@ -1,0 +1,383 @@
+<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<title>PhotoBook · 任务 — Android 原型</title>
+<style>
+  :root {
+    --bg: #ffffff;
+    --surface: #ffffff;
+    --surface-warm: var(--surface);
+    --fg: #111827;
+    --fg-2: var(--fg);
+    --muted: #64748b;
+    --meta: var(--muted);
+    --border: #e5e7eb;
+    --border-soft: var(--border);
+    --accent: #000000;
+    --accent-on: #ffffff;
+    --accent-hover: color-mix(in oklab, var(--accent), white 10%);
+    --accent-active: color-mix(in oklab, var(--accent), white 18%);
+    --success: #16a34a;
+    --warn: #d97706;
+    --danger: #dc2626;
+    --font-display: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
+    --font-body: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
+    --font-mono: "Fira Code", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
+    --text-xs: 12px; --text-sm: 14px; --text-base: 16px; --text-lg: 20px;
+    --text-xl: 24px; --text-2xl: 32px; --text-3xl: 40px; --text-4xl: 48px;
+    --leading-body: 1.5; --leading-tight: 1.2; --tracking-display: -0.02em;
+    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
+    --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
+    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 9999px;
+    --elev-flat: none;
+    --elev-ring: 0 0 0 1px var(--border);
+    --elev-raised:
+      0 1px 2px 0 color-mix(in oklab, var(--fg), transparent 92%),
+      0 1px 3px 0 color-mix(in oklab, var(--fg), transparent 88%);
+    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
+    --motion-fast: 150ms; --motion-base: 200ms;
+    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
+    --container-max: 1280px;
+  }
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0; background: color-mix(in oklab, var(--fg) 3%, var(--bg)); color: var(--fg);
+    font-family: var(--font-body); font-size: 15px; line-height: var(--leading-body);
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; cursor: pointer; }
+  a { color: inherit; text-decoration: none; }
+  :focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+  /* ─── 页面外壳(设备之外) ─── */
+  .proto-bar {
+    position: sticky; top: 0; z-index: 20;
+    background: var(--bg); border-bottom: 1px solid var(--border);
+  }
+  .proto-bar-inner {
+    max-width: var(--container-max); margin-inline: auto; padding: var(--space-3) var(--space-6);
+    display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
+  }
+  .proto-title { font-weight: 700; font-size: 15px; letter-spacing: var(--tracking-display); }
+  .proto-sub { color: var(--muted); font-size: 13px; }
+  .state-switch { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-left: auto; }
+  .state-btn {
+    padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--bg); color: var(--muted); font-size: 13px; min-height: 36px;
+    transition: color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
+  }
+  .state-btn:hover { border-color: var(--fg); color: var(--fg); }
+  .state-btn.active { border-color: var(--accent); color: var(--accent-on); background: var(--accent); }
+  .stage { display: flex; justify-content: center; padding: 40px 24px 64px; }
+  .hint { max-width: var(--container-max); margin: 0 auto; padding: 0 24px 24px; color: var(--muted); font-size: 13px; }
+
+  /* ─── Android 设备框 ─── */
+  .device {
+    position: relative; width: 400px; height: 844px; flex: none;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
+    overflow: hidden; display: flex; flex-direction: column;
+    box-shadow: 0 24px 64px color-mix(in oklab, var(--fg) 14%, transparent);
+  }
+  .statusbar {
+    height: 28px; flex: none; display: flex; align-items: center; justify-content: space-between;
+    padding-inline: 20px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg);
+  }
+  .statusbar .icons { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+  .appbar {
+    height: 56px; flex: none; display: flex; align-items: center; gap: var(--space-2);
+    padding-inline: 4px 16px; border-bottom: 1px solid var(--border); background: var(--bg);
+  }
+  .appbar-title { font-size: var(--text-lg); font-weight: 700; letter-spacing: var(--tracking-display); }
+  .icon-btn {
+    width: 44px; height: 44px; display: grid; place-items: center; position: relative; flex: none;
+    background: none; border: 0; border-radius: var(--radius-md); color: var(--fg);
+    transition: background var(--motion-fast) var(--ease-standard);
+  }
+  .icon-btn:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+  .icon-btn svg { width: 22px; height: 22px; }
+  .icon-btn.muted { color: var(--muted); }
+  .icon-btn.muted:hover { color: var(--fg); }
+  .icon-btn.danger { color: var(--danger); }
+  .icon-btn.danger:hover { background: color-mix(in oklab, var(--danger) 10%, transparent); color: var(--danger); }
+
+  .screen { flex: 1; overflow-y: auto; position: relative; }
+
+  /* ─── 任务分区 ─── */
+  .groups { padding: var(--space-4) var(--space-3) var(--space-2); display: flex; flex-direction: column; gap: var(--space-6); }
+  .group-title {
+    margin: 0 4px var(--space-2); font-family: var(--font-mono); font-size: var(--text-xs);
+    color: var(--muted); letter-spacing: .06em; font-weight: 500;
+  }
+  .group-body { display: flex; flex-direction: column; gap: var(--space-2); }
+  .group.empty { display: none; }
+
+  .task-card {
+    display: flex; align-items: center; gap: 10px;
+    padding: 12px 6px 12px 12px;
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
+    box-shadow: var(--elev-raised);
+  }
+  .task-icon { width: 24px; height: 24px; flex: none; color: var(--muted); display: grid; place-items: center; }
+  .task-icon svg { width: 24px; height: 24px; }
+  .task-icon.running { color: var(--fg); }
+  .task-icon.failed { color: var(--danger); }
+  .task-body { flex: 1; min-width: 0; }
+  .task-title { font-size: var(--text-sm); line-height: 1.4; color: var(--fg); }
+  .task-title.strong { font-weight: 700; }
+  .task-detail { font-size: 13px; color: var(--muted); line-height: 1.4; }
+  .task-sub { font-family: var(--font-mono); font-size: var(--text-xs); color: var(--muted); margin-top: 2px; }
+  .task-actions { display: flex; align-items: center; flex: none; }
+  .task-spin { display: none; place-items: center; width: 44px; height: 44px; color: var(--muted); }
+
+  /* ─── 空状态 ─── */
+  .empty {
+    display: none; height: 100%; flex-direction: column; align-items: center; justify-content: center;
+    gap: 12px; color: var(--muted); text-align: center; padding: 32px;
+  }
+  .empty .mark {
+    width: 56px; height: 56px; border-radius: var(--radius-md); border: 1px solid var(--border);
+    display: grid; place-items: center; color: var(--success); background: var(--bg);
+  }
+  .empty p { margin: 0; font-size: var(--text-sm); }
+
+  /* ─── 状态驱动 ─── */
+  .device[data-state="empty"] .groups { display: none; }
+  .device[data-state="empty"] .empty-tasks { display: flex; }
+  /* 行内忙碌:进行中第一行的取消按钮原地换成 spinner,忙碌期间不可再取消 */
+  .device[data-state="busy"] .busy-target .task-actions { display: none; }
+  .device[data-state="busy"] .busy-target .task-spin { display: grid; }
+
+  /* ─── 设备内确认对话框 ─── */
+  .dialog-mask {
+    position: absolute; inset: 0; z-index: 40; display: none;
+    align-items: center; justify-content: center; padding: 32px;
+    background: color-mix(in oklab, var(--fg) 45%, transparent);
+  }
+  .dialog-mask.open { display: flex; }
+  .dialog {
+    width: 100%; background: var(--bg); border-radius: var(--radius-md);
+    border: 1px solid var(--border); padding: 20px 20px 12px;
+    box-shadow: 0 16px 48px color-mix(in oklab, var(--fg) 30%, transparent);
+  }
+  .dialog-title { margin: 0 0 4px; font-size: var(--text-base); font-weight: 700; letter-spacing: var(--tracking-display); }
+  .dialog-desc { margin: 0; font-size: 13px; color: var(--muted); }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: var(--space-2); margin-top: var(--space-4); }
+  .dialog-btn {
+    min-height: 44px; padding: 10px 18px; border-radius: var(--radius-sm);
+    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
+    font-size: var(--text-sm); font-weight: 600;
+    transition: background var(--motion-fast) var(--ease-standard);
+  }
+  .dialog-btn:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+  .dialog-btn.danger { background: var(--danger); border-color: var(--danger); color: var(--accent-on); }
+  .dialog-btn.danger:hover { background: color-mix(in oklab, var(--danger), black 8%); }
+
+  .spin {
+    width: 18px; height: 18px; border-radius: 50%; flex: none;
+    border: 2px solid color-mix(in oklab, currentColor 25%, transparent);
+    border-top-color: currentColor; animation: rot 0.8s linear infinite;
+  }
+  @keyframes rot { to { transform: rotate(360deg); } }
+
+  .gesture-bar { height: 18px; flex: none; display: grid; place-items: center; background: var(--bg); }
+  .gesture-bar span { width: 108px; height: 4px; border-radius: var(--radius-pill); background: var(--border); }
+</style>
+</head>
+<body>
+<header class="proto-bar" data-od-id="proto-bar">
+  <div class="proto-bar-inner">
+    <span class="proto-title">PhotoBook · 任务</span>
+    <span class="proto-sub">Android 原型 · 界面 3 / 7</span>
+    <nav class="state-switch" data-od-id="state-switch">
+      <button class="state-btn active" data-state="default">默认</button>
+      <button class="state-btn" data-state="busy">行内忙碌</button>
+      <button class="state-btn" data-state="empty">空态</button>
+    </nav>
+  </div>
+</header>
+
+<div class="stage">
+  <div class="device" id="device" data-state="default" data-od-id="device-tasks">
+    <div class="statusbar"><span>9:41</span><span class="icons">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h3v4H2zM7.5 13h3v8h-3zM13 9h3v12h-3zM18.5 5h3v16h-3z"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 18.5 8.5 15a5 5 0 0 1 7 0zM12 12a9 9 0 0 0-6.4 2.6l-1.8-1.9A12 12 0 0 1 12 9a12 12 0 0 1 8.2 3.7l-1.8 1.9A9 9 0 0 0 12 12zM12 5a15 15 0 0 0-9.4 3.3L.8 6.4A18 18 0 0 1 12 2a18 18 0 0 1 11.2 4.4l-1.8 1.9A15 15 0 0 0 12 5z"></path></svg>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="8" width="17" height="9" rx="2"></rect><rect x="20" y="11" width="2.5" height="3" rx="1"></rect></svg>
+    </span></div>
+
+    <div class="appbar" data-od-id="appbar">
+      <a class="icon-btn" href="photobook-home.html" aria-label="返回" data-od-id="back-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M19 12H5m6-7-7 7 7 7"/></svg>
+      </a>
+      <span class="appbar-title">任务</span>
+    </div>
+
+    <div class="screen">
+      <div class="groups" id="groups" data-od-id="task-groups">
+        <section class="group" id="group-running" data-od-id="group-running">
+          <h2 class="group-title">进行中</h2>
+          <div class="group-body" id="body-running"></div>
+        </section>
+        <section class="group" id="group-failed" data-od-id="group-failed">
+          <h2 class="group-title">失败</h2>
+          <div class="group-body" id="body-failed"></div>
+        </section>
+        <section class="group" id="group-cancelled" data-od-id="group-cancelled">
+          <h2 class="group-title">已取消</h2>
+          <div class="group-body" id="body-cancelled"></div>
+        </section>
+      </div>
+
+      <div class="empty empty-tasks" data-od-id="empty-tasks">
+        <div class="mark"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="m8.5 12.2 2.4 2.4 4.8-5"/></svg></div>
+        <p>没有进行中、失败或已取消的任务</p>
+      </div>
+    </div>
+
+    <div class="dialog-mask" id="dialogMask" data-od-id="delete-dialog">
+      <div class="dialog" role="alertdialog" aria-labelledby="dialogTitle">
+        <p class="dialog-title" id="dialogTitle">删除任务记录?</p>
+        <p class="dialog-desc">只删除这条任务记录,不会删除已归档的帖子或媒体。</p>
+        <div class="dialog-actions">
+          <button class="dialog-btn" id="dialogCancel" data-od-id="dialog-cancel">取消</button>
+          <button class="dialog-btn danger" id="dialogConfirm" data-od-id="dialog-confirm">删除</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="gesture-bar"><span></span></div>
+  </div>
+</div>
+<p class="hint">交互:进行中任务可点红色「取消」;失败任务可「重试」或「删除」;登录失效的任务点登录图标跳转 Instagram 登录页;「删除」会先弹确认对话框。列表支持下拉刷新,刷新提示显示在顶部。「行内忙碌」状态演示某行操作进行中时原地 spinner、期间不可再取消。</p>
+
+<script>
+  const ICONS = {
+    download: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 3v11m0 0 4-4m-4 4-4-4M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/></svg>',
+    search:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>',
+    schedule: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>',
+    error:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V13m0 3.4v.1"/></svg>',
+    ban:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="m5.8 5.8 12.4 12.4"/></svg>',
+    cancel:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M6 6l12 12M18 6 6 18"/></svg>',
+    retry:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 10a8 8 0 0 1 14-4.6L20 7m0 0V2.5M20 7h-4.5M20 14a8 8 0 0 1-14 4.6L4 17m0 0v4.5M4 17h4.5"/></svg>',
+    trash:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9.5 7V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v2M6.5 7l.8 12a2 2 0 0 0 2 1.9h5.4a2 2 0 0 0 2-1.9l.8-12M10 11v6M14 11v6"/></svg>',
+    login:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h4a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2h-4M10 8l-4 4 4 4M6 12h10"/></svg>',
+  };
+
+  // status: parsing | downloading | waiting | failed-login | failed-network | failed-media | cancelled
+  const TASKS = [
+    { id: 1, status: 'parsing',        post: 'instagram · C8xK2mPq' },
+    { id: 2, status: 'downloading',    post: '小红书 · 等待解析' },
+    { id: 3, status: 'waiting',        post: 'instagram · C8wR9tLx' },
+    { id: 4, status: 'failed-login',   post: 'instagram · C8wR9tLx' },
+    { id: 5, status: 'failed-network', post: '小红书 · D5vN8kQw' },
+    { id: 6, status: 'failed-media',   post: 'instagram · C8pL4mXy' },
+    { id: 7, status: 'cancelled',      post: 'instagram · C8vQ3nBw' },
+  ];
+
+  const device = document.getElementById('device');
+  const bodies = {
+    running: document.getElementById('body-running'),
+    failed: document.getElementById('body-failed'),
+    cancelled: document.getElementById('body-cancelled'),
+  };
+  const groups = {
+    running: document.getElementById('group-running'),
+    failed: document.getElementById('group-failed'),
+    cancelled: document.getElementById('group-cancelled'),
+  };
+  const dialogMask = document.getElementById('dialogMask');
+  let pendingDeleteId = null;
+
+  function groupOf(t) {
+    if (t.status === 'parsing' || t.status === 'downloading' || t.status === 'waiting') return 'running';
+    if (t.status === 'cancelled') return 'cancelled';
+    return 'failed';
+  }
+
+  function rowView(t) {
+    switch (t.status) {
+      case 'parsing':
+        return { icon: 'search',   cls: 'running', title: '正在解析帖子', strong: false };
+      case 'downloading':
+        return { icon: 'download', cls: 'running', title: '正在下载媒体 3/8', strong: false };
+      case 'waiting':
+        return { icon: 'schedule', cls: 'running', title: '等待自动重试', strong: false };
+      case 'failed-login':
+        return { icon: 'error', cls: 'failed', title: '需要 Instagram 登录', strong: true, detail: '登录已失效,请重新登录后重试。' };
+      case 'failed-network':
+        return { icon: 'error', cls: 'failed', title: '网络连接失败', strong: true, detail: '无法连接内容平台,请检查系统网络或 VPN。' };
+      case 'failed-media':
+        return { icon: 'error', cls: 'failed', title: '媒体下载失败', strong: true, detail: '部分媒体下载失败,可重试。' };
+      case 'cancelled':
+        return { icon: 'ban', cls: '', title: '已取消', strong: false };
+    }
+  }
+
+  function actionBtn(act, label, odId, cls) {
+    const icon = act === 'delete' ? 'trash' : act;
+    return `<button class="icon-btn ${cls || 'muted'}" data-act="${act}" aria-label="${label}" data-od-id="${odId}">${ICONS[icon]}</button>`;
+  }
+
+  function render() {
+    Object.values(bodies).forEach(b => b.innerHTML = '');
+    TASKS.forEach((t, i) => {
+      const v = rowView(t);
+      const card = document.createElement('div');
+      card.className = 'task-card' + (t.status === 'parsing' ? ' busy-target' : '');
+      card.dataset.odId = 'task-row-' + t.id;
+
+      let actions = '';
+      if (t.status === 'parsing' || t.status === 'downloading' || t.status === 'waiting') {
+        actions = actionBtn('cancel', '取消任务', 'task-cancel-' + t.id, 'danger');
+      } else if (t.status === 'failed-login') {
+        actions = actionBtn('login', '重新登录', 'task-login-' + t.id) + actionBtn('delete', '删除记录', 'task-delete-' + t.id);
+      } else if (t.status === 'cancelled') {
+        actions = actionBtn('delete', '删除记录', 'task-delete-' + t.id);
+      } else {
+        actions = actionBtn('retry', '重试', 'task-retry-' + t.id) + actionBtn('delete', '删除记录', 'task-delete-' + t.id);
+      }
+
+      card.innerHTML = `
+        <span class="task-icon ${v.cls}">${ICONS[v.icon]}</span>
+        <div class="task-body">
+          <div class="task-title ${v.strong ? 'strong' : ''}">${v.title}</div>
+          ${v.detail ? `<div class="task-detail">${v.detail}</div>` : ''}
+          <div class="task-sub">帖子:${t.post}</div>
+        </div>
+        <span class="task-spin" aria-label="处理中"><span class="spin"></span></span>
+        <div class="task-actions">${actions}</div>`;
+      bodies[groupOf(t)].appendChild(card);
+
+      const btn = act => card.querySelector(`[data-act="${act}"]`);
+      if (btn('cancel')) btn('cancel').addEventListener('click', () => { t.status = 'cancelled'; t.post = t.post.replace('等待解析', '已取消'); render(); });
+      if (btn('retry'))  btn('retry').addEventListener('click', () => { t.status = 'waiting'; render(); });
+      if (btn('login'))  btn('login').addEventListener('click', () => { location.href = 'photobook-instagram.html'; });
+      if (btn('delete')) btn('delete').addEventListener('click', () => { pendingDeleteId = t.id; dialogMask.classList.add('open'); });
+    });
+    Object.keys(groups).forEach(k => groups[k].classList.toggle('empty', !bodies[k].children.length));
+  }
+
+  document.getElementById('dialogCancel').addEventListener('click', () => {
+    pendingDeleteId = null; dialogMask.classList.remove('open');
+  });
+  document.getElementById('dialogConfirm').addEventListener('click', () => {
+    const i = TASKS.findIndex(t => t.id === pendingDeleteId);
+    if (i >= 0) TASKS.splice(i, 1);
+    pendingDeleteId = null; dialogMask.classList.remove('open'); render();
+  });
+  dialogMask.addEventListener('click', e => {
+    if (e.target === dialogMask) { pendingDeleteId = null; dialogMask.classList.remove('open'); }
+  });
+
+  function setState(s) {
+    device.dataset.state = s;
+    document.querySelectorAll('.state-btn').forEach(b => b.classList.toggle('active', b.dataset.state === s));
+  }
+  document.querySelectorAll('.state-btn').forEach(b => b.addEventListener('click', () => setState(b.dataset.state)));
+
+  render();
+</script>
+</body></html>

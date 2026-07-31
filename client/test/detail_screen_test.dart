@@ -13,6 +13,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:video_player_platform_interface/video_player_platform_interface.dart';
 
 void main() {
@@ -186,16 +187,16 @@ void main() {
     await tester.tap(find.byKey(const ValueKey('share-post-media')));
     await tester.pumpAndSettle();
 
-    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    expect(find.byIcon(LucideIcons.circleCheck), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('share-media-1')));
     await tester.pump();
     expect(find.text('分享 2 项'), findsOneWidget);
-    expect(find.byIcon(Icons.check_circle), findsNWidgets(2));
+    expect(find.byIcon(LucideIcons.circleCheck), findsNWidgets(2));
 
     await tester.tap(find.byKey(const ValueKey('share-media-2')));
     await tester.pump();
     expect(find.text('分享 1 项'), findsOneWidget);
-    expect(find.byIcon(Icons.check_circle), findsOneWidget);
+    expect(find.byIcon(LucideIcons.circleCheck), findsOneWidget);
 
     await tester.tap(find.byKey(const ValueKey('share-selected-media')));
     await tester.pumpAndSettle();

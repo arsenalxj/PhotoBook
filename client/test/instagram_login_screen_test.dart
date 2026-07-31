@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:photobook/screens/instagram_login_screen.dart';
 import 'package:photobook/services/archive_runtime_bridge.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
@@ -113,7 +114,7 @@ void main() {
     await tester.pump();
     expect(find.text('正在验证登录状态'), findsOneWidget);
 
-    await tester.tap(find.byType(BackButton));
+    await tester.tap(find.byIcon(LucideIcons.chevronLeft));
     await tester.pumpAndSettle();
 
     expect(cancelCount, 1);

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 import 'package:photobook/controllers/app_controller.dart';
 import 'package:photobook/controllers/providers.dart';
 import 'package:photobook/core/theme/app_theme.dart';
@@ -15,7 +16,7 @@ void main() {
 
     expect(find.text('进行中'), findsOneWidget);
     expect(find.text('失败'), findsOneWidget);
-    expect(find.text('已取消'), findsOneWidget);
+    expect(find.text('已取消'), findsNWidgets(2));
     expect(find.text('正在下载媒体 1/3'), findsOneWidget);
     expect(find.byTooltip('取消任务'), findsOneWidget);
     expect(find.text('正在取消'), findsOneWidget);
@@ -36,7 +37,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('delete-job-cancelled')));
     await tester.pumpAndSettle();
-    expect(find.text('删除任务记录？'), findsOneWidget);
+    expect(find.text('删除任务记录?'), findsOneWidget);
     expect(controller.deletedJobIds, isEmpty);
     await tester.tap(find.widgetWithText(FilledButton, '删除'));
     await tester.pumpAndSettle();
@@ -72,7 +73,7 @@ void main() {
     await tester.pumpWidget(_app(controller));
 
     expect(find.byTooltip('登录 Instagram'), findsOneWidget);
-    expect(find.byIcon(Icons.login), findsOneWidget);
+    expect(find.byIcon(LucideIcons.logIn), findsOneWidget);
   });
 }
 

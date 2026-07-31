@@ -6,6 +6,7 @@ import 'package:photobook/services/archive_runtime_bridge.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 void main() {
   testWidgets('设置首页通过 Cloudflare R2 入口进入配置页', (tester) async {
@@ -18,7 +19,7 @@ void main() {
     );
 
     expect(find.text('Cloudflare R2'), findsOneWidget);
-    expect(find.text('Instagram 登录'), findsOneWidget);
+    expect(find.text('Instagram 账号'), findsOneWidget);
     expect(find.text('未登录'), findsOneWidget);
     expect(find.text('检查更新'), findsOneWidget);
     expect(find.text('S3 Endpoint'), findsNothing);
@@ -27,7 +28,9 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(find.text('Cloudflare R2'), findsOneWidget);
-    expect(find.text('S3 Endpoint'), findsOneWidget);
+    expect(find.textContaining('S3 Endpoint'), findsOneWidget);
+    await tester.drag(find.byType(ListView), const Offset(0, -600));
+    await tester.pumpAndSettle();
     expect(find.text('验证并保存'), findsOneWidget);
   });
 
@@ -47,7 +50,7 @@ void main() {
     );
 
     expect(find.text('@archive_user · 登录已失效'), findsOneWidget);
-    expect(find.byIcon(Icons.person_off_outlined), findsOneWidget);
+    expect(find.byIcon(LucideIcons.camera), findsOneWidget);
   });
 
   testWidgets('设置首页展示可用的 Instagram 登录摘要', (tester) async {
@@ -66,6 +69,6 @@ void main() {
     );
 
     expect(find.text('@archive_user'), findsOneWidget);
-    expect(find.byIcon(Icons.verified_user_outlined), findsOneWidget);
+    expect(find.byIcon(LucideIcons.camera), findsOneWidget);
   });
 }

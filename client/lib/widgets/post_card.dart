@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/theme/app_theme.dart';
 import '../models/post.dart';
@@ -26,141 +27,180 @@ class PostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cover = post.coverMedia;
-    return Card(
-      clipBehavior: Clip.antiAlias,
-      child: Stack(
-        children: [
-          InkWell(
-            onTap: onTap,
-            onLongPress: onLongPress,
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                AspectRatio(
-                  aspectRatio: cover.aspectRatio.clamp(0.58, 1.65),
-                  child: Stack(
-                    fit: StackFit.expand,
-                    children: [
-                      _LocalImage(
-                        path: cover.localThumbnailPath,
-                        fit: BoxFit.cover,
-                      ),
-                      if (cover.mediaType == PostMediaType.video)
-                        const Center(
-                          child: Icon(
-                            Icons.play_circle_fill,
-                            size: 38,
-                            color: Colors.white,
-                            shadows: [
-                              Shadow(blurRadius: 6, color: Colors.black54),
-                            ],
-                          ),
-                        ),
-                      if (post.mediaCount > 1)
-                        Positioned(
-                          right: 6,
-                          top: 6,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: const Color(0xB3000000),
-                              borderRadius: BorderRadius.circular(4),
-                            ),
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 6,
-                                vertical: 3,
-                              ),
-                              child: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  const Icon(
-                                    Icons.collections_outlined,
-                                    size: 13,
-                                    color: Colors.white,
-                                  ),
-                                  const SizedBox(width: 3),
-                                  Text(
-                                    '${post.mediaCount}',
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 11,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(9, 8, 9, 9),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      if (post.caption.isNotEmpty) ...[
-                        Text(
-                          post.caption,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 13,
-                            height: 1.35,
-                            fontWeight: FontWeight.w500,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                      ],
-                      Row(
-                        children: [
-                          Text(
-                            post.sourcePlatform == PostSourcePlatform.instagram
-                                ? 'IG'
-                                : '小红书',
-                            style: TextStyle(
-                              color:
-                                  post.sourcePlatform ==
-                                      PostSourcePlatform.instagram
-                                  ? const Color(0xFFC13584)
-                                  : const Color(0xFFE63D45),
-                              fontSize: 10,
-                              fontWeight: FontWeight.w700,
-                            ),
-                          ),
-                          const SizedBox(width: 6),
-                          _Avatar(path: post.localAvatarPath),
-                          const SizedBox(width: 6),
-                          Expanded(
-                            child: Text(
-                              post.authorUsername,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: AppTheme.muted,
-                                fontSize: 11,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.foreground.withValues(alpha: 0.08),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
           ),
-          if (showActions)
-            Positioned.fill(
-              child: _PostActionsOverlay(
-                onFilterAuthor: onFilterAuthor,
-                onDelete: onDelete,
-              ),
-            ),
         ],
       ),
+      child: Card(
+        clipBehavior: Clip.antiAlias,
+        child: Stack(
+          children: [
+            InkWell(
+              onTap: onTap,
+              onLongPress: onLongPress,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AspectRatio(
+                    aspectRatio: cover.aspectRatio.clamp(0.58, 1.65),
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        _LocalImage(path: cover.localThumbnailPath),
+                        if (cover.mediaType == PostMediaType.video)
+                          Center(
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: AppTheme.accent.withValues(alpha: 0.78),
+                                shape: BoxShape.circle,
+                              ),
+                              child: const SizedBox.square(
+                                dimension: 40,
+                                child: Icon(
+                                  LucideIcons.play,
+                                  size: 24,
+                                  color: AppTheme.accentOn,
+                                ),
+                              ),
+                            ),
+                          ),
+                        if (post.mediaCount > 1)
+                          Positioned(
+                            right: 8,
+                            top: 8,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: AppTheme.accent.withValues(alpha: 0.78),
+                                borderRadius: BorderRadius.circular(999),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 3,
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    const Icon(
+                                      LucideIcons.copy,
+                                      size: 11,
+                                      color: AppTheme.accentOn,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      '${post.mediaCount}',
+                                      style: const TextStyle(
+                                        color: AppTheme.accentOn,
+                                        fontFamily: 'monospace',
+                                        fontSize: 11,
+                                        height: 1.2,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                      ],
+                    ),
+                  ),
+                  Padding(
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        if (post.caption.isNotEmpty) ...[
+                          Text(
+                            post.caption,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: const TextStyle(fontSize: 13, height: 1.45),
+                          ),
+                          const SizedBox(height: 8),
+                        ],
+                        Row(
+                          children: [
+                            _Avatar(
+                              path: post.localAvatarPath,
+                              fallback: _avatarFallback(post),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                post.sourcePlatform ==
+                                        PostSourcePlatform.instagram
+                                    ? '@${post.authorUsername}'
+                                    : post.authorUsername,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: AppTheme.muted,
+                                  fontFamily: 'monospace',
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            DecoratedBox(
+                              decoration: BoxDecoration(
+                                border: Border.all(color: AppTheme.border),
+                                borderRadius: BorderRadius.circular(
+                                  AppTheme.radiusSmall,
+                                ),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 1,
+                                ),
+                                child: Text(
+                                  post.sourcePlatform ==
+                                          PostSourcePlatform.instagram
+                                      ? 'IG'
+                                      : '小红书',
+                                  style: const TextStyle(
+                                    color: AppTheme.muted,
+                                    fontFamily: 'monospace',
+                                    fontSize: 10,
+                                    height: 1.5,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (showActions)
+              Positioned.fill(
+                child: _PostActionsOverlay(
+                  onFilterAuthor: onFilterAuthor,
+                  onDelete: onDelete,
+                ),
+              ),
+          ],
+        ),
+      ),
     );
+  }
+
+  String _avatarFallback(ArchivedPost post) {
+    final displayName = post.authorDisplayName.trim();
+    final source = displayName.isEmpty
+        ? post.authorUsername.trim()
+        : displayName;
+    return source.isEmpty ? '?' : source.characters.first;
   }
 }
 
@@ -176,28 +216,35 @@ class _PostActionsOverlay extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Material(
     key: const ValueKey('post-actions-overlay'),
-    color: const Color(0xC8000000),
+    color: AppTheme.accent.withValues(alpha: 0.78),
     child: Center(
-      child: Wrap(
-        alignment: WrapAlignment.center,
-        spacing: 10,
-        runSpacing: 10,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          FilledButton.tonalIcon(
-            key: const ValueKey('filter-author-action'),
-            onPressed: onFilterAuthor,
-            icon: const Icon(Icons.person_search_outlined),
-            label: const Text('只看TA'),
-          ),
-          FilledButton.icon(
-            key: const ValueKey('delete-post-action'),
-            style: FilledButton.styleFrom(
-              backgroundColor: Theme.of(context).colorScheme.error,
-              foregroundColor: Theme.of(context).colorScheme.onError,
+          SizedBox(
+            width: 128,
+            child: OutlinedButton(
+              key: const ValueKey('filter-author-action'),
+              style: OutlinedButton.styleFrom(
+                backgroundColor: AppTheme.surface,
+                foregroundColor: AppTheme.foreground,
+              ),
+              onPressed: onFilterAuthor,
+              child: const Text('只看TA'),
             ),
-            onPressed: onDelete,
-            icon: const Icon(Icons.delete_outline),
-            label: const Text('删除'),
+          ),
+          const SizedBox(height: 10),
+          SizedBox(
+            width: 128,
+            child: FilledButton(
+              key: const ValueKey('delete-post-action'),
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.danger,
+                foregroundColor: AppTheme.accentOn,
+              ),
+              onPressed: onDelete,
+              child: const Text('删除'),
+            ),
           ),
         ],
       ),
@@ -206,53 +253,58 @@ class _PostActionsOverlay extends StatelessWidget {
 }
 
 class _Avatar extends StatelessWidget {
-  const _Avatar({this.path});
+  const _Avatar({required this.path, required this.fallback});
 
   final String? path;
+  final String fallback;
 
   @override
   Widget build(BuildContext context) {
     final file = path == null ? null : File(path!);
+    final hasImage = file != null && file.existsSync();
     return CircleAvatar(
-      radius: 10,
-      backgroundColor: AppTheme.divider,
-      foregroundImage: file != null && file.existsSync()
-          ? FileImage(file)
-          : null,
-      child: file == null || !file.existsSync()
-          ? const Icon(Icons.person, size: 12, color: AppTheme.muted)
-          : null,
+      radius: 12,
+      backgroundColor: AppTheme.accent,
+      foregroundColor: AppTheme.accentOn,
+      foregroundImage: hasImage ? FileImage(file) : null,
+      child: hasImage
+          ? null
+          : Text(
+              fallback,
+              style: const TextStyle(
+                color: AppTheme.accentOn,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
     );
   }
 }
 
 class _LocalImage extends StatelessWidget {
-  const _LocalImage({required this.path, required this.fit});
+  const _LocalImage({required this.path});
 
   final String? path;
-  final BoxFit fit;
 
   @override
   Widget build(BuildContext context) {
     final file = path == null ? null : File(path!);
     if (file == null || !file.existsSync()) {
       return const ColoredBox(
-        color: Color(0xFFE9EAEC),
+        color: AppTheme.surface,
         child: Center(
-          child: Icon(Icons.image_outlined, color: AppTheme.muted, size: 28),
+          child: Icon(LucideIcons.image, color: AppTheme.muted, size: 28),
         ),
       );
     }
     return Image.file(
       file,
-      fit: fit,
+      fit: BoxFit.cover,
       gaplessPlayback: true,
       cacheWidth: 600,
       errorBuilder: (_, _, _) => const ColoredBox(
-        color: Color(0xFFE9EAEC),
-        child: Center(
-          child: Icon(Icons.broken_image_outlined, color: AppTheme.muted),
-        ),
+        color: AppTheme.surface,
+        child: Center(child: Icon(LucideIcons.imageOff, color: AppTheme.muted)),
       ),
     );
   }

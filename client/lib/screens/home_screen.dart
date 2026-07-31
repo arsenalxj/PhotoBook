@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_staggered_grid_view/flutter_staggered_grid_view.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../controllers/providers.dart';
 import '../core/theme/app_theme.dart';
@@ -62,14 +63,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               onPressed: controller.isImportingClipboard
                   ? null
                   : () => controller.importClipboard(),
-              icon: const Icon(Icons.content_paste_outlined),
+              icon: const Icon(LucideIcons.clipboard),
             ),
             Badge.count(
               count: controller.taskCount,
               isLabelVisible: controller.taskCount > 0,
               backgroundColor: controller.hasRealFailures
-                  ? Theme.of(context).colorScheme.error
-                  : Theme.of(context).colorScheme.secondary,
+                  ? AppTheme.danger
+                  : AppTheme.accent,
+              textColor: AppTheme.accentOn,
               offset: const Offset(-5, 5),
               child: IconButton(
                 tooltip: '任务列表',
@@ -78,7 +80,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     builder: (_) => const TaskListScreen(),
                   ),
                 ),
-                icon: const Icon(Icons.format_list_bulleted),
+                icon: const Icon(LucideIcons.alignLeft),
               ),
             ),
             IconButton(
@@ -86,7 +88,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               onPressed: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(builder: (_) => const SettingsScreen()),
               ),
-              icon: const Icon(Icons.settings_outlined),
+              icon: const Icon(LucideIcons.settings),
             ),
             const SizedBox(width: 4),
           ],
@@ -99,9 +101,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           child: RefreshIndicator(
             onRefresh: () => controller.synchronize(showErrors: true),
             child: controller.posts.isEmpty
-                ? const _EmptyLibrary(message: '还没有保存的帖子')
+                ? const _EmptyLibrary(
+                    message: '还没有保存的帖子',
+                    detail: '在 Instagram 或小红书里把帖子「分享」到 PhotoBook，即可归档到本机。',
+                    icon: LucideIcons.bookmark,
+                  )
                 : visiblePosts.isEmpty
-                ? const _EmptyLibrary(message: '没有该博主的帖子')
+                ? const _EmptyLibrary(
+                    message: '没有该博主的帖子',
+                    icon: LucideIcons.search,
+                  )
                 : NotificationListener<ScrollStartNotification>(
                     onNotification: (_) {
                       if (_activePostId != null) {
@@ -136,9 +145,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       child: InputChip(
         key: const ValueKey('author-filter-chip'),
         label: Text(filter.label, maxLines: 1, overflow: TextOverflow.ellipsis),
-        deleteIcon: const Icon(Icons.close, size: 18),
+        deleteIcon: const Icon(LucideIcons.x, size: 18),
         onDeleted: _clearFilter,
         onPressed: _clearFilter,
+        backgroundColor: AppTheme.surface,
+        deleteIconColor: AppTheme.muted,
+        side: const BorderSide(color: AppTheme.border),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        ),
+        labelStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
         visualDensity: VisualDensity.compact,
       ),
     );
@@ -152,9 +168,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _authorFilter = _AuthorFilter(
         sourcePlatform: post.sourcePlatform,
         username: post.authorUsername,
-        label: post.authorDisplayName.trim().isEmpty
+        label: post.sourcePlatform == PostSourcePlatform.instagram
             ? '@${post.authorUsername}'
-            : post.authorDisplayName,
+            : post.authorUsername,
       );
     });
   }
@@ -206,7 +222,7 @@ class _PostGrid extends StatelessWidget {
           crossAxisCount: columns,
           mainAxisSpacing: 8,
           crossAxisSpacing: 8,
-          padding: const EdgeInsets.fromLTRB(10, 8, 10, 96),
+          padding: const EdgeInsets.fromLTRB(8, 8, 8, 96),
           itemCount: posts.length,
           itemBuilder: (context, index) {
             final post = posts[index];
@@ -229,9 +245,11 @@ class _PostGrid extends StatelessWidget {
 }
 
 class _EmptyLibrary extends StatelessWidget {
-  const _EmptyLibrary({required this.message});
+  const _EmptyLibrary({required this.message, required this.icon, this.detail});
 
   final String message;
+  final String? detail;
+  final IconData icon;
 
   @override
   Widget build(BuildContext context) {
@@ -239,14 +257,34 @@ class _EmptyLibrary extends StatelessWidget {
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.all(32),
       children: [
-        const SizedBox(height: 180),
-        const Icon(Icons.bookmark_border, size: 44, color: AppTheme.muted),
-        const SizedBox(height: 14),
+        const SizedBox(height: 164),
+        Center(
+          child: DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              border: Border.all(color: AppTheme.border),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+            ),
+            child: SizedBox.square(
+              dimension: 56,
+              child: Icon(icon, size: 26, color: AppTheme.foreground),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
         Text(
           message,
           textAlign: TextAlign.center,
-          style: const TextStyle(color: AppTheme.muted),
+          style: const TextStyle(color: AppTheme.muted, fontSize: 14),
         ),
+        if (detail != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            detail!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: AppTheme.muted, fontSize: 13),
+          ),
+        ],
       ],
     );
   }

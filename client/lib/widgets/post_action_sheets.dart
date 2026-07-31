@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/theme/app_theme.dart';
 import '../models/post.dart';
@@ -34,16 +35,16 @@ Future<bool> showDeletePostSheet({
           canPop: !isDeleting,
           child: SafeArea(
             child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 10, 20, 20),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   const _SheetHandle(),
-                  const SizedBox(height: 14),
+                  const SizedBox(height: 8),
                   const Text(
-                    '删除这条帖子？',
-                    style: TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+                    '删除这条帖子?',
+                    style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
                   ),
                   const SizedBox(height: 8),
                   Text(
@@ -52,7 +53,11 @@ Future<bool> showDeletePostSheet({
                         : '${post.authorDisplayName}  ·  小红书',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: AppTheme.muted),
+                    style: const TextStyle(
+                      color: AppTheme.muted,
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
                   ),
                   const SizedBox(height: 8),
                   const Text(
@@ -63,56 +68,69 @@ Future<bool> showDeletePostSheet({
                     const SizedBox(height: 12),
                     Text(
                       errorMessage!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+                      style: const TextStyle(color: AppTheme.danger),
                     ),
                   ],
                   const SizedBox(height: 20),
-                  FilledButton.icon(
-                    key: const ValueKey('confirm-delete-post'),
-                    style: FilledButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.error,
-                      foregroundColor: Theme.of(context).colorScheme.onError,
-                      minimumSize: const Size.fromHeight(48),
-                    ),
-                    onPressed: isDeleting
-                        ? null
-                        : () async {
-                            setState(() {
-                              isDeleting = true;
-                              errorMessage = null;
-                            });
-                            try {
-                              await onDelete();
-                              if (sheetContext.mounted) {
-                                Navigator.of(sheetContext).pop(true);
-                              }
-                            } on Object catch (error) {
-                              if (!context.mounted) return;
-                              setState(() {
-                                isDeleting = false;
-                                errorMessage = _messageFor(error);
-                              });
-                            }
-                          },
-                    icon: isDeleting
-                        ? const SizedBox.square(
-                            dimension: 18,
-                            child: CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: Colors.white,
-                            ),
-                          )
-                        : const Icon(Icons.delete_outline),
-                    label: Text(isDeleting ? '正在删除' : '删除帖子'),
-                  ),
-                  const SizedBox(height: 8),
-                  TextButton(
-                    onPressed: isDeleting
-                        ? null
-                        : () => Navigator.of(sheetContext).pop(false),
-                    child: const Text('取消'),
+                  Row(
+                    children: [
+                      Expanded(
+                        child: OutlinedButton(
+                          onPressed: isDeleting
+                              ? null
+                              : () => Navigator.of(sheetContext).pop(false),
+                          child: const Text('取消'),
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: FilledButton(
+                          key: const ValueKey('confirm-delete-post'),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: AppTheme.danger,
+                            foregroundColor: AppTheme.accentOn,
+                            minimumSize: const Size.fromHeight(48),
+                          ),
+                          onPressed: isDeleting
+                              ? null
+                              : () async {
+                                  setState(() {
+                                    isDeleting = true;
+                                    errorMessage = null;
+                                  });
+                                  try {
+                                    await onDelete();
+                                    if (sheetContext.mounted) {
+                                      Navigator.of(sheetContext).pop(true);
+                                    }
+                                  } on Object catch (error) {
+                                    if (!context.mounted) return;
+                                    setState(() {
+                                      isDeleting = false;
+                                      errorMessage = _messageFor(error);
+                                    });
+                                  }
+                                },
+                          child: isDeleting
+                              ? const Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    SizedBox.square(
+                                      dimension: 18,
+                                      child: CircularProgressIndicator(
+                                        strokeWidth: 2,
+                                        color: AppTheme.accentOn,
+                                      ),
+                                    ),
+                                    SizedBox(width: 8),
+                                    Text('正在删除'),
+                                  ],
+                                )
+                              : const Text('删除帖子'),
+                        ),
+                      ),
+                    ],
                   ),
                 ],
               ),
@@ -234,9 +252,7 @@ Future<int?> showSaveMediaSelectionSheet({
                     const SizedBox(height: 12),
                     Text(
                       errorMessage!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+                      style: const TextStyle(color: AppTheme.danger),
                     ),
                   ],
                   const SizedBox(height: 16),
@@ -288,10 +304,10 @@ Future<int?> showSaveMediaSelectionSheet({
                             dimension: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: AppTheme.accentOn,
                             ),
                           )
-                        : const Icon(Icons.download_outlined),
+                        : const Icon(LucideIcons.download),
                     label: Text(
                       isSaving
                           ? '正在保存 $progressCurrent/$progressTotal'
@@ -345,7 +361,7 @@ Future<MediaDeleteSelectionOutcome?> showDeleteMediaSelectionSheet({
                   const _SheetHandle(),
                   const SizedBox(height: 8),
                   _SelectionSheetHeader(
-                    title: '选择要删除的媒体',
+                    title: '删除媒体',
                     selectedCount: selectedIds.length,
                     totalCount: post.media.length,
                     allSelected: allSelected,
@@ -386,17 +402,15 @@ Future<MediaDeleteSelectionOutcome?> showDeleteMediaSelectionSheet({
                     const SizedBox(height: 12),
                     Text(
                       errorMessage!,
-                      style: TextStyle(
-                        color: Theme.of(context).colorScheme.error,
-                      ),
+                      style: const TextStyle(color: AppTheme.danger),
                     ),
                   ],
                   const SizedBox(height: 16),
                   FilledButton.icon(
                     key: const ValueKey('delete-selected-media'),
                     style: FilledButton.styleFrom(
-                      backgroundColor: Theme.of(context).colorScheme.error,
-                      foregroundColor: Theme.of(context).colorScheme.onError,
+                      backgroundColor: AppTheme.danger,
+                      foregroundColor: AppTheme.accentOn,
                     ),
                     onPressed: selectedMedia.isEmpty || isDeleting
                         ? null
@@ -428,10 +442,10 @@ Future<MediaDeleteSelectionOutcome?> showDeleteMediaSelectionSheet({
                             dimension: 18,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
-                              color: Colors.white,
+                              color: AppTheme.accentOn,
                             ),
                           )
-                        : const Icon(Icons.delete_outline),
+                        : const Icon(LucideIcons.trash),
                     label: Text(
                       isDeleting
                           ? '正在删除'
@@ -517,9 +531,9 @@ Future<void> showShareMediaSheet({
                       children: [
                         const Expanded(
                           child: Text(
-                            '选择要分享的媒体',
+                            '分享媒体',
                             style: TextStyle(
-                              fontSize: 20,
+                              fontSize: 16,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
@@ -530,7 +544,7 @@ Future<void> showShareMediaSheet({
                           onPressed: isSharing
                               ? null
                               : () => Navigator.of(sheetContext).pop(),
-                          icon: const Icon(Icons.close),
+                          icon: const Icon(LucideIcons.x),
                         ),
                       ],
                     ),
@@ -562,39 +576,18 @@ Future<void> showShareMediaSheet({
                     ),
                     if (selectedLive?.hasLiveMotion == true) ...[
                       const SizedBox(height: 16),
-                      SegmentedButton<MediaExportMode>(
-                        segments: const [
-                          ButtonSegment(
-                            value: MediaExportMode.staticImage,
-                            icon: Icon(Icons.image_outlined),
-                            label: Text('静态图'),
-                          ),
-                          ButtonSegment(
-                            value: MediaExportMode.gif,
-                            icon: Icon(Icons.gif_box_outlined),
-                            label: Text('GIF'),
-                          ),
-                          ButtonSegment(
-                            value: MediaExportMode.video,
-                            icon: Icon(Icons.videocam_outlined),
-                            label: Text('视频'),
-                          ),
-                        ],
-                        selected: {liveExportMode},
-                        onSelectionChanged: isSharing
-                            ? null
-                            : (selection) => setState(
-                                () => liveExportMode = selection.single,
-                              ),
+                      _LiveExportModeSelector(
+                        selected: liveExportMode,
+                        enabled: !isSharing,
+                        onChanged: (mode) =>
+                            setState(() => liveExportMode = mode),
                       ),
                     ],
                     if (errorMessage != null) ...[
                       const SizedBox(height: 12),
                       Text(
                         errorMessage!,
-                        style: TextStyle(
-                          color: Theme.of(context).colorScheme.error,
-                        ),
+                        style: const TextStyle(color: AppTheme.danger),
                       ),
                     ],
                     const SizedBox(height: 16),
@@ -630,10 +623,10 @@ Future<void> showShareMediaSheet({
                               dimension: 18,
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
-                                color: Colors.white,
+                                color: AppTheme.accentOn,
                               ),
                             )
-                          : const Icon(Icons.share_outlined),
+                          : const Icon(LucideIcons.share),
                       label: Text(
                         isSharing ? '正在准备媒体' : '分享 ${selectedIds.length} 项',
                       ),
@@ -680,14 +673,14 @@ class _SelectionSheetHeader extends StatelessWidget {
           Expanded(
             child: Text(
               title,
-              style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w700),
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
           ),
           IconButton(
             key: closeKey,
             tooltip: '关闭',
             onPressed: enabled ? onClose : null,
-            icon: const Icon(Icons.close),
+            icon: const Icon(LucideIcons.x),
           ),
         ],
       ),
@@ -770,23 +763,25 @@ class _LiveExportModeSelector extends StatelessWidget {
   @override
   Widget build(BuildContext context) => SegmentedButton<MediaExportMode>(
     segments: const [
-      ButtonSegment(
-        value: MediaExportMode.staticImage,
-        icon: Icon(Icons.image_outlined),
-        label: Text('静态图'),
-      ),
-      ButtonSegment(
-        value: MediaExportMode.gif,
-        icon: Icon(Icons.gif_box_outlined),
-        label: Text('GIF'),
-      ),
-      ButtonSegment(
-        value: MediaExportMode.video,
-        icon: Icon(Icons.videocam_outlined),
-        label: Text('视频'),
-      ),
+      ButtonSegment(value: MediaExportMode.staticImage, label: Text('静态图')),
+      ButtonSegment(value: MediaExportMode.gif, label: Text('GIF')),
+      ButtonSegment(value: MediaExportMode.video, label: Text('视频')),
     ],
     selected: {selected},
+    style: ButtonStyle(
+      visualDensity: VisualDensity.compact,
+      side: const WidgetStatePropertyAll(BorderSide(color: AppTheme.border)),
+      backgroundColor: WidgetStateProperty.resolveWith((states) {
+        return states.contains(WidgetState.selected)
+            ? AppTheme.accent
+            : AppTheme.surface;
+      }),
+      foregroundColor: WidgetStateProperty.resolveWith((states) {
+        return states.contains(WidgetState.selected)
+            ? AppTheme.accentOn
+            : AppTheme.foreground;
+      }),
+    ),
     onSelectionChanged: enabled
         ? (selection) => onChanged(selection.single)
         : null,
@@ -813,15 +808,13 @@ class _MediaChoice extends StatelessWidget {
         ? null
         : File(media.localThumbnailPath!);
     return Material(
-      color: AppTheme.divider,
+      color: AppTheme.surface,
       clipBehavior: Clip.antiAlias,
       shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(6),
+        borderRadius: BorderRadius.circular(AppTheme.radiusSmall),
         side: BorderSide(
-          color: selected
-              ? Theme.of(context).colorScheme.primary
-              : AppTheme.divider,
-          width: selected ? 3 : 1,
+          color: selected ? AppTheme.accent : AppTheme.border,
+          width: selected ? 2 : 1,
         ),
       ),
       child: InkWell(
@@ -832,13 +825,72 @@ class _MediaChoice extends StatelessWidget {
             if (thumbnail != null && thumbnail.existsSync())
               Image.file(thumbnail, fit: BoxFit.cover)
             else
-              const Icon(Icons.image_outlined, color: AppTheme.muted),
+              const Icon(LucideIcons.image, color: AppTheme.muted),
             if (media.mediaType == PostMediaType.video)
-              const Center(
-                child: Icon(
-                  Icons.play_circle_fill,
-                  color: Colors.white,
-                  size: 30,
+              Center(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: AppTheme.accent.withValues(alpha: 0.78),
+                    shape: BoxShape.circle,
+                  ),
+                  child: const SizedBox.square(
+                    dimension: 34,
+                    child: Icon(
+                      LucideIcons.play,
+                      color: AppTheme.accentOn,
+                      size: 22,
+                    ),
+                  ),
+                ),
+              ),
+            if (media.isLivePhoto)
+              Positioned(
+                left: 6,
+                bottom: 6,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: AppTheme.accent.withValues(alpha: 0.78),
+                    borderRadius: BorderRadius.circular(999),
+                  ),
+                  child: const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          LucideIcons.radio,
+                          color: AppTheme.accentOn,
+                          size: 12,
+                        ),
+                        SizedBox(width: 4),
+                        Text(
+                          'Live',
+                          style: TextStyle(
+                            color: AppTheme.accentOn,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            if (completed)
+              const Positioned(
+                left: 6,
+                top: 6,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: AppTheme.success,
+                    borderRadius: BorderRadius.all(Radius.circular(999)),
+                  ),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                    child: Text(
+                      '已保存',
+                      style: TextStyle(color: AppTheme.accentOn, fontSize: 10),
+                    ),
+                  ),
                 ),
               ),
             Positioned(
@@ -846,14 +898,19 @@ class _MediaChoice extends StatelessWidget {
               right: 6,
               child: Icon(
                 completed || selected
-                    ? Icons.check_circle
-                    : Icons.circle_outlined,
+                    ? LucideIcons.circleCheck
+                    : LucideIcons.circle,
                 color: completed
-                    ? Colors.green
+                    ? AppTheme.success
                     : selected
-                    ? Theme.of(context).colorScheme.primary
-                    : Colors.white,
-                shadows: const [Shadow(blurRadius: 4, color: Colors.black54)],
+                    ? AppTheme.accent
+                    : AppTheme.accentOn,
+                shadows: [
+                  Shadow(
+                    blurRadius: 4,
+                    color: AppTheme.accent.withValues(alpha: 0.54),
+                  ),
+                ],
               ),
             ),
           ],

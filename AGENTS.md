@@ -14,6 +14,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - `client/lib/`：Flutter UI、页面状态和原生桥接。
 - `client/tool/`：构建与发布使用的确定性元数据校验脚本，不承载运行时业务。
 - `docs/`：中文架构、同步协议、构建配置和运维文档。
+- `docs/prototype-shadcn/`：全部界面的 Shadcn 高保真 HTML 原型，是 UI 的唯一视觉权威。UI 工作以 `handoff.md` 的令牌映射和逐屏任务清单为准，颜色只允许来自令牌表。
 - `.github/workflows/release.yml`：仅由版本标签触发的正式 APK 发布流程。
 
 仓库只保留 Android 客户端源码和现行文档，不保留迁移前的服务端、Discord Bot、Docker、Mihomo 或兼容代码。

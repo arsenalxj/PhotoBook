@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../controllers/providers.dart';
 import '../controllers/update_controller.dart';
@@ -19,6 +20,19 @@ class SettingsScreen extends ConsumerWidget {
     final hasSyncError = controller.syncStatus.lastError != null;
     final updateController = ref.watch(updateControllerProvider);
     final updateState = updateController.state;
+
+    final instagramColor = switch (instagramSession?.status) {
+      InstagramSessionStatus.ready => AppTheme.success,
+      InstagramSessionStatus.needsRefresh => AppTheme.danger,
+      null => AppTheme.foreground,
+    };
+    final instagramStatus = switch (instagramSession?.status) {
+      InstagramSessionStatus.ready => '@${instagramSession!.username}',
+      InstagramSessionStatus.needsRefresh =>
+        '@${instagramSession!.username} · 登录已失效',
+      null => '未登录',
+    };
+    final r2Color = hasSyncError ? AppTheme.danger : AppTheme.foreground;
     final r2Status = savedConfig == null
         ? '未配置'
         : hasSyncError
@@ -28,58 +42,18 @@ class SettingsScreen extends ConsumerWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('设置')),
       body: ListView(
-        padding: const EdgeInsets.fromLTRB(16, 20, 16, 40),
+        padding: const EdgeInsets.all(16),
         children: [
-          const Padding(
-            padding: EdgeInsets.only(left: 4),
-            child: Text(
-              'Instagram',
-              style: TextStyle(color: AppTheme.muted, fontSize: 14),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 4,
-              ),
-              leading: Icon(
-                switch (instagramSession?.status) {
-                  InstagramSessionStatus.ready => Icons.verified_user_outlined,
-                  InstagramSessionStatus.needsRefresh =>
-                    Icons.person_off_outlined,
-                  null => Icons.person_outline,
-                },
-                color: switch (instagramSession?.status) {
-                  InstagramSessionStatus.ready => const Color(0xFF217A66),
-                  InstagramSessionStatus.needsRefresh => Theme.of(
-                    context,
-                  ).colorScheme.error,
-                  null => AppTheme.muted,
-                },
-              ),
-              title: const Text('Instagram 登录'),
-              subtitle: Text(
-                switch (instagramSession?.status) {
-                  InstagramSessionStatus.ready =>
-                    '@${instagramSession!.username}',
-                  InstagramSessionStatus.needsRefresh =>
-                    '@${instagramSession!.username} · 登录已失效',
-                  null => '未登录',
-                },
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color:
-                      instagramSession?.status ==
-                          InstagramSessionStatus.needsRefresh
-                      ? Theme.of(context).colorScheme.error
-                      : AppTheme.muted,
-                ),
-              ),
-              trailing: const Icon(Icons.chevron_right),
+          _SettingsSection(
+            title: 'Instagram',
+            child: _SettingsRow(
+              icon: LucideIcons.camera,
+              iconColor: instagramColor,
+              title: 'Instagram 账号',
+              subtitle: instagramStatus,
+              subtitleColor: instagramColor,
+              monoSubtitle:
+                  instagramSession?.status == InstagramSessionStatus.ready,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const InstagramSettingsScreen(),
@@ -87,46 +61,16 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
-          const SizedBox(height: 24),
-          const Padding(
-            padding: EdgeInsets.only(left: 4),
-            child: Text(
-              '云同步',
-              style: TextStyle(color: AppTheme.muted, fontSize: 14),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 4,
-              ),
-              leading: Icon(
-                savedConfig == null
-                    ? Icons.cloud_outlined
-                    : hasSyncError
-                    ? Icons.cloud_off_outlined
-                    : Icons.cloud_done_outlined,
-                color: hasSyncError
-                    ? Theme.of(context).colorScheme.error
-                    : savedConfig == null
-                    ? AppTheme.muted
-                    : const Color(0xFF217A66),
-              ),
-              title: const Text('Cloudflare R2'),
-              subtitle: Text(
-                r2Status,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  color: hasSyncError
-                      ? Theme.of(context).colorScheme.error
-                      : AppTheme.muted,
-                ),
-              ),
-              trailing: const Icon(Icons.chevron_right),
+          const SizedBox(height: 16),
+          _SettingsSection(
+            title: '云同步',
+            child: _SettingsRow(
+              icon: hasSyncError ? LucideIcons.cloudOff : LucideIcons.cloud,
+              iconColor: r2Color,
+              title: 'Cloudflare R2',
+              subtitle: r2Status,
+              subtitleColor: r2Color,
+              monoSubtitle: savedConfig != null && !hasSyncError,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const R2SettingsScreen(),
@@ -134,31 +78,14 @@ class SettingsScreen extends ConsumerWidget {
               ),
             ),
           ),
-          const SizedBox(height: 24),
-          const Padding(
-            padding: EdgeInsets.only(left: 4),
-            child: Text(
-              '关于',
-              style: TextStyle(color: AppTheme.muted, fontSize: 14),
-            ),
-          ),
-          const SizedBox(height: 8),
-          Card(
-            clipBehavior: Clip.antiAlias,
-            child: ListTile(
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 16,
-                vertical: 4,
-              ),
-              leading: const Icon(Icons.system_update_alt),
-              title: const Text('检查更新'),
-              subtitle: Text(_updateSubtitle(updateState)),
-              trailing: updateState.status == UpdateStatus.checking
-                  ? const SizedBox.square(
-                      dimension: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.chevron_right),
+          const SizedBox(height: 16),
+          _SettingsSection(
+            title: '关于',
+            child: _SettingsRow(
+              icon: LucideIcons.rotateCw,
+              title: '检查更新',
+              subtitle: _updateSubtitle(updateState),
+              busy: updateState.status == UpdateStatus.checking,
               onTap: updateState.status == UpdateStatus.checking
                   ? null
                   : updateController.checkManually,
@@ -177,6 +104,135 @@ class SettingsScreen extends ConsumerWidget {
   }
 }
 
+class _SettingsSection extends StatelessWidget {
+  const _SettingsSection({required this.title, required this.child});
+
+  final String title;
+  final Widget child;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: AppTheme.surface,
+      border: Border.all(color: AppTheme.border),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+      boxShadow: [
+        BoxShadow(
+          color: AppTheme.foreground.withValues(alpha: 0.08),
+          blurRadius: 3,
+          offset: const Offset(0, 1),
+        ),
+      ],
+    ),
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(0, 12, 0, 8),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+            child: Text(
+              title,
+              style: const TextStyle(
+                color: AppTheme.muted,
+                fontFamily: 'monospace',
+                fontSize: 11,
+              ),
+            ),
+          ),
+          child,
+        ],
+      ),
+    ),
+  );
+}
+
+class _SettingsRow extends StatelessWidget {
+  const _SettingsRow({
+    required this.icon,
+    required this.title,
+    required this.subtitle,
+    this.iconColor = AppTheme.foreground,
+    this.subtitleColor = AppTheme.muted,
+    this.monoSubtitle = false,
+    this.busy = false,
+    this.onTap,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String title;
+  final String subtitle;
+  final Color subtitleColor;
+  final bool monoSubtitle;
+  final bool busy;
+  final VoidCallback? onTap;
+
+  @override
+  Widget build(BuildContext context) => InkWell(
+    onTap: onTap,
+    child: ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 56),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: iconColor.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              ),
+              child: SizedBox.square(
+                dimension: 36,
+                child: Icon(icon, size: 20, color: iconColor),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: 1),
+                  Text(
+                    subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: subtitleColor,
+                      fontFamily: monoSubtitle ? 'monospace' : null,
+                      fontSize: monoSubtitle ? 12 : 13,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (busy)
+              const SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              const Icon(
+                LucideIcons.chevronRight,
+                color: AppTheme.muted,
+                size: 20,
+              ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
 class R2SettingsScreen extends ConsumerStatefulWidget {
   const R2SettingsScreen({super.key});
 
@@ -193,6 +249,7 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
   final _secretController = TextEditingController();
   bool _saving = false;
   bool _secretVisible = false;
+  String? _saveError;
 
   @override
   void initState() {
@@ -216,6 +273,7 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
   }
 
   Future<void> _save() async {
+    setState(() => _saveError = null);
     if (!_formKey.currentState!.validate() || _saving) return;
     setState(() => _saving = true);
     try {
@@ -238,9 +296,7 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
       ).showSnackBar(const SnackBar(content: Text('R2 配置已保存')));
     } on PlatformException catch (error) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(error.message ?? 'R2 配置验证失败')));
+      setState(() => _saveError = error.message ?? 'R2 配置验证失败');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -250,7 +306,7 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: const Text('清除 R2 配置？'),
+        title: const Text('清除 R2 配置?'),
         content: const Text('本地帖子不会删除。'),
         actions: [
           TextButton(
@@ -258,6 +314,10 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
             child: const Text('取消'),
           ),
           FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: AppTheme.danger,
+              foregroundColor: AppTheme.accentOn,
+            ),
             onPressed: () => Navigator.pop(context, true),
             child: const Text('清除'),
           ),
@@ -272,7 +332,7 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
     _prefixController.text = 'photobook';
     _accessKeyController.clear();
     _secretController.clear();
-    setState(() {});
+    setState(() => _saveError = null);
   }
 
   @override
@@ -288,139 +348,69 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
             IconButton(
               tooltip: '清除 R2 配置',
               onPressed: _saving ? null : _clear,
-              icon: const Icon(Icons.delete_outline),
+              icon: const Icon(LucideIcons.trash),
             ),
+          const SizedBox(width: 4),
         ],
       ),
       body: Form(
         key: _formKey,
         child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 40),
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
           children: [
-            Row(
-              children: [
-                Icon(
-                  savedConfig == null
-                      ? Icons.cloud_off_outlined
-                      : Icons.cloud_done_outlined,
-                  color: savedConfig == null
-                      ? AppTheme.muted
-                      : const Color(0xFF217A66),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: Text(
-                    savedConfig == null
-                        ? 'R2 未配置'
-                        : '${savedConfig.bucket} / ${savedConfig.prefix}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontWeight: FontWeight.w600),
-                  ),
-                ),
-                if (savedConfig != null)
-                  Text(
-                    savedConfig.accessKeyIdHint,
-                    style: const TextStyle(color: AppTheme.muted),
-                  ),
-              ],
-            ),
+            _R2StatusCard(config: savedConfig),
             if (savedConfig != null && syncError != null) ...[
-              const SizedBox(height: 14),
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  const Icon(
-                    Icons.cloud_off_outlined,
-                    size: 20,
-                    color: Color(0xFFB5473C),
-                  ),
-                  const SizedBox(width: 10),
-                  Expanded(
-                    child: Text(
-                      '最近同步失败：$syncError',
-                      style: const TextStyle(color: Color(0xFFB5473C)),
-                    ),
-                  ),
-                ],
-              ),
+              const SizedBox(height: 16),
+              _InlineError(message: '最近同步失败:$syncError'),
             ],
-            const SizedBox(height: 22),
-            TextFormField(
+            const SizedBox(height: 16),
+            _field(
+              label: 'S3 Endpoint',
               controller: _endpointController,
+              hint: 'https://xxxx.r2.cloudflarestorage.com',
               keyboardType: TextInputType.url,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'S3 Endpoint',
-                prefixIcon: Icon(Icons.link),
-              ),
-              validator: _required,
             ),
-            const SizedBox(height: 14),
-            TextFormField(
-              controller: _bucketController,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'Bucket',
-                prefixIcon: Icon(Icons.inventory_2_outlined),
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 14),
-            TextFormField(
-              controller: _prefixController,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'Prefix',
-                prefixIcon: Icon(Icons.folder_outlined),
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 14),
-            TextFormField(
-              controller: _accessKeyController,
-              autocorrect: false,
-              decoration: const InputDecoration(
-                labelText: 'Access Key ID',
-                prefixIcon: Icon(Icons.key_outlined),
-              ),
-              validator: _required,
-            ),
-            const SizedBox(height: 14),
-            TextFormField(
+            _field(label: 'Bucket', controller: _bucketController),
+            _field(label: 'Prefix', controller: _prefixController),
+            _field(label: 'Access Key ID', controller: _accessKeyController),
+            _field(
+              label: 'Secret Access Key',
               controller: _secretController,
-              autocorrect: false,
-              enableSuggestions: false,
               obscureText: !_secretVisible,
-              decoration: InputDecoration(
-                labelText: 'Secret Access Key',
-                prefixIcon: const Icon(Icons.password_outlined),
-                suffixIcon: IconButton(
-                  tooltip: _secretVisible ? '隐藏' : '显示',
-                  onPressed: () =>
-                      setState(() => _secretVisible = !_secretVisible),
-                  icon: Icon(
-                    _secretVisible
-                        ? Icons.visibility_off_outlined
-                        : Icons.visibility_outlined,
-                  ),
+              suffixIcon: IconButton(
+                tooltip: _secretVisible ? '隐藏' : '显示',
+                onPressed: () =>
+                    setState(() => _secretVisible = !_secretVisible),
+                icon: Icon(
+                  _secretVisible ? LucideIcons.eyeOff : LucideIcons.eye,
+                  color: AppTheme.muted,
+                  size: 20,
                 ),
               ),
-              validator: _required,
             ),
-            const SizedBox(height: 24),
-            FilledButton.icon(
+            if (_saveError != null) ...[
+              _InlineError(message: _saveError!),
+              const SizedBox(height: 16),
+            ],
+            FilledButton(
               onPressed: _saving ? null : _save,
-              icon: _saving
-                  ? const SizedBox.square(
-                      dimension: 18,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
+              child: _saving
+                  ? const Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppTheme.accentOn,
+                          ),
+                        ),
+                        SizedBox(width: 8),
+                        Text('正在验证…'),
+                      ],
                     )
-                  : const Icon(Icons.cloud_done_outlined),
-              label: const Text('验证并保存'),
+                  : const Text('验证并保存'),
             ),
           ],
         ),
@@ -428,6 +418,159 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
     );
   }
 
+  Widget _field({
+    required String label,
+    required TextEditingController controller,
+    String? hint,
+    TextInputType? keyboardType,
+    bool obscureText = false,
+    Widget? suffixIcon,
+  }) => Padding(
+    padding: const EdgeInsets.only(bottom: 16),
+    child: Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text.rich(
+          TextSpan(
+            text: label,
+            children: const [
+              TextSpan(
+                text: '  必填',
+                style: TextStyle(
+                  color: AppTheme.muted,
+                  fontWeight: FontWeight.w400,
+                ),
+              ),
+            ],
+          ),
+          style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+        ),
+        const SizedBox(height: 6),
+        TextFormField(
+          controller: controller,
+          keyboardType: keyboardType,
+          autocorrect: false,
+          enableSuggestions: false,
+          obscureText: obscureText,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
+          decoration: InputDecoration(hintText: hint, suffixIcon: suffixIcon),
+          validator: _required,
+        ),
+      ],
+    ),
+  );
+
   String? _required(String? value) =>
       value == null || value.trim().isEmpty ? '不能为空' : null;
+}
+
+class _R2StatusCard extends StatelessWidget {
+  const _R2StatusCard({required this.config});
+
+  final R2ConfigSummary? config;
+
+  @override
+  Widget build(BuildContext context) {
+    final configured = config != null;
+    final color = configured ? AppTheme.success : AppTheme.muted;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        border: Border.all(color: AppTheme.border),
+        borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+        boxShadow: [
+          BoxShadow(
+            color: AppTheme.foreground.withValues(alpha: 0.08),
+            blurRadius: 3,
+            offset: const Offset(0, 1),
+          ),
+        ],
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(14),
+        child: Row(
+          children: [
+            DecoratedBox(
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              ),
+              child: SizedBox.square(
+                dimension: 40,
+                child: Icon(
+                  configured ? LucideIcons.check : LucideIcons.cloudOff,
+                  color: color,
+                  size: 22,
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    configured
+                        ? '${config!.bucket} / ${config!.prefix}'
+                        : 'R2 未配置',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      color: configured ? AppTheme.foreground : AppTheme.muted,
+                      fontSize: 15,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    configured
+                        ? 'AccessKey ${config!.accessKeyIdHint}'
+                        : '填写下方表单以启用云同步',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTheme.muted,
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _InlineError extends StatelessWidget {
+  const _InlineError({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    decoration: BoxDecoration(
+      color: AppTheme.surface,
+      border: Border.all(color: AppTheme.danger),
+      borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+    ),
+    child: Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(LucideIcons.circleAlert, color: AppTheme.danger, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              message,
+              style: const TextStyle(fontSize: 13, height: 1.45),
+            ),
+          ),
+        ],
+      ),
+    ),
+  );
 }
