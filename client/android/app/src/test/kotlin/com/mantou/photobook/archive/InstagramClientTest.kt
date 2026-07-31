@@ -272,6 +272,50 @@ class InstagramClientTest {
     }
 
     @Test
+    fun `manual cookie import validates before replacing previous session`() {
+        val oldSession = session(sessionId = "old-session")
+        val validatedSession = session(username = "manual_user", sessionId = "new-session")
+        val sessions = FakeSessions(oldSession)
+        val gateway =
+            object : InstagramGateway {
+                override fun validateSession(
+                    cookieHeader: String,
+                    validatedAt: Long,
+                ): InstagramSession {
+                    if (cookieHeader.startsWith("invalid")) {
+                        throw ArchiveException("LOGIN_VALIDATION_FAILED", "Cookie 无效")
+                    }
+                    return validatedSession
+                }
+
+                override fun fetchPost(
+                    shortcode: String,
+                    session: InstagramSession?,
+                ): InstagramFetchOutcome = throw UnsupportedOperationException()
+
+                override fun fetchPostMediaInfo(
+                    shortcode: String,
+                    session: InstagramSession,
+                ): InstagramFetchResult = throw UnsupportedOperationException()
+            }
+        val client = InstagramClient(gateway, sessions)
+
+        assertThrows(ArchiveException::class.java) {
+            client.validateAndSaveSession("invalid-cookie")
+        }
+        assertTrue(sessions.current === oldSession)
+        assertTrue(sessions.saved.isEmpty())
+
+        val imported = client.validateAndSaveSession(
+            "sessionid=session-secret; csrftoken=csrf-value",
+        )
+
+        assertTrue(imported === validatedSession)
+        assertTrue(sessions.current === validatedSession)
+        assertEquals(1, sessions.saved.size)
+    }
+
+    @Test
     fun `ready session exports sorted cookie header`() {
         val sessions = FakeSessions(session(sessionId = "session-secret"))
 

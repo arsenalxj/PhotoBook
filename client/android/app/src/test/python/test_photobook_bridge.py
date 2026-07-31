@@ -26,6 +26,16 @@ class _PostWithoutLocation(SimpleNamespace):
         raise KeyError("location")
 
 
+class _FakeRawResponse:
+    def __init__(self, text: str, status_code: int = 200) -> None:
+        self.text = text
+        self.status_code = status_code
+        self.closed = False
+
+    def close(self) -> None:
+        self.closed = True
+
+
 class _FakeContext:
     def __init__(self) -> None:
         self.username = None
@@ -208,6 +218,32 @@ class SessionBridgeTest(unittest.TestCase):
         error = json.loads(str(caught.exception))
         self.assertEqual(error["code"], "LOGIN_VALIDATION_FAILED")
 
+    def test_validation_preserves_retryable_network_errors(self) -> None:
+        cases = (
+            (TooManyRequestsException("rate limited"), "RATE_LIMITED"),
+            (ConnectionException("offline"), "NETWORK_ERROR"),
+            (Timeout("timed out"), "NETWORK_ERROR"),
+        )
+        for failure, expected_code in cases:
+            with self.subTest(expected_code=expected_code, failure=type(failure).__name__):
+                loader = _FakeLoader()
+                with (
+                    patch.object(
+                        photobook_bridge.instaloader,
+                        "Instaloader",
+                        return_value=loader,
+                    ),
+                    patch.object(loader, "test_login", side_effect=failure),
+                ):
+                    with self.assertRaises(RuntimeError) as caught:
+                        photobook_bridge.validate_session(
+                            "sessionid=must-not-leak; csrftoken=csrf-value"
+                        )
+
+                error = json.loads(str(caught.exception))
+                self.assertEqual(error["code"], expected_code)
+                self.assertNotIn("must-not-leak", str(caught.exception))
+
     def test_fetch_returns_no_session_for_anonymous_request(self) -> None:
         loader = _FakeLoader()
         post = _post(is_private=False)
@@ -293,6 +329,143 @@ class SessionBridgeTest(unittest.TestCase):
         from_shortcode.assert_called_once()
         self.assertEqual(len(loader.context.metadata_calls), 1)
         self.assertEqual(loader.context.iphone_calls, [])
+        self.assertEqual(payload, {"mediaInfoRequired": True})
+
+    def test_anonymous_shortcode_web_info_execution_error_requests_login_retry(self) -> None:
+        loader = _FakeLoader()
+        loader.context.metadata_response = _shortcode_web_info_execution_error_response()
+        raw_response = _FakeRawResponse(_public_post_html("PublicPost"))
+        with (
+            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(
+                photobook_bridge.requests,
+                "get",
+                return_value=raw_response,
+            ) as get,
+            patch.object(
+                photobook_bridge.instaloader.Post,
+                "from_shortcode",
+                side_effect=_raise_metadata_failure,
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post("PublicPost")
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "LOGIN_REQUIRED")
+        self.assertEqual(len(loader.context.metadata_calls), 1)
+        self.assertEqual(loader.context.iphone_calls, [])
+        get.assert_called_once_with(
+            "https://www.instagram.com/p/PublicPost/",
+            timeout=30.0,
+        )
+        self.assertTrue(raw_response.closed)
+
+    def test_anonymous_shortcode_web_info_execution_error_for_missing_post_is_unavailable(self) -> None:
+        loader = _FakeLoader()
+        loader.context.metadata_response = _shortcode_web_info_execution_error_response()
+        raw_response = _FakeRawResponse("<html><head></head></html>")
+        with (
+            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(
+                photobook_bridge.requests,
+                "get",
+                return_value=raw_response,
+            ) as get,
+            patch.object(
+                photobook_bridge.instaloader.Post,
+                "from_shortcode",
+                side_effect=_raise_metadata_failure,
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post("MissingPost")
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "POST_UNAVAILABLE")
+        get.assert_called_once_with(
+            "https://www.instagram.com/p/MissingPost/",
+            timeout=30.0,
+        )
+        self.assertTrue(raw_response.closed)
+
+    def test_anonymous_shortcode_web_info_permalink_timeout_is_network_error(self) -> None:
+        loader = _FakeLoader()
+        loader.context.metadata_response = _shortcode_web_info_execution_error_response()
+        with (
+            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(
+                photobook_bridge.requests,
+                "get",
+                side_effect=Timeout("permalink timed out"),
+            ),
+            patch.object(
+                photobook_bridge.instaloader.Post,
+                "from_shortcode",
+                side_effect=_raise_metadata_failure,
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post("PublicPost")
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "NETWORK_ERROR")
+
+    def test_anonymous_shortcode_web_info_permalink_preserves_http_failures(self) -> None:
+        cases = (
+            (429, "RATE_LIMITED"),
+            (503, "NETWORK_ERROR"),
+        )
+        for status_code, expected_code in cases:
+            with self.subTest(status_code=status_code):
+                loader = _FakeLoader()
+                loader.context.metadata_response = (
+                    _shortcode_web_info_execution_error_response()
+                )
+                raw_response = _FakeRawResponse("", status_code=status_code)
+                with (
+                    patch.object(
+                        photobook_bridge.instaloader,
+                        "Instaloader",
+                        return_value=loader,
+                    ),
+                    patch.object(
+                        photobook_bridge.requests,
+                        "get",
+                        return_value=raw_response,
+                    ),
+                    patch.object(
+                        photobook_bridge.instaloader.Post,
+                        "from_shortcode",
+                        side_effect=_raise_metadata_failure,
+                    ),
+                ):
+                    with self.assertRaises(RuntimeError) as caught:
+                        photobook_bridge.fetch_post("PublicPost")
+
+                error = json.loads(str(caught.exception))
+                self.assertEqual(error["code"], expected_code)
+                self.assertTrue(raw_response.closed)
+
+    def test_authenticated_shortcode_web_info_execution_error_stages_media_info(self) -> None:
+        loader = _FakeLoader()
+        loader.context.metadata_response = _shortcode_web_info_execution_error_response()
+        with (
+            patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(photobook_bridge.requests, "get") as get,
+            patch.object(
+                photobook_bridge.instaloader.Post,
+                "from_shortcode",
+                side_effect=_raise_metadata_failure,
+            ),
+        ):
+            payload = json.loads(
+                photobook_bridge.fetch_post("PublicPost", _session_json())
+            )
+
+        self.assertEqual(len(loader.context.metadata_calls), 1)
+        self.assertEqual(loader.context.iphone_calls, [])
+        get.assert_not_called()
         self.assertEqual(payload, {"mediaInfoRequired": True})
 
     def test_authenticated_media_info_fetches_post(self) -> None:
@@ -435,15 +608,22 @@ class SessionBridgeTest(unittest.TestCase):
         self.assertEqual(payload["media"][0]["url"], "https://cdn.example/sidecar.jpg")
         self.assertEqual(payload["media"][1]["url"], "https://cdn.example/sidecar.mp4")
 
-    def test_other_missing_metadata_never_uses_media_info_fallback(self) -> None:
+    def test_other_graphql_execution_error_never_uses_media_info_fallback(self) -> None:
         loader = _FakeLoader()
         loader.context.metadata_response = {
             "status": "ok",
             "data": None,
-            "errors": [{"message": "execution error"}],
+            "errors": [
+                {
+                    "message": "execution error",
+                    "path": ["other_graphql_query"],
+                    "severity": "CRITICAL",
+                }
+            ],
         }
         with (
             patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader),
+            patch.object(photobook_bridge.requests, "get") as get,
             patch.object(
                 photobook_bridge.instaloader.Post,
                 "from_shortcode",
@@ -456,6 +636,7 @@ class SessionBridgeTest(unittest.TestCase):
         error = json.loads(str(caught.exception))
         self.assertEqual(error["code"], "POST_UNAVAILABLE")
         self.assertEqual(loader.context.iphone_calls, [])
+        get.assert_not_called()
 
     def test_rejects_private_profile_even_with_session(self) -> None:
         loader = _FakeLoader()
@@ -647,6 +828,33 @@ def _html_media_error_response() -> dict[str, object]:
             }
         ],
     }
+
+
+def _shortcode_web_info_execution_error_response() -> dict[str, object]:
+    return {
+        "status": "ok",
+        "data": None,
+        "errors": [
+            {
+                "message": "execution error",
+                "path": ["xdt_api__v1__media__shortcode__web_info"],
+                "severity": "CRITICAL",
+            }
+        ],
+    }
+
+
+def _public_post_html(shortcode: str) -> str:
+    return f"""
+        <html>
+          <head>
+            <link rel="canonical" href="https://www.instagram.com/p/{shortcode}/">
+            <meta property="og:title" content="Public Author on Instagram">
+            <meta property="og:image" content="https://cdn.example/post.jpg">
+            <meta property="og:description" content="Public Author posted on Instagram">
+          </head>
+        </html>
+    """
 
 
 def _session_json() -> str:

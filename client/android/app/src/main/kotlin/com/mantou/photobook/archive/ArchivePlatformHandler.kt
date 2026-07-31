@@ -2,10 +2,13 @@ package com.mantou.photobook.archive
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.PersistableBundle
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebStorage
@@ -64,9 +67,11 @@ internal class ArchivePlatformHandler(
                 "retryJob" -> retryJob(call, result)
                 "cancelJob" -> cancelJob(call, result)
                 "deleteJob" -> deleteJob(call, result)
+                "copyJobSourceUrl" -> copyJobSourceUrl(call, result)
                 "beginInstagramLogin" -> beginInstagramLogin(result)
                 "cancelInstagramLogin" -> cancelInstagramLogin(result)
                 "captureInstagramSession" -> captureInstagramSession(result)
+                "importInstagramCookies" -> importInstagramCookies(call, result)
                 "copyInstagramCookies" -> copyInstagramCookies(result)
                 "clearInstagramSession" -> clearInstagramSession(result)
                 "saveR2Config" -> saveR2Config(call, result)
@@ -310,6 +315,31 @@ internal class ArchivePlatformHandler(
         result.success(null)
     }
 
+    private fun importInstagramCookies(call: MethodCall, result: MethodChannel.Result) {
+        val cookieHeader = call.argument<String>("cookieHeader").orEmpty().trim()
+        if (cookieHeader.isEmpty()) {
+            result.error("LOGIN_INCOMPLETE", "请先粘贴完整 Instagram Cookie", null)
+            return
+        }
+        if (cookieHeader.length > MAX_COOKIE_HEADER_LENGTH) {
+            result.error("LOGIN_INCOMPLETE", "Instagram Cookie 格式无效", null)
+            return
+        }
+        sessionExecutor.execute {
+            var acquired = false
+            try {
+                ArchiveExecutionGate.acquire()
+                acquired = true
+                val session = instagram.validateAndSaveSession(cookieHeader)
+                result.success(session.summary())
+            } catch (error: Exception) {
+                reportError(result, error)
+            } finally {
+                if (acquired) ArchiveExecutionGate.release()
+            }
+        }
+    }
+
     private fun clearInstagramSession(result: MethodChannel.Result) {
         instagramLoginAttempts.cancel()
         var acquired = false
@@ -415,6 +445,26 @@ internal class ArchivePlatformHandler(
             return
         }
         ArchiveEventBus.emitJobChanged()
+        result.success(null)
+    }
+
+    private fun copyJobSourceUrl(call: MethodCall, result: MethodChannel.Result) {
+        val jobId = call.argument<String>("jobId").orEmpty()
+        if (jobId.isBlank()) {
+            result.error("JOB_NOT_FOUND", "任务不存在或已被处理", null)
+            return
+        }
+        val sourceUrl = database.jobSourceUrl(jobId)
+        val clip = ClipData.newPlainText(ARCHIVE_LINK_CLIP_LABEL, sourceUrl)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            clip.description.extras =
+                PersistableBundle().apply {
+                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+        }
+        val clipboard =
+            applicationContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        clipboard.setPrimaryClip(clip)
         result.success(null)
     }
 
@@ -598,6 +648,8 @@ internal class ArchivePlatformHandler(
         const val METHOD_CHANNEL = "com.mantou.photobook/archive"
         const val EVENT_CHANNEL = "com.mantou.photobook/archive_events"
         private const val INSTAGRAM_URL = "https://www.instagram.com/"
+        private const val ARCHIVE_LINK_CLIP_LABEL = "PhotoBook 帖子链接"
+        private const val MAX_COOKIE_HEADER_LENGTH = 32 * 1024
         private const val LEGACY_STORAGE_PERMISSION_REQUEST = 102
         private const val CLIPBOARD_PREFERENCES = "archive_clipboard"
         private const val KEY_LAST_CLIPBOARD_FINGERPRINT = "last_fingerprint"

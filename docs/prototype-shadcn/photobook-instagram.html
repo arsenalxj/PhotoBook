@@ -128,6 +128,21 @@
   .status-text .t2 { color: var(--muted); font-size: 13px; font-family: var(--font-mono); }
   .status-text .t2.bad { color: var(--danger); }
   .settings-note { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.6; }
+  .cookie-title { margin: 0; font-size: 15px; font-weight: 700; }
+  .cookie-field { position: relative; }
+  .cookie-input {
+    width: 100%; min-height: 48px; padding: 12px 48px 12px 12px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--fg); font: 13px var(--font-mono);
+  }
+  .cookie-input:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+  .cookie-toggle {
+    position: absolute; top: 2px; right: 2px; width: 44px; height: 44px;
+    border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted);
+    display: grid; place-items: center;
+  }
+  .cookie-toggle svg { width: 20px; height: 20px; }
+  .btn:disabled { cursor: default; opacity: .55; }
 
   .btn {
     min-height: 48px; width: 100%; border-radius: var(--radius-sm); font-size: 15px; font-weight: 600;
@@ -317,7 +332,7 @@
             </span>
             <span class="status-text">
               <span class="t1">已登录</span><br>
-              <span class="t2">@wander_chen</span>
+              <span class="t2">@manual_user</span>
             </span>
           </div>
           <div class="status-row st-expired">
@@ -325,7 +340,7 @@
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"></circle><path d="M12 7.5V12l3 2"></path></svg>
             </span>
             <span class="status-text">
-              <span class="t1">@wander_chen</span><br>
+              <span class="t1">@manual_user</span><br>
               <span class="t2 bad">登录已失效</span>
             </span>
           </div>
@@ -335,6 +350,16 @@
           </button>
           <button class="btn btn-primary btn-copy" id="copyBtn" data-od-id="btn-copy-cookie">复制Cookie</button>
           <button class="btn btn-ghost-danger btn-clear" id="clearBtn" data-od-id="btn-clear-login">清除登录</button>
+        </div>
+        <div class="card" data-od-id="cookie-login-card">
+          <h2 class="cookie-title">Cookie 登录</h2>
+          <div class="cookie-field">
+            <input class="cookie-input" id="cookieInput" type="password" placeholder="粘贴完整 Cookie" autocomplete="off" spellcheck="false" data-od-id="cookie-input">
+            <button class="cookie-toggle" id="cookieToggle" type="button" aria-label="显示 Cookie" data-od-id="cookie-visibility">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"/><circle cx="12" cy="12" r="2.7"/></svg>
+            </button>
+          </div>
+          <button class="btn btn-outline" id="cookieLoginBtn" data-od-id="btn-cookie-login">验证并登录</button>
         </div>
       </div>
     </div>
@@ -397,6 +422,8 @@
   const snackbarIcon = document.getElementById('snackbarIcon');
   const snackbarText = document.getElementById('snackbarText');
   const busyMsg = document.getElementById('busyMsg');
+  const cookieInput = document.getElementById('cookieInput');
+  const cookieLoginBtn = document.getElementById('cookieLoginBtn');
   const ICONS = {
     ok: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 12.5l5 5L20 6.5"/></svg>',
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 10.5V17M12 7h.01"/></svg>'
@@ -414,6 +441,8 @@
     clearInterval(rotateTimer);
     rotateTimer = null;
     device.classList.remove('clearing');
+    cookieLoginBtn.disabled = false;
+    cookieLoginBtn.textContent = '验证并登录';
   }
   function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
 
@@ -457,12 +486,35 @@
     later(() => {
       clearFlow();
       setState('logged-in');
-      showSnackbar('已登录 @wander_chen', true);
+      showSnackbar('已登录 @manual_user', true);
     }, 4200);
   });
 
   document.getElementById('copyBtn').addEventListener('click', () => {
     showSnackbar('Cookie 已复制，60 秒后自动清除', true);
+  });
+
+  document.getElementById('cookieToggle').addEventListener('click', event => {
+    const visible = cookieInput.type === 'text';
+    cookieInput.type = visible ? 'password' : 'text';
+    event.currentTarget.setAttribute('aria-label', visible ? '显示 Cookie' : '隐藏 Cookie');
+  });
+
+  cookieLoginBtn.addEventListener('click', () => {
+    if (!cookieInput.value.trim()) {
+      showSnackbar('请先粘贴完整 Cookie', false);
+      return;
+    }
+    cookieInput.value = '';
+    cookieLoginBtn.disabled = true;
+    cookieLoginBtn.textContent = '正在验证…';
+    later(() => {
+      setState('logged-in');
+      document.querySelector('.st-loggedin .t2').textContent = '@manual_user';
+      cookieLoginBtn.disabled = false;
+      cookieLoginBtn.textContent = '验证并登录';
+      showSnackbar('已登录 @manual_user', true);
+    }, 1200);
   });
 
   // 屏幕 A:清除登录 → 确认对话框 → 未登录态

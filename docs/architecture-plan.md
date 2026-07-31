@@ -6,7 +6,7 @@
 
 ## 1. 结论
 
-PhotoBook 采用纯客户端架构：Android 前台服务在手机内通过 Chaquopy 调用平台解析器，匿名优先下载媒体并写入本机 SQLite 和 App 沙盒。Instagram 使用固定版本 Instaloader，并可在官方 WebView 建立本机会话；小红书只解析匿名公开页面。Cloudflare R2 是用户自行配置的可选共享资料库，不是本地归档成功的前置条件。
+PhotoBook 采用纯客户端架构：Android 前台服务在手机内通过 Chaquopy 调用平台解析器，匿名优先下载媒体并写入本机 SQLite 和 App 沙盒。Instagram 使用固定版本 Instaloader，并可通过官方 WebView 或手动 Cookie 建立本机会话；小红书只解析匿名公开页面。Cloudflare R2 是用户自行配置的可选共享资料库，不是本地归档成功的前置条件。
 
 最终不需要 Cloudflare Worker、D1、Python 下载服务器、设备配对、Discord Bot 或 Mihomo。
 
@@ -31,9 +31,9 @@ flowchart LR
 首版包含：
 
 - 接收 Instagram 和小红书 `text/plain` 分享。
-- 匿名优先抓取 Instagram 公开图片帖、多图帖和 Reel；登录墙出现时可使用已验证的本机会话重试一次。GraphQL 明确返回 `4630001 + Media should not be an HtmlResponse` 时按登录兼容错误处理；登录重试仍失败时，Python 返回结构化阶段，Kotlin 在确认任务未取消后才使用独立 authenticated media-info 调用补齐。其他不可访问错误不得触发 Session。
+- 匿名优先抓取 Instagram 公开图片帖、多图帖和 Reel；登录墙出现时可使用已验证的本机会话重试一次。GraphQL 明确返回 `4630001 + Media should not be an HtmlResponse` 时按登录兼容错误处理。`status=ok + data=null + execution error + CRITICAL + xdt_api__v1__media__shortcode__web_info` 指纹也可能表示帖子不存在，必须再由匿名 permalink 的 canonical 与完整 Open Graph 帖子元数据确认公开内容存在，才能触发 Session；登录重试仍失败时，Python 返回结构化阶段，Kotlin 在确认任务未取消后才使用独立 authenticated media-info 调用补齐。相同指纹但无公开元数据的失效帖、相似但不完整的执行错误及其他不可访问错误不得触发 Session。
 - 匿名抓取小红书公开图片、视频、原生 GIF 和 Live Photo；不提供小红书登录或验证码绕过。
-- 设置页提供 Instagram 官方 WebView 登录、登录状态、重新登录、复制Cookie 和清除会话。复制只允许在会话可用时由用户主动触发。
+- 设置页提供 Instagram 官方 WebView 登录、手动 Cookie 登录、登录状态、重新登录、复制Cookie 和清除会话。复制只允许在会话可用时由用户主动触发。
 - App 退到后台或锁屏后继续下载，完成后自动停止前台服务。
 - 本地瀑布流、详情、失败重试和按需原媒体读取。
 - 可选 R2 上传、拉取、多设备去重同步和逻辑删除。
@@ -43,7 +43,7 @@ flowchart LR
 首版不包含：
 
 - PhotoBook 账号、注册、配对或设备吊销。
-- 手动 Cookie、Instaloader session 文件、原生账号密码表单或私密帖子。
+- Instaloader session 文件、原生账号密码表单或私密帖子。
 - 评论、互动数据、Live Photo 转 GIF 之外的通用视频转码、HLS 或 AI 处理。
 - Worker、D1、服务端下载器和 Mihomo 控制。
 - 物理删除 R2 共享媒体。
@@ -86,11 +86,11 @@ sequenceDiagram
 
 | 组件 | 负责 | 不负责 |
 |---|---|---|
-| Flutter | 首页、详情、任务列表、Instagram 登录状态与 Cookie 复制命令、R2 设置、检查更新、展示任务状态 | 读取或接收 Cookie 内容、平台抓取、维持后台执行 |
+| Flutter | 首页、详情、任务列表、Instagram 登录状态、手动 Cookie 瞬时输入与复制命令、R2 设置、检查更新、展示任务状态 | 读取已保存 Cookie、持久化 Cookie、平台抓取、维持后台执行 |
 | MainActivity | 接收分享、规范化链接、先落任务、启动服务 | 长时间网络请求 |
 | ArchiveForegroundService | 通知、串行调度、恢复、停止条件 | UI 状态 |
 | ArchiveRunner | 按平台选择 Python 解析器、原生下载、缩略图、事务提交、一次有界同步 | 保存明文密钥 |
-| Chaquopy bridge | 验证 WebView Cookie，调用平台解析器，把帖子映射成统一 JSON | 保存 Session 文件、文件下载、SQLite、R2、ffmpeg |
+| Chaquopy bridge | 验证 WebView 或手动 Cookie，调用平台解析器，把帖子映射成统一 JSON | 保存 Session 文件、文件下载、SQLite、R2、ffmpeg |
 | SQLite | 本机帖子、媒体、任务、失败和同步状态 | 二进制媒体、Secret |
 | R2 | 可选多设备操作日志和内容寻址媒体 | 用户身份、任务协调、查询数据库 |
 
@@ -118,7 +118,7 @@ sequenceDiagram
 - `error_code / error_message`
 - `created_at / updated_at`
 
-同一 `(source_platform, request_key)` 只有一个任务；不同短链即使最终指向同一帖子，也可能各自解析和下载，但最终按 `<source_platform>:<source_post_id>` 覆盖为同一正式帖子。首页任务列表只查询 `queued / fetching / downloading / committing / cancelling / failed`，按“进行中 / 失败 / 已取消”分组，不展示已完成历史，也不混入 R2 同步或应用更新任务。`queued` 且设置了 `next_attempt_at` 时显示“等待自动重试”，下载阶段显示 `progress_current / progress_total`，`cancelling` 显示“正在取消”且不提供取消、重试或删除操作。
+同一 `(source_platform, request_key)` 只有一个任务；不同短链即使最终指向同一帖子，也可能各自解析和下载，但最终按 `<source_platform>:<source_post_id>` 覆盖为同一正式帖子。首页任务列表只查询 `queued / fetching / downloading / committing / cancelling / failed`，按“进行中 / 失败 / 已取消”分组，不展示已完成历史，也不混入 R2 同步或应用更新任务。长按任务项发送 `jobId` 给 Android，由原生层从 SQLite 读取 `source_url` 并复制，不把小红书 `xsec_token` 下发到 Flutter。`queued` 且设置了 `next_attempt_at` 时显示“等待自动重试”，下载阶段显示 `progress_current / progress_total`，`cancelling` 显示“正在取消”且不提供取消、重试或删除操作。
 
 排队任务取消时直接改为 `failed + CANCELLED`；运行 attempt 取消时先改为 `cancelling`，执行器停止后续阶段，完成文件回滚和任务临时目录清理，再以相同 `attempt_count` 收口为 `failed + CANCELLED`。进程中断后恢复时也必须把遗留 `cancelling` 收口为已取消，不能重新排队。运行 attempt 的阶段更新、错误写入和最终提交都必须同时校验 `attempt_count` 与期望状态；匿名解析前后、读取 Session 前、认证重试前后、媒体下载循环及流式读取中、提交前都检查任务仍属于当前 attempt。取消后不得继续读取 Session、发起认证请求、保存刷新后的 Session、下载或提交。Chaquopy 的 Instaloader 解析是同步调用，不能强杀正在执行的 Python 网络请求，因此单次网络请求超时固定为 30 秒；请求返回后立即响应取消。
 
@@ -205,7 +205,7 @@ Access Key 只代表访问权限，替换 Key 不产生新资料库。每个安�
 
 R2 使用 S3 API 的 `region=auto`。凭证仅存 Keystore，token 权限限制到目标 bucket 的对象读写。分页必须依据服务返回的截断标记，不能按返回数量猜测结束。
 
-Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。账号密码只提交给官方 WebView；Android `CookieManager` 取得 Cookie 后由 Chaquopy 验证，成功才替换旧会话并清理 WebView 数据。用户只能在 `ready` 状态主动命令 Android 原生层把 Cookie Header 写入系统剪贴板；Cookie 不经过 Flutter MethodChannel 返回值，剪贴板标记敏感内容，并在进程存活时 60 秒后仅清理未被替换的该份内容。匿名成功时不解密 Session；认证失败只标记会话需要刷新，不影响已经完成的本地归档。
+Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。账号密码只提交给官方 WebView；Android `CookieManager` 取得的 Cookie 与用户主动粘贴的 Cookie Header 都由 Chaquopy 调用 `test_login()` 在线验证并取得真实用户名，成功才替换旧会话。手动 Cookie 输入框默认隐藏，提交后立即清空；验证失败不得覆盖旧 Session。WebView 登录成功或取消后仍必须清理 WebView 数据。用户只能在 `ready` 状态主动命令 Android 原生层把已保存 Cookie Header 写入系统剪贴板；已保存 Cookie 不经过 Flutter MethodChannel 返回值，剪贴板标记敏感内容，并在进程存活时 60 秒后仅清理未被替换的该份内容。匿名成功时不解密 Session；认证失败只标记会话需要刷新，不影响已经完成的本地归档。
 
 ## 8. Android 生命周期
 

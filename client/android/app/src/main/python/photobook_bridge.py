@@ -3,10 +3,13 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
+from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 from typing import Any
+from urllib.parse import urlparse
 
 import instaloader
+import requests
 from instaloader import exceptions as instaloader_exceptions
 from requests import exceptions as requests_exceptions
 
@@ -16,6 +19,16 @@ _FORK_COMMIT = "b1d233362e335cbbccba5c5e4b614a1032764118"
 _POST_METADATA_DOC_ID = "27128499623469141"
 _HTML_MEDIA_ERROR_CODE = "4630001"
 _HTML_MEDIA_ERROR_DESCRIPTION = "Media should not be an HtmlResponse"
+_SHORTCODE_WEB_INFO_ERROR_PATH = (
+    "xdt_api__v1__media__shortcode__web_info",
+)
+_PUBLIC_POST_META_PROPERTIES = frozenset(
+    {
+        "og:title",
+        "og:image",
+        "og:description",
+    }
+)
 _MEDIA_INFO_REQUIRED = object()
 
 
@@ -38,6 +51,32 @@ class _MetadataResponseContext:
         if doc_id == _POST_METADATA_DOC_ID and variables.get("shortcode") == self._shortcode:
             self.response = response
         return response
+
+
+class _PublicPostPageParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.canonical_urls: set[str] = set()
+        self.meta_properties: set[str] = set()
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        attributes = dict(attrs)
+        if tag == "link":
+            rel = str(attributes.get("rel") or "").lower().split()
+            href = str(attributes.get("href") or "").strip()
+            if "canonical" in rel and href:
+                self.canonical_urls.add(href)
+            return
+        if tag != "meta":
+            return
+        name = str(attributes.get("property") or "").lower().strip()
+        content = str(attributes.get("content") or "").strip()
+        if name in _PUBLIC_POST_META_PROPERTIES and content:
+            self.meta_properties.add(name)
 
 
 def health_check() -> str:
@@ -76,9 +115,8 @@ def validate_session(cookie_header: str) -> str:
     except RuntimeError:
         raise
     except Exception as error:
-        raise RuntimeError(
-            _error_json("LOGIN_VALIDATION_FAILED", "Instagram 登录状态验证失败")
-        ) from error
+        code, message = _classify_validation_error(error)
+        raise RuntimeError(_error_json(code, message)) from error
 
 
 def fetch_post(shortcode: str, session_json: str | None = None) -> str:
@@ -197,7 +235,18 @@ def _fetch_post_metadata(loader: Any, shortcode: str, *, authenticated: bool) ->
     try:
         return instaloader.Post.from_shortcode(context, shortcode)
     except instaloader_exceptions.BadResponseException as error:
-        if not _is_html_media_response(context.response):
+        is_html_media_response = _is_html_media_response(context.response)
+        is_shortcode_execution_error = _is_shortcode_web_info_execution_error(
+            context.response
+        )
+        if not is_html_media_response and not is_shortcode_execution_error:
+            raise
+        if (
+            is_shortcode_execution_error
+            and not is_html_media_response
+            and not authenticated
+            and not _anonymous_permalink_confirms_public_post(shortcode)
+        ):
             raise
         if not authenticated:
             raise RuntimeError(
@@ -234,6 +283,84 @@ def _is_html_media_response(response: Any) -> bool:
         if _HTML_MEDIA_ERROR_DESCRIPTION in _error_descriptions(error):
             return True
     return False
+
+
+def _is_shortcode_web_info_execution_error(response: Any) -> bool:
+    if (
+        not isinstance(response, dict)
+        or response.get("status") != "ok"
+        or "data" not in response
+        or response["data"] is not None
+    ):
+        return False
+    errors = response.get("errors")
+    if not isinstance(errors, list):
+        return False
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        path = error.get("path")
+        if (
+            error.get("message") == "execution error"
+            and error.get("severity") == "CRITICAL"
+            and isinstance(path, list)
+            and tuple(path) == _SHORTCODE_WEB_INFO_ERROR_PATH
+        ):
+            return True
+    return False
+
+
+def _anonymous_permalink_confirms_public_post(shortcode: str) -> bool:
+    try:
+        response = requests.get(
+            f"https://www.instagram.com/p/{shortcode}/",
+            timeout=30.0,
+        )
+    except requests_exceptions.RequestException as error:
+        raise RuntimeError(
+            _error_json("NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN")
+        ) from error
+    try:
+        if response.status_code == 429:
+            raise RuntimeError(
+                _error_json("RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试")
+            )
+        if response.status_code >= 500:
+            raise RuntimeError(
+                _error_json("NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN")
+            )
+        if response.status_code != 200:
+            return False
+        parser = _PublicPostPageParser()
+        parser.feed(response.text)
+    finally:
+        response.close()
+    return (
+        _PUBLIC_POST_META_PROPERTIES <= parser.meta_properties
+        and any(
+            _canonical_matches_shortcode(url, shortcode)
+            for url in parser.canonical_urls
+        )
+    )
+
+
+def _canonical_matches_shortcode(url: str, shortcode: str) -> bool:
+    parsed = urlparse(url)
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == "www.instagram.com"
+        and parsed.port is None
+        and parsed.username is None
+        and parsed.password is None
+        and not parsed.query
+        and not parsed.fragment
+        and parsed.path
+        in {
+            f"/p/{shortcode}/",
+            f"/reel/{shortcode}/",
+            f"/tv/{shortcode}/",
+        }
+    )
 
 
 def _error_descriptions(error: dict[str, Any]) -> set[str]:
@@ -482,6 +609,29 @@ def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]
     ):
         return "NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN"
     return "INSTAGRAM_ERROR", "Instagram 帖子解析失败"
+
+
+def _classify_validation_error(error: Exception) -> tuple[str, str]:
+    chain = _exception_chain(error)
+    message = "\n".join(str(item).lower() for item in chain)
+    if any(
+        isinstance(item, instaloader_exceptions.TooManyRequestsException)
+        for item in chain
+    ) or "feedback_required" in message:
+        return "RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试"
+    if any(
+        isinstance(
+            item,
+            (
+                instaloader_exceptions.ConnectionException,
+                requests_exceptions.ConnectionError,
+                requests_exceptions.Timeout,
+            ),
+        )
+        for item in chain
+    ):
+        return "NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN"
+    return "LOGIN_VALIDATION_FAILED", "Instagram 登录状态验证失败"
 
 
 def _exception_chain(error: BaseException) -> list[BaseException]:

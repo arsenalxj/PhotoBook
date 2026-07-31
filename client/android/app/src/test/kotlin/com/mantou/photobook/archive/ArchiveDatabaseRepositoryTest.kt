@@ -125,6 +125,18 @@ class ArchiveDatabaseRepositoryTest {
     }
 
     @Test
+    fun `job source URL returns stored value and missing job uses job not found`() {
+        val sourceUrl = "https://www.instagram.com/p/CopySource1/"
+        val job = database.enqueue(sourceUrl, "CopySource1")
+
+        assertEquals(sourceUrl, database.jobSourceUrl(job.id))
+        val error = assertThrows(ArchiveException::class.java) {
+            database.jobSourceUrl("missing-job")
+        }
+        assertEquals("JOB_NOT_FOUND", error.code)
+    }
+
+    @Test
     fun `recovery finalizes cancellation but requeues interrupted work`() {
         val cancellingId = "CancelRecover1"
         val cancelling =

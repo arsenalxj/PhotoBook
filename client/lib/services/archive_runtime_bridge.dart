@@ -236,6 +236,9 @@ class ArchiveRuntimeBridge {
   Future<void> deleteJob(String jobId) =>
       _methodChannel.invokeMethod<void>('deleteJob', {'jobId': jobId});
 
+  Future<void> copyJobSourceUrl(String jobId) =>
+      _methodChannel.invokeMethod<void>('copyJobSourceUrl', {'jobId': jobId});
+
   Future<void> beginInstagramLogin() =>
       _methodChannel.invokeMethod<void>('beginInstagramLogin');
 
@@ -249,6 +252,17 @@ class ArchiveRuntimeBridge {
 
   Future<void> cancelInstagramLogin() =>
       _methodChannel.invokeMethod<void>('cancelInstagramLogin');
+
+  Future<InstagramSessionSummary> importInstagramCookies(
+    String cookieHeader,
+  ) async {
+    final value = await _methodChannel.invokeMapMethod<Object?, Object?>(
+      'importInstagramCookies',
+      {'cookieHeader': cookieHeader},
+    );
+    if (value == null) throw StateError('Instagram Cookie 登录结果为空');
+    return InstagramSessionSummary.fromMap(value);
+  }
 
   Future<void> copyInstagramCookies() =>
       _methodChannel.invokeMethod<void>('copyInstagramCookies');

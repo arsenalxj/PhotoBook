@@ -146,6 +146,11 @@ class AppController extends ChangeNotifier {
     await _reloadTaskState();
   }
 
+  Future<void> copyJobSourceUrl(ArchiveJob job) async {
+    if (!_isAndroid) throw StateError('任务链接复制仅支持 Android');
+    await _runtimeBridge.copyJobSourceUrl(job.id);
+  }
+
   Future<void> beginInstagramLogin() async {
     if (!_isAndroid) throw StateError('Instagram 登录仅支持 Android');
     await _runtimeBridge.beginInstagramLogin();
@@ -162,6 +167,16 @@ class AppController extends ChangeNotifier {
   Future<void> cancelInstagramLogin() async {
     if (!_isAndroid) return;
     await _runtimeBridge.cancelInstagramLogin();
+  }
+
+  Future<InstagramSessionSummary> importInstagramCookies(
+    String cookieHeader,
+  ) async {
+    if (!_isAndroid) throw StateError('Instagram Cookie 登录仅支持 Android');
+    final session = await _runtimeBridge.importInstagramCookies(cookieHeader);
+    instagramSession = session;
+    notifyListeners();
+    return session;
   }
 
   Future<void> copyInstagramCookies() async {

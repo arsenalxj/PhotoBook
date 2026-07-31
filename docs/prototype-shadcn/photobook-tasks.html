@@ -183,6 +183,15 @@
   }
   @keyframes rot { to { transform: rotate(360deg); } }
 
+  .snackbar {
+    position: absolute; left: 16px; right: 16px; bottom: 34px; z-index: 50;
+    min-height: 48px; padding: 12px 16px; border-radius: var(--radius-md);
+    background: var(--fg); color: var(--accent-on); font-size: var(--text-sm); font-weight: 500;
+    display: flex; align-items: center; transform: translateY(22px); opacity: 0; pointer-events: none;
+    transition: transform var(--motion-base) var(--ease-standard), opacity var(--motion-base) var(--ease-standard);
+  }
+  .snackbar.show { transform: translateY(0); opacity: 1; }
+
   .gesture-bar { height: 18px; flex: none; display: grid; place-items: center; background: var(--bg); }
   .gesture-bar span { width: 108px; height: 4px; border-radius: var(--radius-pill); background: var(--border); }
 </style>
@@ -248,10 +257,11 @@
       </div>
     </div>
 
+    <div class="snackbar" id="snackbar" role="status" aria-live="polite" data-od-id="snackbar">链接已复制</div>
     <div class="gesture-bar"><span></span></div>
   </div>
 </div>
-<p class="hint">交互:进行中任务可点红色「取消」;失败任务可「重试」或「删除」;登录失效的任务点登录图标跳转 Instagram 登录页;「删除」会先弹确认对话框。列表支持下拉刷新,刷新提示显示在顶部。「行内忙碌」状态演示某行操作进行中时原地 spinner、期间不可再取消。</p>
+<p class="hint">交互:长按任务整行复制原始链接;进行中任务可点红色「取消」;失败任务可「重试」或「删除」;登录失效的任务点登录图标跳转 Instagram 登录页;「删除」会先弹确认对话框。列表支持下拉刷新,刷新提示显示在顶部。「行内忙碌」状态演示某行操作进行中时原地 spinner、期间不可再取消。</p>
 
 <script>
   const ICONS = {
@@ -268,13 +278,13 @@
 
   // status: parsing | downloading | waiting | failed-login | failed-network | failed-media | cancelled
   const TASKS = [
-    { id: 1, status: 'parsing',        post: 'instagram · C8xK2mPq' },
-    { id: 2, status: 'downloading',    post: '小红书 · 等待解析' },
-    { id: 3, status: 'waiting',        post: 'instagram · C8wR9tLx' },
-    { id: 4, status: 'failed-login',   post: 'instagram · C8wR9tLx' },
-    { id: 5, status: 'failed-network', post: '小红书 · D5vN8kQw' },
-    { id: 6, status: 'failed-media',   post: 'instagram · C8pL4mXy' },
-    { id: 7, status: 'cancelled',      post: 'instagram · C8vQ3nBw' },
+    { id: 1, status: 'parsing',        post: 'instagram · C8xK2mPq', url: 'https://www.instagram.com/p/C8xK2mPq/' },
+    { id: 2, status: 'downloading',    post: '小红书 · 等待解析', url: 'https://xhslink.com/a/example' },
+    { id: 3, status: 'waiting',        post: 'instagram · C8wR9tLx', url: 'https://www.instagram.com/p/C8wR9tLx/' },
+    { id: 4, status: 'failed-login',   post: 'instagram · C8wR9tLx', url: 'https://www.instagram.com/p/C8wR9tLx/' },
+    { id: 5, status: 'failed-network', post: '小红书 · D5vN8kQw', url: 'https://www.xiaohongshu.com/explore/D5vN8kQw' },
+    { id: 6, status: 'failed-media',   post: 'instagram · C8pL4mXy', url: 'https://www.instagram.com/p/C8pL4mXy/' },
+    { id: 7, status: 'cancelled',      post: 'instagram · C8vQ3nBw', url: 'https://www.instagram.com/p/C8vQ3nBw/' },
   ];
 
   const device = document.getElementById('device');
@@ -289,7 +299,16 @@
     cancelled: document.getElementById('group-cancelled'),
   };
   const dialogMask = document.getElementById('dialogMask');
+  const snackbar = document.getElementById('snackbar');
   let pendingDeleteId = null;
+  let snackTimer = null;
+
+  function showSnackbar(text) {
+    clearTimeout(snackTimer);
+    snackbar.textContent = text;
+    snackbar.classList.add('show');
+    snackTimer = setTimeout(() => snackbar.classList.remove('show'), 2200);
+  }
 
   function groupOf(t) {
     if (t.status === 'parsing' || t.status === 'downloading' || t.status === 'waiting') return 'running';
@@ -350,6 +369,20 @@
         <span class="task-spin" aria-label="处理中"><span class="spin"></span></span>
         <div class="task-actions">${actions}</div>`;
       bodies[groupOf(t)].appendChild(card);
+
+      let holdTimer = null;
+      const clearHold = () => { clearTimeout(holdTimer); holdTimer = null; };
+      card.addEventListener('pointerdown', event => {
+        if (event.target.closest('button')) return;
+        holdTimer = setTimeout(() => {
+          navigator.clipboard?.writeText(t.url).catch(() => {});
+          showSnackbar('链接已复制');
+        }, 550);
+      });
+      card.addEventListener('pointerup', clearHold);
+      card.addEventListener('pointercancel', clearHold);
+      card.addEventListener('pointerleave', clearHold);
+      card.addEventListener('contextmenu', event => event.preventDefault());
 
       const btn = act => card.querySelector(`[data-act="${act}"]`);
       if (btn('cancel')) btn('cancel').addEventListener('click', () => { t.status = 'cancelled'; t.post = t.post.replace('等待解析', '已取消'); render(); });

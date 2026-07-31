@@ -10,8 +10,44 @@ import '../controllers/providers.dart';
 import '../core/theme/app_theme.dart';
 import '../services/archive_runtime_bridge.dart';
 
-class InstagramSettingsScreen extends ConsumerWidget {
+class InstagramSettingsScreen extends ConsumerStatefulWidget {
   const InstagramSettingsScreen({super.key});
+
+  @override
+  ConsumerState<InstagramSettingsScreen> createState() =>
+      _InstagramSettingsScreenState();
+}
+
+class _InstagramSettingsScreenState
+    extends ConsumerState<InstagramSettingsScreen> {
+  static const _maxCookieHeaderLength = 32 * 1024;
+
+  final _cookieController = TextEditingController();
+  bool _cookieVisible = false;
+  bool _importingCookie = false;
+  bool _hasCookie = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _cookieController.addListener(_handleCookieChanged);
+  }
+
+  void _handleCookieChanged() {
+    final hasCookie = _cookieController.text.trim().isNotEmpty;
+    if (hasCookie != _hasCookie && mounted) {
+      setState(() => _hasCookie = hasCookie);
+    }
+  }
+
+  @override
+  void dispose() {
+    _cookieController
+      ..removeListener(_handleCookieChanged)
+      ..clear()
+      ..dispose();
+    super.dispose();
+  }
 
   Future<void> _login(BuildContext context, WidgetRef ref) async {
     final session = await Navigator.of(context).push<InstagramSessionSummary>(
@@ -75,8 +111,42 @@ class InstagramSettingsScreen extends ConsumerWidget {
     }
   }
 
+  Future<void> _importCookies() async {
+    if (_importingCookie) return;
+    final cookieHeader = _cookieController.text.trim();
+    if (cookieHeader.isEmpty) return;
+
+    FocusScope.of(context).unfocus();
+    _cookieController.clear();
+    setState(() {
+      _cookieVisible = false;
+      _importingCookie = true;
+    });
+    try {
+      final session = await ref
+          .read(appControllerProvider)
+          .importInstagramCookies(cookieHeader);
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('已登录 @${session.username}')));
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(error.message ?? 'Instagram Cookie 验证失败')),
+      );
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Instagram Cookie 验证失败')));
+    } finally {
+      if (mounted) setState(() => _importingCookie = false);
+    }
+  }
+
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final session = ref.watch(appControllerProvider).instagramSession;
     final status = switch (session?.status) {
       InstagramSessionStatus.ready => (
@@ -187,7 +257,9 @@ class InstagramSettingsScreen extends ConsumerWidget {
                   SizedBox(
                     height: 48,
                     child: FilledButton(
-                      onPressed: () => _login(context, ref),
+                      onPressed: _importingCookie
+                          ? null
+                          : () => _login(context, ref),
                       child: Text(session == null ? '登录 Instagram' : '重新登录'),
                     ),
                   ),
@@ -196,7 +268,9 @@ class InstagramSettingsScreen extends ConsumerWidget {
                     SizedBox(
                       height: 48,
                       child: FilledButton(
-                        onPressed: () => _copyCookies(context, ref),
+                        onPressed: _importingCookie
+                            ? null
+                            : () => _copyCookies(context, ref),
                         child: const Text('复制Cookie'),
                       ),
                     ),
@@ -209,11 +283,109 @@ class InstagramSettingsScreen extends ConsumerWidget {
                         style: OutlinedButton.styleFrom(
                           foregroundColor: AppTheme.danger,
                         ),
-                        onPressed: () => _clear(context, ref),
+                        onPressed: _importingCookie
+                            ? null
+                            : () => _clear(context, ref),
                         child: const Text('清除登录'),
                       ),
                     ),
                   ],
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: AppTheme.surface,
+              border: Border.all(color: AppTheme.border),
+              borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
+              boxShadow: [
+                BoxShadow(
+                  color: AppTheme.foreground.withValues(alpha: 0.08),
+                  blurRadius: 3,
+                  offset: const Offset(0, 1),
+                ),
+              ],
+            ),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'Cookie 登录',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    key: const ValueKey('instagram-cookie-input'),
+                    controller: _cookieController,
+                    enabled: !_importingCookie,
+                    obscureText: !_cookieVisible,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    enableIMEPersonalizedLearning: false,
+                    autofillHints: const [],
+                    smartDashesType: SmartDashesType.disabled,
+                    smartQuotesType: SmartQuotesType.disabled,
+                    keyboardType: TextInputType.visiblePassword,
+                    textInputAction: TextInputAction.done,
+                    inputFormatters: [
+                      LengthLimitingTextInputFormatter(_maxCookieHeaderLength),
+                    ],
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 13,
+                    ),
+                    decoration: InputDecoration(
+                      hintText: '粘贴完整 Cookie',
+                      suffixIcon: IconButton(
+                        tooltip: _cookieVisible ? '隐藏 Cookie' : '显示 Cookie',
+                        onPressed: _importingCookie
+                            ? null
+                            : () => setState(
+                                () => _cookieVisible = !_cookieVisible,
+                              ),
+                        icon: Icon(
+                          _cookieVisible ? LucideIcons.eyeOff : LucideIcons.eye,
+                          color: AppTheme.muted,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                    onSubmitted: (_) {
+                      if (_hasCookie && !_importingCookie) {
+                        unawaited(_importCookies());
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 14),
+                  SizedBox(
+                    height: 48,
+                    child: OutlinedButton(
+                      onPressed: _hasCookie && !_importingCookie
+                          ? _importCookies
+                          : null,
+                      child: _importingCookie
+                          ? const Row(
+                              mainAxisSize: MainAxisSize.min,
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox.square(
+                                  dimension: 18,
+                                  child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: AppTheme.foreground,
+                                  ),
+                                ),
+                                SizedBox(width: 8),
+                                Text('正在验证…'),
+                              ],
+                            )
+                          : const Text('验证并登录'),
+                    ),
+                  ),
                 ],
               ),
             ),

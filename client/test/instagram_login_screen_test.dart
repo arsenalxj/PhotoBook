@@ -108,6 +108,75 @@ void main() {
     expect(find.text('清除登录'), findsOneWidget);
   });
 
+  testWidgets('Cookie 登录区位于状态卡下方并回显用户名', (tester) async {
+    final controller = _CookieImportController();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const InstagramSettingsScreen(),
+        ),
+      ),
+    );
+
+    final input = find.byKey(const ValueKey('instagram-cookie-input'));
+    final button = find.text('验证并登录');
+    expect(input, findsOneWidget);
+    expect(button, findsOneWidget);
+    expect(tester.widget<TextField>(input).obscureText, isTrue);
+    expect(
+      tester.getTopLeft(input).dy,
+      greaterThan(tester.getBottomLeft(find.text('登录 Instagram')).dy),
+    );
+
+    await tester.enterText(
+      input,
+      'sessionid=session-secret; csrftoken=csrf-value',
+    );
+    await tester.pump();
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+
+    expect(controller.cookieHeaders, [
+      'sessionid=session-secret; csrftoken=csrf-value',
+    ]);
+    expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+    expect(find.text('@manual_user'), findsOneWidget);
+    expect(find.text('已登录 @manual_user'), findsOneWidget);
+  });
+
+  testWidgets('Cookie 验证失败后仍立即清空输入', (tester) async {
+    final controller = _CookieImportController(
+      failure: PlatformException(
+        code: 'LOGIN_VALIDATION_FAILED',
+        message: 'Instagram Cookie 已失效',
+      ),
+    );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const InstagramSettingsScreen(),
+        ),
+      ),
+    );
+
+    final input = find.byKey(const ValueKey('instagram-cookie-input'));
+    await tester.enterText(
+      input,
+      'sessionid=must-not-remain; csrftoken=csrf-value',
+    );
+    await tester.pump();
+    await tester.tap(find.text('验证并登录'));
+    await tester.pumpAndSettle();
+
+    expect(tester.widget<TextField>(input).controller!.text, isEmpty);
+    expect(find.text('Instagram Cookie 已失效'), findsOneWidget);
+    expect(find.textContaining('must-not-remain'), findsNothing);
+  });
+
   testWidgets('登录页准备失败后可重新加载', (tester) async {
     webViewPlatform.failNextLoad = true;
     var beginCount = 0;
@@ -226,6 +295,32 @@ void main() {
 
 Future<InstagramSessionSummary> _unexpectedCapture() =>
     throw StateError('不应触发 Session 验证');
+
+class _CookieImportController extends AppController {
+  _CookieImportController({this.failure}) : super(isAndroid: false) {
+    phase = AppPhase.ready;
+  }
+
+  final PlatformException? failure;
+  final List<String> cookieHeaders = [];
+
+  @override
+  Future<InstagramSessionSummary> importInstagramCookies(
+    String cookieHeader,
+  ) async {
+    cookieHeaders.add(cookieHeader);
+    final importFailure = failure;
+    if (importFailure != null) throw importFailure;
+    const session = InstagramSessionSummary(
+      status: InstagramSessionStatus.ready,
+      username: 'manual_user',
+      validatedAt: 1750000000000,
+    );
+    instagramSession = session;
+    notifyListeners();
+    return session;
+  }
+}
 
 class FakeWebViewPlatform extends WebViewPlatform {
   late final FakeWebViewController controller;

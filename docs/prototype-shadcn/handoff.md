@@ -51,7 +51,7 @@
 ### 2. 任务列表 — `client/lib/screens/task_list_screen.dart`
 原型：`photobook-tasks.html`
 状态：进行中（含进度）/ 失败可重试 / 已取消分区 / 队列忙碌 / 空态。
-要点：任务项的平台、链接、阶段文案、进度条、重试按钮；已取消独立分区。
+要点：任务项的平台、链接、阶段文案、进度条、重试按钮；已取消独立分区；长按整行复制原始链接并显示成功反馈。
 
 ### 3. 设置主页 — `client/lib/screens/settings_screen.dart` + `client/lib/widgets/update_dialog.dart`
 原型：`photobook-settings.html`
@@ -65,8 +65,8 @@
 
 ### 5. Instagram 账号 — `client/lib/screens/instagram_login_screen.dart`
 原型：`photobook-instagram.html`
-状态：未登录 / WebView 登录中（加载中 / 加载失败重试）/ 已登录 / 登录过期。
-要点：WebView 容器外的状态层、登录过期提示与重新登录入口。
+状态：未登录 / WebView 登录中（加载中 / 加载失败重试）/ Cookie 验证中 / 已登录 / 登录过期。
+要点：WebView 容器外的状态层、登录过期提示与重新登录入口；状态卡下方放独立 Cookie 登录卡，包含默认隐藏的输入框与“验证并登录”按钮，成功后顶部立即回显真实用户名。
 
 ### 6. 帖子详情 — `client/lib/screens/detail_screen.dart` + `client/lib/widgets/post_action_sheets.dart`
 原型：`photobook-detail.html`

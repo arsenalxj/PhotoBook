@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
 
@@ -44,6 +45,26 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
     );
     if (session == null || !mounted) return;
     await _run(job, '重试', () => ref.read(appControllerProvider).retryJob(job));
+  }
+
+  Future<void> _copyLink(AppController controller, ArchiveJob job) async {
+    try {
+      await controller.copyJobSourceUrl(job);
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(const SnackBar(content: Text('链接已复制')));
+    } on PlatformException catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message ?? '链接复制失败，请重试')));
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('链接复制失败，请重试')));
+    }
   }
 
   Future<void> _confirmDelete(AppController controller, ArchiveJob job) async {
@@ -97,6 +118,7 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
                             (job) => _TaskRow(
                               job: job,
                               busy: _busyJobIds.contains(job.id),
+                              onLongPress: () => _copyLink(controller, job),
                               onCancel: job.canCancel
                                   ? () => _run(
                                       job,
@@ -118,6 +140,7 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
                             (job) => _TaskRow(
                               job: job,
                               busy: _busyJobIds.contains(job.id),
+                              onLongPress: () => _copyLink(controller, job),
                               needsLogin: _needsLogin(controller, job),
                               onRetry: _retryAction(controller, job),
                               onDelete: () => _confirmDelete(controller, job),
@@ -136,6 +159,7 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
                             (job) => _TaskRow(
                               job: job,
                               busy: _busyJobIds.contains(job.id),
+                              onLongPress: () => _copyLink(controller, job),
                               onRetry: () => _run(
                                 job,
                                 '重试',
@@ -234,6 +258,7 @@ class _TaskRow extends StatelessWidget {
   const _TaskRow({
     required this.job,
     required this.busy,
+    required this.onLongPress,
     this.needsLogin = false,
     this.onCancel,
     this.onRetry,
@@ -242,6 +267,7 @@ class _TaskRow extends StatelessWidget {
 
   final ArchiveJob job;
   final bool busy;
+  final VoidCallback onLongPress;
   final bool needsLogin;
   final VoidCallback? onCancel;
   final VoidCallback? onRetry;
@@ -249,112 +275,114 @@ class _TaskRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
+    return Ink(
       decoration: const BoxDecoration(
         color: AppTheme.surface,
         border: Border(bottom: BorderSide(color: AppTheme.border)),
       ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Icon(_icon, color: _iconColor, size: 24),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    job.isActive
-                        ? job.stageLabel
-                        : job.isCancelled
-                        ? '已取消'
-                        : job.failureTitle,
-                    style: TextStyle(
-                      fontSize: 14,
-                      height: 1.4,
-                      fontWeight: job.isFailure
-                          ? FontWeight.w700
-                          : FontWeight.w400,
+      child: InkWell(
+        key: ValueKey('task-row-${job.id}'),
+        onLongPress: onLongPress,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Icon(_icon, color: _iconColor, size: 24),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      job.isActive
+                          ? job.stageLabel
+                          : job.isCancelled
+                          ? '已取消'
+                          : job.failureTitle,
+                      style: TextStyle(
+                        fontSize: 14,
+                        height: 1.4,
+                        fontWeight: job.isFailure
+                            ? FontWeight.w700
+                            : FontWeight.w400,
+                      ),
                     ),
-                  ),
-                  if (job.status == ArchiveJobStatus.downloading &&
-                      job.progressTotal > 0) ...[
-                    const SizedBox(height: 8),
-                    ClipRRect(
-                      borderRadius: BorderRadius.circular(999),
-                      child: LinearProgressIndicator(
-                        minHeight: 4,
-                        value: (job.progressCurrent / job.progressTotal).clamp(
-                          0,
-                          1,
+                    if (job.status == ArchiveJobStatus.downloading &&
+                        job.progressTotal > 0) ...[
+                      const SizedBox(height: 8),
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(999),
+                        child: LinearProgressIndicator(
+                          minHeight: 4,
+                          value: (job.progressCurrent / job.progressTotal)
+                              .clamp(0, 1),
                         ),
                       ),
-                    ),
-                  ],
-                  if (!job.isActive && !job.isCancelled) ...[
+                    ],
+                    if (!job.isActive && !job.isCancelled) ...[
+                      const SizedBox(height: 4),
+                      Text(
+                        job.failureDetail,
+                        style: const TextStyle(
+                          color: AppTheme.muted,
+                          fontSize: 13,
+                          height: 1.4,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 4),
                     Text(
-                      job.failureDetail,
+                      '帖子:${job.sourcePlatform == 'xiaohongshu' ? '小红书' : 'instagram'} · ${job.sourcePostId}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
                         color: AppTheme.muted,
-                        fontSize: 13,
-                        height: 1.4,
+                        fontFamily: 'monospace',
+                        fontSize: 12,
                       ),
                     ),
                   ],
-                  const SizedBox(height: 4),
-                  Text(
-                    '帖子:${job.sourcePlatform == 'xiaohongshu' ? '小红书' : 'instagram'} · ${job.sourcePostId}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: AppTheme.muted,
-                      fontFamily: 'monospace',
-                      fontSize: 12,
+                ),
+              ),
+              if (busy)
+                const SizedBox.square(
+                  dimension: 44,
+                  child: Padding(
+                    padding: EdgeInsets.all(12),
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else ...[
+                if (onCancel != null)
+                  IconButton(
+                    key: ValueKey('cancel-job-${job.id}'),
+                    tooltip: '取消任务',
+                    onPressed: onCancel,
+                    icon: const Icon(LucideIcons.x, color: AppTheme.danger),
+                  ),
+                if (onRetry != null)
+                  IconButton(
+                    key: ValueKey('retry-job-${job.id}'),
+                    tooltip: needsLogin ? '登录 Instagram' : '重试任务',
+                    onPressed: onRetry,
+                    icon: Icon(
+                      needsLogin ? LucideIcons.logIn : LucideIcons.rotateCw,
                     ),
                   ),
-                ],
-              ),
-            ),
-            if (busy)
-              const SizedBox.square(
-                dimension: 44,
-                child: Padding(
-                  padding: EdgeInsets.all(12),
-                  child: CircularProgressIndicator(strokeWidth: 2),
-                ),
-              )
-            else ...[
-              if (onCancel != null)
-                IconButton(
-                  key: ValueKey('cancel-job-${job.id}'),
-                  tooltip: '取消任务',
-                  onPressed: onCancel,
-                  icon: const Icon(LucideIcons.x, color: AppTheme.danger),
-                ),
-              if (onRetry != null)
-                IconButton(
-                  key: ValueKey('retry-job-${job.id}'),
-                  tooltip: needsLogin ? '登录 Instagram' : '重试任务',
-                  onPressed: onRetry,
-                  icon: Icon(
-                    needsLogin ? LucideIcons.logIn : LucideIcons.rotateCw,
+                if (onDelete != null)
+                  IconButton(
+                    key: ValueKey('delete-job-${job.id}'),
+                    tooltip: '删除任务',
+                    onPressed: onDelete,
+                    icon: const Icon(LucideIcons.trash),
                   ),
-                ),
-              if (onDelete != null)
-                IconButton(
-                  key: ValueKey('delete-job-${job.id}'),
-                  tooltip: '删除任务',
-                  onPressed: onDelete,
-                  icon: const Icon(LucideIcons.trash),
-                ),
+              ],
             ],
-          ],
+          ),
         ),
       ),
     );

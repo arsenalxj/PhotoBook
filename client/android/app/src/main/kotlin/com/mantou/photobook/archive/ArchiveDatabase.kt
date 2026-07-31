@@ -185,7 +185,9 @@ class ArchiveDatabase(context: Context) :
             "SELECT source_url FROM capture_jobs WHERE id = ?",
             arrayOf(jobId),
         ).use { cursor ->
-            if (!cursor.moveToFirst()) throw ArchiveException("INVALID_URL", "分享任务不存在")
+            if (!cursor.moveToFirst()) {
+                throw ArchiveException("JOB_NOT_FOUND", "任务不存在或已被处理")
+            }
             cursor.getString(0)
         }
 

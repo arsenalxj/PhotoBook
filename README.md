@@ -16,7 +16,7 @@ PhotoBook 解决的是“看到一条帖子，分享到手机 App 后长期保�
 - Live Photo 默认显示静态图，长按播放动态；完整态可互斥保存或分享为静态图、GIF、视频，动态部分失败时静态降级且只提供静态图。
 - 使用 Android 默认网络；系统 VPN 是否接管流量由手机系统决定。
 
-当前只归档公开内容。每个帖子先匿名解析；只有 Instagram 明确要求登录，或返回已知的公开帖登录兼容错误时，才会使用用户通过官方 WebView 建立并加密保存在本机的 Session 重试一次。登录态下仍遇到该兼容错误时，App 会改用 authenticated media-info 端点补齐；其他不可访问错误不会读取 Session。小红书不提供登录重试；两个平台的私密内容都不会归档。
+当前只归档公开内容。每个帖子先匿名解析；只有 Instagram 明确要求登录，或返回已知的公开帖登录兼容错误时，才会使用用户通过官方 WebView 或手动 Cookie 建立并加密保存在本机的 Session 重试一次。登录态下仍遇到该兼容错误时，App 会改用 authenticated media-info 端点补齐；其他不可访问错误不会读取 Session。小红书不提供登录重试；两个平台的私密内容都不会归档。
 
 ## 核心依赖：Instaloader
 
@@ -75,7 +75,7 @@ flowchart TD
 - 帖子元数据、任务和同步状态保存在本机 SQLite。
 - 头像、缩略图和原媒体保存在 App 沙盒，SQLite 只记录路径、大小和 SHA-256。
 - Instagram Session 与 R2 Secret 使用 Android Keystore 加密，只保存在当前设备。
-- Instagram Session 和 Cookie 不进入 Flutter 状态；R2 Secret 只在用户保存配置时传给原生层，三者都不会写入 SQLite、R2、日志、通知或异常文本。
+- Instagram Session 和已保存 Cookie 不进入 Flutter 状态；用户手动粘贴的 Cookie 只在隐藏输入框和一次原生调用中短暂存在，提交即清空。R2 Secret 只在用户保存配置时传给原生层，这些凭证都不会写入 SQLite、R2、日志、通知或异常文本。
 - R2 使用 SHA-256 内容寻址；删除帖子或媒体时同步逻辑墓碑，不物理删除远端原媒体对象。
 - 未配置 R2 时，卸载 App 或清除应用数据会同时删除本机 SQLite 和媒体，无法恢复。
 
@@ -103,7 +103,7 @@ docs/                                     中文架构、构建和运维文档
 2. 在 Instagram、小红书或浏览器中打开公开帖子，点击“分享”，通过系统分享面板选择 PhotoBook。若平台只显示自定义分享面板，可复制链接后打开 PhotoBook；App 进入前台时会自动识别最近 10 分钟复制的链接，也可点首页粘贴按钮手动重试。
 3. PhotoBook 会显示前台通知并在本机完成解析、下载和入库；完成后通知自动消失。
 4. 首页右上角任务列表可查看当前阶段，并取消、重试或删除任务记录。
-5. 需要提高公开帖解析成功率时，可在设置页通过 Instagram 官方网页建立本机会话。
+5. 需要提高公开帖解析成功率时，可在设置页通过 Instagram 官方网页或粘贴完整 Cookie 建立本机会话。
 6. 需要多设备同步时，可在设置页填写自己的 Cloudflare R2 endpoint、bucket、prefix 和对象读写凭证。
 
 ## 开发与验证

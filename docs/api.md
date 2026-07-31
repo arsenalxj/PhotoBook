@@ -12,9 +12,11 @@ MethodChannel：`com.mantou.photobook/archive`
 | `retryJob` | `jobId` | 无 | 将失败任务重新排队并启动服务 |
 | `cancelJob` | `jobId` | 无 | 排队任务直接改为 `failed + CANCELLED`；运行任务先改为 `cancelling`，清理完成后再收口为已取消 |
 | `deleteJob` | `jobId` | 无 | 删除一条 `failed` 任务记录，不删除帖子或媒体 |
+| `copyJobSourceUrl` | `jobId` | 无 | Android 从 SQLite 读取任务原始链接并写入系统剪贴板，链接不返回 Flutter |
 | `beginInstagramLogin` | 无 | 无 | 清理 WebView 数据并开始新的官方网页登录 |
 | `captureInstagramSession` | 无 | Session 摘要 | 从 Android WebView CookieManager 验证并加密保存登录态 |
 | `cancelInstagramLogin` | 无 | 无 | 取消登录并清理 WebView 数据，不改变已保存 Session |
+| `importInstagramCookies` | `cookieHeader` | Session 摘要 | 在线验证用户主动粘贴的 Cookie，成功后加密保存并返回真实用户名 |
 | `copyInstagramCookies` | 无 | 无 | 仅在 Session 可用时由 Android 原生层写入敏感剪贴板，Cookie 不返回 Flutter |
 | `clearInstagramSession` | 无 | 无 | 清除加密 Session、Keystore 密钥和 WebView 数据 |
 | `saveR2Config` | 配置 map | 配置摘要 | 加密保存通过验证的 R2 配置 |
@@ -30,7 +32,7 @@ EventChannel：`com.mantou.photobook/archive_events`
 
 事件类型为 `archiveChanged`、`jobChanged`、`runStarted` 和 `runFinished`。事件只用于驱动刷新和即时反馈，不作为权威状态；`jobChanged` 不携带任务快照，Flutter 收到后合并连续刷新请求并重新查询 SQLite。阶段或媒体项进度落库、入队、取消、删除、重试和任务结束时发送 `jobChanged`，不复用 `archiveChanged` 上报下载进度。`runFinished` 可携带脱敏后的同步错误，冷启动仍从 `app_meta.last_sync_error` 恢复错误状态。
 
-`getRuntimeState.instagramSession` 只返回非敏感摘要：未配置时为 `null`，否则为 `{status: "ready" | "needs_refresh", username, validatedAt}`。`copyInstagramCookies` 也只返回成功或失败；Flutter 侧不存在读取 Cookie 内容的接口。
+`getRuntimeState.instagramSession` 只返回非敏感摘要：未配置时为 `null`，否则为 `{status: "ready" | "needs_refresh", username, validatedAt}`。`importInstagramCookies` 是 Cookie 唯一允许的 Flutter -> Kotlin 入口，输入框提交时立即清空，验证失败不覆盖旧 Session。`copyInstagramCookies` 只返回成功或失败；Flutter 侧不存在读取已保存 Cookie 内容的接口。
 
 详情页批量保存由 Flutter 按帖子顺序逐项调用 `saveMedia`。普通媒体使用 `original`；完整 Live Photo 使用本次选择的统一 `static / gif / video` 模式；降级 Live Photo 固定使用 `static`。单项失败不回滚已经写入系统相册的副本，界面保留失败项供重试。
 
@@ -101,7 +103,7 @@ fetch_post(shortcode: str, session_json: str | None = None) -> str
 }
 ```
 
-传入 Session 时，成功响应的 `refreshedSession` 包含 Instaloader 更新后的 Cookie，只允许 Kotlin 立即重新加密保存。调用策略固定为匿名请求优先；只有匿名调用返回 `LOGIN_REQUIRED`，Kotlin 才读取 `ready` Session 并调用第二次。Instagram GraphQL 返回 `4630001 + Media should not be an HtmlResponse` 时，Python 将匿名结果精确映射为 `LOGIN_REQUIRED`；登录重试仍收到同一错误时，`fetch_post` 返回 `{"mediaInfoRequired":true}`，不在同一次 Python 调用内继续请求。Kotlin 重新检查任务未取消后，才使用同一已验证 Session 调用 `fetch_post_media_info(shortcode, session_json)`；该函数通过 Instaloader authenticated media-info 读取同一 shortcode，且仍拒绝私密账号帖子。其他 `POST_UNAVAILABLE` 不得读取 Session。authenticated 响应中的 `login_required`、登录重定向或账号登出必须映射为 `LOGIN_REQUIRED`，不能降级为 `NETWORK_ERROR`。Python 层不得写数据库、下载媒体、读取 R2 密钥或保存默认 Instaloader session 文件。异常由 Kotlin 映射为稳定错误码：`NETWORK_ERROR`、`POST_UNAVAILABLE`、`LOGIN_REQUIRED`、`RATE_LIMITED` 或 `INVALID_RESPONSE`。
+传入 Session 时，成功响应的 `refreshedSession` 包含 Instaloader 更新后的 Cookie，只允许 Kotlin 立即重新加密保存。调用策略固定为匿名请求优先；只有匿名调用返回 `LOGIN_REQUIRED`，Kotlin 才读取 `ready` Session 并调用第二次。Instagram GraphQL 返回 `4630001 + Media should not be an HtmlResponse` 时，Python 将匿名结果精确映射为 `LOGIN_REQUIRED`。同时满足 `status=ok`、`data=null`、`message=execution error`、`severity=CRITICAL`、`path=[xdt_api__v1__media__shortcode__web_info]` 的响应仍有歧义，因为不存在帖也返回相同指纹；匿名调用必须再用不含 Cookie 的独立 HTTP 请求访问 permalink，固定超时 30 秒，只有 HTML 同时包含匹配 shortcode 的 canonical 及非空 `og:title / og:image / og:description`，才映射为 `LOGIN_REQUIRED`。登录重试仍收到同类 GraphQL 错误时，`fetch_post` 返回 `{"mediaInfoRequired":true}`，不在同一次 Python 调用内继续请求。Kotlin 重新检查任务未取消后，才使用同一已验证 Session 调用 `fetch_post_media_info(shortcode, session_json)`；该函数通过 Instaloader authenticated media-info 读取同一 shortcode，且仍拒绝私密账号帖子。公开 permalink 校验失败、缺少任一指纹字段的其他 `execution error` 及其他 `POST_UNAVAILABLE` 均不得读取 Session；permalink 返回 429 时映射为 `RATE_LIMITED`，网络异常或 5xx 映射为 `NETWORK_ERROR`。authenticated 响应中的 `login_required`、登录重定向或账号登出必须映射为 `LOGIN_REQUIRED`，不能降级为 `NETWORK_ERROR`。Python 层不得写数据库、下载媒体、读取 R2 密钥或保存默认 Instaloader session 文件。异常由 Kotlin 映射为稳定错误码：`NETWORK_ERROR`、`POST_UNAVAILABLE`、`LOGIN_REQUIRED`、`RATE_LIMITED` 或 `INVALID_RESPONSE`。
 
 ### 小红书公开页桥
 

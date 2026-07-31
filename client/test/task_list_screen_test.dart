@@ -59,6 +59,29 @@ void main() {
     expect(controller.deletedJobIds, isEmpty);
   });
 
+  testWidgets('长按任务项复制原始链接并给出反馈', (tester) async {
+    final controller = _TaskController();
+    await tester.pumpWidget(_app(controller));
+
+    await tester.longPress(find.byKey(const ValueKey('task-row-active')));
+    await tester.pumpAndSettle();
+
+    expect(controller.copiedJobIds, ['active']);
+    expect(find.text('链接已复制'), findsOneWidget);
+  });
+
+  testWidgets('长按任务操作按钮不会误复制链接', (tester) async {
+    final controller = _TaskController();
+    await tester.pumpWidget(_app(controller));
+
+    await tester.longPress(find.byKey(const ValueKey('cancel-job-active')));
+    await tester.pumpAndSettle();
+    await tester.longPress(find.byKey(const ValueKey('retry-job-failed')));
+    await tester.pumpAndSettle();
+
+    expect(controller.copiedJobIds, isEmpty);
+  });
+
   testWidgets('登录失败任务在没有可用 Session 时显示登录动作', (tester) async {
     final controller = _TaskController()
       ..instagramSession = null
@@ -121,6 +144,12 @@ class _TaskController extends AppController {
   final List<String> cancelledJobIds = [];
   final List<String> retriedJobIds = [];
   final List<String> deletedJobIds = [];
+  final List<String> copiedJobIds = [];
+
+  @override
+  Future<void> copyJobSourceUrl(ArchiveJob job) async {
+    copiedJobIds.add(job.id);
+  }
 
   @override
   Future<void> cancelJob(ArchiveJob job) async {

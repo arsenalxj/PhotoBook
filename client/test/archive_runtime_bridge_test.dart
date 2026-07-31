@@ -60,6 +60,11 @@ void main() {
               'username': 'archive_user',
               'validatedAt': 1750000000000,
             },
+            'importInstagramCookies' => <String, Object>{
+              'status': 'ready',
+              'username': 'manual_user',
+              'validatedAt': 1750000000001,
+            },
             'deleteMediaSelection' => <String, Object>{
               'postId': 'post-1',
               'postDeleted': false,
@@ -81,8 +86,12 @@ void main() {
     await bridge.beginInstagramLogin();
     final session = await bridge.captureInstagramSession();
     await bridge.cancelInstagramLogin();
+    final importedSession = await bridge.importInstagramCookies(
+      'sessionid=session-secret; csrftoken=csrf-value',
+    );
     await bridge.copyInstagramCookies();
     await bridge.clearInstagramSession();
+    await bridge.copyJobSourceUrl('job-active');
     await bridge.cancelJob('job-active');
     await bridge.retryJob('job-failed');
     await bridge.deleteJob('job-cancelled');
@@ -96,6 +105,7 @@ void main() {
 
     expect(deleted.postId, 'post-1');
     expect(session.username, 'archive_user');
+    expect(importedSession.username, 'manual_user');
     expect(session.status, InstagramSessionStatus.ready);
     expect(deleted.postDeleted, isFalse);
     expect(savedName, 'PhotoBook_post-1_1.jpg');
@@ -105,8 +115,10 @@ void main() {
       'beginInstagramLogin',
       'captureInstagramSession',
       'cancelInstagramLogin',
+      'importInstagramCookies',
       'copyInstagramCookies',
       'clearInstagramSession',
+      'copyJobSourceUrl',
       'cancelJob',
       'retryJob',
       'deleteJob',
@@ -116,19 +128,23 @@ void main() {
       'saveMedia',
     ]);
     expect(calls[0].arguments, {'automatic': true});
-    expect(calls[6].arguments, {'jobId': 'job-active'});
-    expect(calls[7].arguments, {'jobId': 'job-failed'});
-    expect(calls[8].arguments, {'jobId': 'job-cancelled'});
-    expect(calls[9].arguments, {'postId': 'post-1'});
-    expect(calls[10].arguments, {
+    expect(calls[4].arguments, {
+      'cookieHeader': 'sessionid=session-secret; csrftoken=csrf-value',
+    });
+    expect(calls[7].arguments, {'jobId': 'job-active'});
+    expect(calls[8].arguments, {'jobId': 'job-active'});
+    expect(calls[9].arguments, {'jobId': 'job-failed'});
+    expect(calls[10].arguments, {'jobId': 'job-cancelled'});
+    expect(calls[11].arguments, {'postId': 'post-1'});
+    expect(calls[12].arguments, {
       'postId': 'post-1',
       'mediaIds': ['media-1', 'media-2'],
     });
-    expect(calls[11].arguments, {
+    expect(calls[13].arguments, {
       'mediaIds': ['media-1', 'media-2'],
       'exportMode': 'original',
     });
-    expect(calls[12].arguments, {
+    expect(calls[14].arguments, {
       'mediaId': 'media-1',
       'exportMode': 'original',
     });
