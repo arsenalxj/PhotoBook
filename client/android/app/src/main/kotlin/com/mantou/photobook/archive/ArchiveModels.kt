@@ -86,7 +86,11 @@ data class RemoteMedia(
     val durationMs: Long?,
     val logicalIndex: Int = sortIndex,
     val mediaRole: String = MEDIA_ROLE_PRIMARY,
+    val fallbackUrl: String? = null,
 ) {
+    val downloadUrls: List<String>
+        get() = listOfNotNull(url, fallbackUrl?.takeIf(String::isNotBlank)).distinct()
+
     companion object {
         fun fromJson(json: JSONObject): RemoteMedia {
             val sortIndex = json.getInt("sortIndex")
@@ -111,6 +115,7 @@ data class RemoteMedia(
                 durationMs = json.optionalPositiveLong("durationMs"),
                 logicalIndex = logicalIndex,
                 mediaRole = mediaRole,
+                fallbackUrl = json.optionalString("fallbackUrl"),
             )
         }
     }

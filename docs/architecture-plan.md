@@ -147,7 +147,7 @@ sequenceDiagram
 
 ### 小红书与 Live Photo
 
-小红书只解析匿名可访问的公开分享页。短链逐跳限制为 HTTPS 和 `xhslink.com / xhslink.cn / xiaohongshu.com / rednote.com`，页面解析 `window.__INITIAL_STATE__` 并按最终 URL 的 `note_id` 精确选帖，不接入登录、Cookie、签名接口、私密内容或验证码绕过。含 `xsec_token` 的请求 URL 只保存在抓取任务中；同步帖子只保存不含 query 的 `https://www.xiaohongshu.com/explore/<note_id>`。媒体下载关闭系统自动跳转，每一跳都重新校验 HTTPS、端口和平台 CDN 域名。
+小红书只解析匿名可访问的公开分享页。短链逐跳限制为 HTTPS 和 `xhslink.com / xhslink.cn / xiaohongshu.com / rednote.com`，页面解析 `window.__INITIAL_STATE__` 并按最终 URL 的 `note_id` 精确选帖，不接入登录、Cookie、签名接口、私密内容或验证码绕过。含 `xsec_token` 的请求 URL 只保存在抓取任务中；同步帖子只保存不含 query 的 `https://www.xiaohongshu.com/explore/<note_id>`。图片存在 `fileId` 时优先通过对应地域的 `sns-img-*.xhscdn.com` 获取全尺寸无水印 JPEG，H5 详情图只作为不可下载时的兼容回退；没有可信 `fileId` 或无法确定对应原图 CDN 时保留 H5 详情图。媒体下载关闭系统自动跳转，每一跳都重新校验 HTTPS、端口和平台 CDN 域名；原图回退只处理明确的媒体不可下载错误，不得用回退掩盖断网、限流或不安全跳转。
 
 Live Photo 的静态图必须成功，动态视频允许下载失败后静态降级。详情页一个 `logical_index` 只显示一页：默认静态图，完整态长按播放动态、松手恢复；降级态不显示重试入口。右上角保存和删除以逻辑媒体为选择单位并默认全选，不在媒体画面上叠加操作入口。完整态保存和分享提供“静态图 / GIF / 视频”三个互斥选项，批量保存时同一选择应用于所有完整 Live Photo，降级态只使用静态图。转 GIF 固定最长边 720、目标最高 20 FPS、最多 72 帧、最大 50 MB；长视频通过降低实际帧率覆盖完整时长。原生 GIF 保留原文件，详情页自动循环，首页缩略图保持静态。
 

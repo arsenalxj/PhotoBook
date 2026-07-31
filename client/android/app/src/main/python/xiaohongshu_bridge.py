@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from typing import Any
-from urllib.parse import urljoin, urlparse, urlunparse
+from urllib.parse import quote, urljoin, urlparse, urlunparse
 
 import requests
 
@@ -21,6 +21,7 @@ _ALLOWED_HOSTS = {
 _MEDIA_CDN_SUFFIXES = ("xhscdn.com", "xhscdn.net", "xhsimg.com")
 _NOTE_ID_PATTERN = re.compile(r"/(?:explore|discovery/item)/([0-9a-f]{16,32})(?:/|$)", re.I)
 _STATE_MARKERS = ("window.__INITIAL_STATE__", "window.__INITIAL_SSR_STATE__")
+_WEBPIC_HOST_PATTERN = re.compile(r"^sns-webpic(?:-[a-z0-9-]+)?\.xhscdn\.(?:com|net)$", re.I)
 _USER_AGENT = (
     "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 "
     "Chrome/126 Mobile Safari/537.36"
@@ -185,10 +186,20 @@ def _note_payload(note: dict[str, Any], final_url: str) -> dict[str, Any]:
         for logical_index, image in enumerate(image_list):
             if not isinstance(image, dict):
                 continue
-            still_url = _image_url(image)
+            still_url, fallback_url = _image_urls(image)
             if still_url:
                 live_url = _live_url(image)
-                media.append(_media(sort_index, logical_index, "live_still" if live_url else "primary", "image", still_url, image))
+                media.append(
+                    _media(
+                        sort_index,
+                        logical_index,
+                        "live_still" if live_url else "primary",
+                        "image",
+                        still_url,
+                        image,
+                        fallback_url,
+                    )
+                )
                 sort_index += 1
                 if live_url:
                     media.append(_media(sort_index, logical_index, "live_motion", "video", live_url, image))
@@ -218,8 +229,16 @@ def _note_payload(note: dict[str, Any], final_url: str) -> dict[str, Any]:
     }
 
 
-def _media(sort_index: int, logical_index: int, role: str, media_type: str, url: str, raw: dict[str, Any]) -> dict[str, Any]:
-    return {
+def _media(
+    sort_index: int,
+    logical_index: int,
+    role: str,
+    media_type: str,
+    url: str,
+    raw: dict[str, Any],
+    fallback_url: str | None = None,
+) -> dict[str, Any]:
+    payload = {
         "sortIndex": sort_index,
         "logicalIndex": logical_index,
         "mediaRole": role,
@@ -229,9 +248,25 @@ def _media(sort_index: int, logical_index: int, role: str, media_type: str, url:
         "height": _positive_int(raw.get("height")),
         "durationMs": None,
     }
+    upgraded_fallback = _upgrade_official_media_url(fallback_url)
+    if upgraded_fallback and upgraded_fallback != payload["url"]:
+        payload["fallbackUrl"] = upgraded_fallback
+    return payload
 
 
 def _image_url(image: dict[str, Any]) -> str | None:
+    return _image_urls(image)[0]
+
+
+def _image_urls(image: dict[str, Any]) -> tuple[str | None, str | None]:
+    detail_url = _detail_image_url(image)
+    original_url = _original_image_url(image, detail_url)
+    if original_url:
+        return original_url, detail_url
+    return detail_url, None
+
+
+def _detail_image_url(image: dict[str, Any]) -> str | None:
     info = image.get("infoList")
     if isinstance(info, list):
         candidates = [item for item in info if isinstance(item, dict) and _optional_text(item.get("url"))]
@@ -257,6 +292,29 @@ def _image_url(image: dict[str, Any]) -> str | None:
         if candidates:
             return _optional_text(candidates[0].get("url"))
     return _optional_text(image.get("urlPre"))
+
+
+def _original_image_url(image: dict[str, Any], detail_url: str | None) -> str | None:
+    file_id = _optional_text(image.get("fileId") or image.get("file_id"))
+    if not file_id or not detail_url:
+        return None
+    normalized_file_id = file_id.strip("/")
+    segments = normalized_file_id.split("/")
+    if not normalized_file_id or any(segment in ("", ".", "..") for segment in segments):
+        return None
+    parsed = urlparse(detail_url)
+    host = (parsed.hostname or "").lower()
+    if parsed.scheme.lower() not in ("http", "https") or not _WEBPIC_HOST_PATTERN.fullmatch(host):
+        return None
+    try:
+        port = parsed.port
+    except ValueError:
+        return None
+    if parsed.username or parsed.password or port not in (None, 80, 443):
+        return None
+    raw_host = host.replace("sns-webpic", "sns-img", 1)
+    encoded_file_id = quote(normalized_file_id, safe="/-_.~")
+    return f"https://{raw_host}/{encoded_file_id}?imageView2/2/format/jpg"
 
 
 def _live_url(image: dict[str, Any]) -> str | None:

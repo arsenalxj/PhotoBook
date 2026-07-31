@@ -158,8 +158,8 @@ class MediaPipeline(
         isAttemptActive: () -> Boolean,
     ): PreparedMedia {
         val downloaded =
-            download(
-                remote.url,
+            downloadFirstAvailable(
+                remote.downloadUrls,
                 File(jobDirectory, "media-${remote.sortIndex}.part"),
                 remote.mediaType,
                 sourcePlatform,
@@ -218,6 +218,24 @@ class MediaPipeline(
             logicalIndex = remote.logicalIndex,
             mediaRole = remote.mediaRole,
         )
+    }
+
+    private fun downloadFirstAvailable(
+        urls: List<String>,
+        target: File,
+        mediaType: String,
+        sourcePlatform: String,
+        isAttemptActive: () -> Boolean,
+    ): DownloadedFile {
+        require(urls.isNotEmpty()) { "媒体地址不能为空" }
+        urls.forEachIndexed { index, url ->
+            try {
+                return download(url, target, mediaType, sourcePlatform, isAttemptActive)
+            } catch (error: ArchiveException) {
+                if (error.code != "MEDIA_DOWNLOAD_FAILED" || index == urls.lastIndex) throw error
+            }
+        }
+        throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "媒体下载失败")
     }
 
     private fun download(

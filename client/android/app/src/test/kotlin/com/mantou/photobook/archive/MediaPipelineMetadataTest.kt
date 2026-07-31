@@ -4,7 +4,13 @@ import java.io.File
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.json.JSONObject
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [28])
 class MediaPipelineMetadataTest {
     @Test
     fun `quarter turn swaps encoded video dimensions`() {
@@ -61,5 +67,31 @@ class MediaPipelineMetadataTest {
         } catch (error: ArchiveException) {
             assertEquals("INVALID_RESPONSE", error.code)
         }
+    }
+
+    @Test
+    fun `remote media keeps primary and fallback download order without duplicates`() {
+        val media =
+            RemoteMedia.fromJson(
+                JSONObject()
+                    .put("sortIndex", 0)
+                    .put("logicalIndex", 0)
+                    .put("mediaRole", MEDIA_ROLE_PRIMARY)
+                    .put("mediaType", "image")
+                    .put("url", "https://sns-img-qc.xhscdn.com/original?imageView2/2/format/jpg")
+                    .put("fallbackUrl", "https://sns-webpic-qc.xhscdn.com/detail!h5_1080jpg"),
+            )
+
+        assertEquals(
+            listOf(
+                "https://sns-img-qc.xhscdn.com/original?imageView2/2/format/jpg",
+                "https://sns-webpic-qc.xhscdn.com/detail!h5_1080jpg",
+            ),
+            media.downloadUrls,
+        )
+        assertEquals(
+            listOf(media.url),
+            media.copy(fallbackUrl = media.url).downloadUrls,
+        )
     }
 }

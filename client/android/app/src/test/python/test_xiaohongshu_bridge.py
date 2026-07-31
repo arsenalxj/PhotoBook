@@ -106,6 +106,67 @@ class XiaohongshuBridgeTest(unittest.TestCase):
             "https://ci.example/detail.jpg",
         )
 
+    def test_prefers_unwatermarked_original_jpeg_and_keeps_h5_fallback(self) -> None:
+        image = {
+            "fileId": "notes_uhdr/1040g3qo-original",
+            "infoList": [
+                {
+                    "imageScene": "H5_DTL",
+                    "url": (
+                        "http://sns-webpic-qc.xhscdn.com/timestamp/signature/"
+                        "notes_uhdr/1040g3qo-original!h5_1080jpg"
+                    ),
+                },
+                {
+                    "imageScene": "H5_PRV",
+                    "url": "http://sns-webpic-qc.xhscdn.com/preview!style",
+                },
+            ],
+        }
+
+        primary, fallback = xiaohongshu_bridge._image_urls(image)
+
+        self.assertEqual(
+            primary,
+            (
+                "https://sns-img-qc.xhscdn.com/notes_uhdr/1040g3qo-original"
+                "?imageView2/2/format/jpg"
+            ),
+        )
+        self.assertEqual(
+            fallback,
+            (
+                "http://sns-webpic-qc.xhscdn.com/timestamp/signature/"
+                "notes_uhdr/1040g3qo-original!h5_1080jpg"
+            ),
+        )
+
+    def test_media_payload_includes_fallback_only_for_original_image(self) -> None:
+        image = {
+            "fileId": "1040g2-original",
+            "infoList": [
+                {
+                    "imageScene": "H5_DTL",
+                    "url": "http://sns-webpic-hw.xhscdn.com/detail!h5_1080jpg",
+                }
+            ],
+        }
+
+        payload = xiaohongshu_bridge._note_payload(
+            {
+                "noteId": "64abc123456789ab",
+                "user": {"userId": "author-1"},
+                "imageList": [image, {"url": "https://sns-webpic-hw.xhscdn.com/plain.jpg"}],
+            },
+            "https://www.xiaohongshu.com/explore/64abc123456789ab",
+        )
+
+        self.assertEqual(
+            payload["media"][0]["fallbackUrl"],
+            "https://sns-webpic-hw.xhscdn.com/detail!h5_1080jpg",
+        )
+        self.assertNotIn("fallbackUrl", payload["media"][1])
+
     def test_video_note_does_not_fall_back_to_cover_when_video_is_missing(self) -> None:
         note = {
             "noteId": "64abc123456789ab",

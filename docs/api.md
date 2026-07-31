@@ -108,7 +108,7 @@ fetch_post(shortcode: str, session_json: str | None = None) -> str
 xiaohongshu_bridge.fetch_post(request_url: str) -> str
 ```
 
-输入只允许小红书 HTTPS 分享域名。小红书 App 复制出的 `http://xhslink.cn` 或 `http://xhslink.com` 官方短链在本机改写为 HTTPS 后再请求；其他 HTTP 地址仍拒绝。短链最多跟随 6 次跳转且每一跳重新校验域名；解析结果直接返回统一帖子 JSON，`sourcePlatform` 固定为 `xiaohongshu`。Live Photo 为同一 `logicalIndex` 返回相邻的 `live_still(image)` 和 `live_motion(video)`；普通图片、视频和 GIF 使用 `primary`。规范 `sourceUrl` 不携带分享 query 或 `xsec_token`。稳定错误码包括 `INVALID_URL`、`POST_UNAVAILABLE`、`VERIFICATION_REQUIRED`、`RATE_LIMITED`、`NETWORK_ERROR` 和 `INVALID_RESPONSE`。
+输入只允许小红书 HTTPS 分享域名。小红书 App 复制出的 `http://xhslink.cn` 或 `http://xhslink.com` 官方短链在本机改写为 HTTPS 后再请求；其他 HTTP 地址仍拒绝。短链最多跟随 6 次跳转且每一跳重新校验域名；解析结果直接返回统一帖子 JSON，`sourcePlatform` 固定为 `xiaohongshu`。Live Photo 为同一 `logicalIndex` 返回相邻的 `live_still(image)` 和 `live_motion(video)`；普通图片、视频和 GIF 使用 `primary`。小红书图片存在可信 `fileId` 时，`url` 使用原图 CDN 的全尺寸 JPEG 地址，并以可选 `fallbackUrl` 携带 H5 详情图；Android 只在 `url` 明确不可下载时尝试 `fallbackUrl`，两个地址都必须通过同一平台 CDN 安全校验。其他平台和视频不返回 `fallbackUrl`。规范 `sourceUrl` 不携带分享 query 或 `xsec_token`。稳定错误码包括 `INVALID_URL`、`POST_UNAVAILABLE`、`VERIFICATION_REQUIRED`、`RATE_LIMITED`、`NETWORK_ERROR` 和 `INVALID_RESPONSE`。
 
 ## 4. R2 操作对象
 
