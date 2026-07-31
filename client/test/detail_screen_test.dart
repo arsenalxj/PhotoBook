@@ -29,6 +29,89 @@ void main() {
     tempDirectory.deleteSync(recursive: true);
   });
 
+  testWidgets('详情页返回按钮右侧在两个平台都显示作者展示名', (tester) async {
+    final controller = AppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        ArchivedPost(
+          id: 'post-bella',
+          sourceUrl: 'https://www.instagram.com/p/test/',
+          authorUsername: 'zhouyanxi0909',
+          authorDisplayName: 'Bella周老师',
+          caption: '',
+          publishedAt: 1,
+          coverMediaId: 'media-1',
+          mediaCount: 1,
+          media: const [
+            PostMedia(
+              id: 'media-1',
+              mediaType: PostMediaType.image,
+              width: 1080,
+              height: 1350,
+            ),
+          ],
+        ),
+        ArchivedPost(
+          id: 'post-xhs',
+          sourcePlatform: PostSourcePlatform.xiaohongshu,
+          sourceUrl: 'https://www.xiaohongshu.com/explore/test',
+          authorUsername: 'xhs-user-id',
+          authorDisplayName: '小红书作者',
+          caption: '',
+          publishedAt: 1,
+          coverMediaId: 'media-2',
+          mediaCount: 1,
+          media: const [
+            PostMedia(
+              id: 'media-2',
+              mediaType: PostMediaType.image,
+              width: 1080,
+              height: 1350,
+            ),
+          ],
+        ),
+      ];
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const DetailScreen(postId: 'post-bella'),
+        ),
+      ),
+    );
+
+    final appBar = find.byType(AppBar);
+    expect(
+      find.descendant(of: appBar, matching: find.text('Bella周老师')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: appBar, matching: find.text('@zhouyanxi0909')),
+      findsNothing,
+    );
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const DetailScreen(postId: 'post-xhs'),
+        ),
+      ),
+    );
+
+    expect(
+      find.descendant(of: appBar, matching: find.text('小红书作者')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: appBar, matching: find.text('xhs-user-id')),
+      findsNothing,
+    );
+  });
+
   testWidgets('本地原图解码期间保留缩略图占位', (tester) async {
     final imageBytes = base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'

@@ -42,7 +42,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - R2 token 应只允许目标 bucket 的对象读写，不要求账户管理权限。
 - Instagram 请求必须匿名优先；只有匿名请求明确返回 `LOGIN_REQUIRED` 时，才允许使用已验证的本机会话重试一次。
 - Instagram 账号密码只填写在官方 WebView 页面，业务代码不得读取或保存；WebView Cookie 验证并加密保存后必须清理 WebView Cookie、缓存和本地存储。
-- Instagram Session 使用独立 Android Keystore 密钥加密，只属于本机，不得进入 Flutter 状态、SQLite、R2、备份、日志、通知、异常文本或崩溃上报。
+- Instagram Session 使用独立 Android Keystore 密钥加密，只属于本机，不得进入 Flutter 状态、SQLite、R2、备份、日志、通知、异常文本或崩溃上报。只有用户在已登录页主动点击“复制Cookie”时，Android 原生层才允许把已验证 Session 转为 Cookie Header 写入系统剪贴板；剪贴板必须标记为敏感内容，Flutter 只能收到成功或失败，App 进程存活时在 60 秒后仅清理未被用户替换的该份 Cookie。
 - App 不读取 Instagram App 或其他浏览器的数据，不提供手动 Cookie、Instaloader session 文件或账号密码导入。
 - 正式签名文件只允许保存在仓库外的 `MyKeys/PhotoBook/` 或 GitHub Actions Secrets，禁止提交、打印或写入 Release。
 - 本机 debug 为覆盖安装并复用正式 App 数据，可通过被忽略的 `client/android/local.properties` 使用正式证书；debug APK 只允许用于自有测试设备，禁止分发或上传 Release。
@@ -117,5 +117,5 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - Python 桥：脱敏 fixture 单元测试，并验证固定 Instaloader wheel 可导入。
 - Android：覆盖先持久化后启动、后台继续、进程恢复、任务结束自动停服和通知权限。
 - 抓取：覆盖图片帖、多图帖、Reel、重复分享、失效链接、匿名优先、登录墙后 Session 重试、Session 失效、私密帖拒绝和系统 VPN。
-- 登录：覆盖普通登录、2FA、取消、重新登录、WebView 数据清理、Keystore 持久化以及 Cookie 全链路脱敏。
+- 登录：覆盖普通登录、2FA、取消、重新登录、复制Cookie、剪贴板敏感标记与定时清理、WebView 数据清理、Keystore 持久化以及 Cookie 全链路脱敏。
 - 同步：覆盖无 R2、本地成功但上传失败、首次 seed、多设备独立高水位、离线设备晚上传、序号缺口、重复操作、换 Key 和换资料库。

@@ -45,22 +45,22 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         body: const _MissingPost(),
       );
     }
+    final displayName = post.authorDisplayName.trim();
+    final authorName = displayName.isNotEmpty
+        ? displayName
+        : post.sourcePlatform == PostSourcePlatform.instagram
+        ? '@${post.authorUsername}'
+        : post.authorUsername;
     final currentMedia = _resolveCurrentMedia(post);
 
     return Scaffold(
       appBar: AppBar(
         leading: _detailBackButton(context),
         title: Text(
-          post.sourcePlatform == PostSourcePlatform.instagram
-              ? '@${post.authorUsername}'
-              : post.authorDisplayName,
+          authorName,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
-          style: const TextStyle(
-            fontFamily: 'monospace',
-            fontSize: 16,
-            fontWeight: FontWeight.w700,
-          ),
+          style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
         ),
         actions: [
           IconButton(

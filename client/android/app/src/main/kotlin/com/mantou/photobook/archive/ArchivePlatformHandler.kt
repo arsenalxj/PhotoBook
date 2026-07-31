@@ -28,6 +28,7 @@ internal class ArchivePlatformHandler(
     private val database = ArchiveDatabase(applicationContext)
     private val configStore = R2ConfigStore(applicationContext)
     private val instagram = InstagramClient(applicationContext)
+    private val instagramCookieClipboard = InstagramCookieClipboard(applicationContext)
     private val mediaActions = ArchiveMediaActions(activity, database)
     private val permissionExecutor = Executors.newSingleThreadExecutor()
     private val sessionExecutor = Executors.newSingleThreadExecutor()
@@ -66,6 +67,7 @@ internal class ArchivePlatformHandler(
                 "beginInstagramLogin" -> beginInstagramLogin(result)
                 "cancelInstagramLogin" -> cancelInstagramLogin(result)
                 "captureInstagramSession" -> captureInstagramSession(result)
+                "copyInstagramCookies" -> copyInstagramCookies(result)
                 "clearInstagramSession" -> clearInstagramSession(result)
                 "saveR2Config" -> saveR2Config(call, result)
                 "clearR2Config" -> {
@@ -301,6 +303,11 @@ internal class ArchivePlatformHandler(
     private fun cancelInstagramLogin(result: MethodChannel.Result) {
         instagramLoginAttempts.cancel()
         completeInstagramWebDataCleanup(result)
+    }
+
+    private fun copyInstagramCookies(result: MethodChannel.Result) {
+        instagramCookieClipboard.copy(instagram.copyableCookieHeader())
+        result.success(null)
     }
 
     private fun clearInstagramSession(result: MethodChannel.Result) {

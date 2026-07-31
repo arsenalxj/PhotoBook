@@ -1,9 +1,13 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lucide_icons_flutter/lucide_icons.dart';
+import 'package:photobook/controllers/app_controller.dart';
+import 'package:photobook/controllers/providers.dart';
+import 'package:photobook/core/theme/app_theme.dart';
 import 'package:photobook/screens/instagram_login_screen.dart';
 import 'package:photobook/services/archive_runtime_bridge.dart';
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
@@ -16,6 +20,92 @@ void main() {
   setUp(() {
     webViewPlatform = FakeWebViewPlatform();
     WebViewPlatform.instance = webViewPlatform;
+  });
+
+  testWidgets('已登录时复制Cookie位于重新登录和清除登录之间', (tester) async {
+    const methodChannel = MethodChannel('photobook-test/copy-instagram-cookie');
+    const eventChannel = EventChannel(
+      'photobook-test/copy-instagram-cookie-events',
+    );
+    final calls = <MethodCall>[];
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(methodChannel, (call) async {
+          calls.add(call);
+          return null;
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, null),
+    );
+    final controller =
+        AppController(
+            runtimeBridge: ArchiveRuntimeBridge(
+              methodChannel: methodChannel,
+              eventChannel: eventChannel,
+            ),
+            isAndroid: true,
+          )
+          ..phase = AppPhase.ready
+          ..instagramSession = const InstagramSessionSummary(
+            status: InstagramSessionStatus.ready,
+            username: 'archive_user',
+            validatedAt: 1750000000000,
+          );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const InstagramSettingsScreen(),
+        ),
+      ),
+    );
+
+    final relogin = find.text('重新登录');
+    final copy = find.text('复制Cookie');
+    final clear = find.text('清除登录');
+    expect(relogin, findsOneWidget);
+    expect(copy, findsOneWidget);
+    expect(clear, findsOneWidget);
+    expect(tester.getCenter(relogin).dy, lessThan(tester.getCenter(copy).dy));
+    expect(tester.getCenter(copy).dy, lessThan(tester.getCenter(clear).dy));
+    expect(
+      find.ancestor(of: relogin, matching: find.byType(FilledButton)),
+      findsOneWidget,
+    );
+    expect(
+      find.ancestor(of: copy, matching: find.byType(FilledButton)),
+      findsOneWidget,
+    );
+
+    await tester.tap(copy);
+    await tester.pump();
+
+    expect(calls.map((call) => call.method), ['copyInstagramCookies']);
+    expect(find.text('Cookie 已复制，60 秒后自动清除'), findsOneWidget);
+  });
+
+  testWidgets('登录失效时不显示复制Cookie', (tester) async {
+    final controller = AppController()
+      ..phase = AppPhase.ready
+      ..instagramSession = const InstagramSessionSummary(
+        status: InstagramSessionStatus.needsRefresh,
+        username: 'archive_user',
+        validatedAt: 1750000000000,
+      );
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const InstagramSettingsScreen(),
+        ),
+      ),
+    );
+
+    expect(find.text('重新登录'), findsOneWidget);
+    expect(find.text('复制Cookie'), findsNothing);
+    expect(find.text('清除登录'), findsOneWidget);
   });
 
   testWidgets('登录页准备失败后可重新加载', (tester) async {

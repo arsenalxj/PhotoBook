@@ -81,6 +81,7 @@ void main() {
     await bridge.beginInstagramLogin();
     final session = await bridge.captureInstagramSession();
     await bridge.cancelInstagramLogin();
+    await bridge.copyInstagramCookies();
     await bridge.clearInstagramSession();
     await bridge.cancelJob('job-active');
     await bridge.retryJob('job-failed');
@@ -104,6 +105,7 @@ void main() {
       'beginInstagramLogin',
       'captureInstagramSession',
       'cancelInstagramLogin',
+      'copyInstagramCookies',
       'clearInstagramSession',
       'cancelJob',
       'retryJob',
@@ -114,19 +116,19 @@ void main() {
       'saveMedia',
     ]);
     expect(calls[0].arguments, {'automatic': true});
-    expect(calls[5].arguments, {'jobId': 'job-active'});
-    expect(calls[6].arguments, {'jobId': 'job-failed'});
-    expect(calls[7].arguments, {'jobId': 'job-cancelled'});
-    expect(calls[8].arguments, {'postId': 'post-1'});
-    expect(calls[9].arguments, {
+    expect(calls[6].arguments, {'jobId': 'job-active'});
+    expect(calls[7].arguments, {'jobId': 'job-failed'});
+    expect(calls[8].arguments, {'jobId': 'job-cancelled'});
+    expect(calls[9].arguments, {'postId': 'post-1'});
+    expect(calls[10].arguments, {
       'postId': 'post-1',
       'mediaIds': ['media-1', 'media-2'],
     });
-    expect(calls[10].arguments, {
+    expect(calls[11].arguments, {
       'mediaIds': ['media-1', 'media-2'],
       'exportMode': 'original',
     });
-    expect(calls[11].arguments, {
+    expect(calls[12].arguments, {
       'mediaId': 'media-1',
       'exportMode': 'original',
     });

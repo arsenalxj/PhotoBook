@@ -33,7 +33,7 @@ flowchart LR
 - 接收 Instagram 和小红书 `text/plain` 分享。
 - 匿名优先抓取 Instagram 公开图片帖、多图帖和 Reel；登录墙出现时可使用已验证的本机会话重试一次。
 - 匿名抓取小红书公开图片、视频、原生 GIF 和 Live Photo；不提供小红书登录或验证码绕过。
-- 设置页提供 Instagram 官方 WebView 登录、登录状态、重新登录和清除会话。
+- 设置页提供 Instagram 官方 WebView 登录、登录状态、重新登录、复制Cookie 和清除会话。复制只允许在会话可用时由用户主动触发。
 - App 退到后台或锁屏后继续下载，完成后自动停止前台服务。
 - 本地瀑布流、详情、失败重试和按需原媒体读取。
 - 可选 R2 上传、拉取、多设备去重同步和逻辑删除。
@@ -86,7 +86,7 @@ sequenceDiagram
 
 | 组件 | 负责 | 不负责 |
 |---|---|---|
-| Flutter | 首页、详情、任务列表、Instagram 登录状态、R2 设置、检查更新、展示任务状态 | 读取 Cookie、平台抓取、维持后台执行 |
+| Flutter | 首页、详情、任务列表、Instagram 登录状态与 Cookie 复制命令、R2 设置、检查更新、展示任务状态 | 读取或接收 Cookie 内容、平台抓取、维持后台执行 |
 | MainActivity | 接收分享、规范化链接、先落任务、启动服务 | 长时间网络请求 |
 | ArchiveForegroundService | 通知、串行调度、恢复、停止条件 | UI 状态 |
 | ArchiveRunner | 按平台选择 Python 解析器、原生下载、缩略图、事务提交、一次有界同步 | 保存明文密钥 |
@@ -205,7 +205,7 @@ Access Key 只代表访问权限，替换 Key 不产生新资料库。每个安�
 
 R2 使用 S3 API 的 `region=auto`。凭证仅存 Keystore，token 权限限制到目标 bucket 的对象读写。分页必须依据服务返回的截断标记，不能按返回数量猜测结束。
 
-Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。账号密码只提交给官方 WebView；Android `CookieManager` 取得 Cookie 后由 Chaquopy 验证，成功才替换旧会话并清理 WebView 数据。匿名成功时不解密 Session；认证失败只标记会话需要刷新，不影响已经完成的本地归档。
+Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。账号密码只提交给官方 WebView；Android `CookieManager` 取得 Cookie 后由 Chaquopy 验证，成功才替换旧会话并清理 WebView 数据。用户只能在 `ready` 状态主动命令 Android 原生层把 Cookie Header 写入系统剪贴板；Cookie 不经过 Flutter MethodChannel 返回值，剪贴板标记敏感内容，并在进程存活时 60 秒后仅清理未被替换的该份内容。匿名成功时不解密 Session；认证失败只标记会话需要刷新，不影响已经完成的本地归档。
 
 ## 8. Android 生命周期
 

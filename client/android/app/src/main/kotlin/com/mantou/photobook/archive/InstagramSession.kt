@@ -48,6 +48,9 @@ internal class InstagramSession private constructor(
             .put("cookies", cookiesJson())
             .toString()
 
+    fun cookieHeader(): String =
+        cookies.toSortedMap().entries.joinToString("; ") { (name, value) -> "$name=$value" }
+
     fun needsRefresh(): InstagramSession =
         InstagramSession(username, cookies, validatedAt, InstagramSessionStatus.NEEDS_REFRESH)
 

@@ -60,6 +60,21 @@ class InstagramSettingsScreen extends ConsumerWidget {
     }
   }
 
+  Future<void> _copyCookies(BuildContext context, WidgetRef ref) async {
+    try {
+      await ref.read(appControllerProvider).copyInstagramCookies();
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Cookie 已复制，60 秒后自动清除')));
+    } on PlatformException catch (error) {
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text(error.message ?? 'Cookie 复制失败')));
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final session = ref.watch(appControllerProvider).instagramSession;
@@ -176,6 +191,16 @@ class InstagramSettingsScreen extends ConsumerWidget {
                       child: Text(session == null ? '登录 Instagram' : '重新登录'),
                     ),
                   ),
+                  if (session?.status == InstagramSessionStatus.ready) ...[
+                    const SizedBox(height: 14),
+                    SizedBox(
+                      height: 48,
+                      child: FilledButton(
+                        onPressed: () => _copyCookies(context, ref),
+                        child: const Text('复制Cookie'),
+                      ),
+                    ),
+                  ],
                   if (session != null) ...[
                     const SizedBox(height: 14),
                     SizedBox(

@@ -164,6 +164,11 @@ class AppController extends ChangeNotifier {
     await _runtimeBridge.cancelInstagramLogin();
   }
 
+  Future<void> copyInstagramCookies() async {
+    if (!_isAndroid) throw StateError('Instagram Cookie 复制仅支持 Android');
+    await _runtimeBridge.copyInstagramCookies();
+  }
+
   Future<void> clearInstagramSession() async {
     if (!_isAndroid) return;
     await _runtimeBridge.clearInstagramSession();

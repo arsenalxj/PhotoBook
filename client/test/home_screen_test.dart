@@ -62,6 +62,45 @@ void main() {
     expect(controller.clipboardImportCount, 1);
   });
 
+  testWidgets('首页卡片在两个平台都显示作者展示名', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _post(
+          id: 'post-bella',
+          username: 'zhouyanxi0909',
+          displayName: 'Bella周老师',
+        ),
+        _post(
+          id: 'post-xhs',
+          username: 'xhs-user-id',
+          displayName: '小红书作者',
+          sourcePlatform: PostSourcePlatform.xiaohongshu,
+        ),
+      ];
+    await _pumpHome(tester, controller);
+
+    final instagramCard = find.byKey(const ValueKey('post-bella'));
+    expect(
+      find.descendant(of: instagramCard, matching: find.text('Bella周老师')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: instagramCard, matching: find.text('@zhouyanxi0909')),
+      findsNothing,
+    );
+
+    final xiaohongshuCard = find.byKey(const ValueKey('post-xhs'));
+    expect(
+      find.descendant(of: xiaohongshuCard, matching: find.text('小红书作者')),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(of: xiaohongshuCard, matching: find.text('xhs-user-id')),
+      findsNothing,
+    );
+  });
+
   testWidgets('只有进行中任务时角标使用非错误色', (tester) async {
     final controller = AppController()
       ..phase = AppPhase.ready

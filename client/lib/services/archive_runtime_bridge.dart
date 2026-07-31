@@ -250,6 +250,9 @@ class ArchiveRuntimeBridge {
   Future<void> cancelInstagramLogin() =>
       _methodChannel.invokeMethod<void>('cancelInstagramLogin');
 
+  Future<void> copyInstagramCookies() =>
+      _methodChannel.invokeMethod<void>('copyInstagramCookies');
+
   Future<void> clearInstagramSession() =>
       _methodChannel.invokeMethod<void>('clearInstagramSession');
 

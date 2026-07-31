@@ -27,6 +27,12 @@ class PostCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final cover = post.coverMedia;
+    final displayName = post.authorDisplayName.trim();
+    final authorName = displayName.isNotEmpty
+        ? displayName
+        : post.sourcePlatform == PostSourcePlatform.instagram
+        ? '@${post.authorUsername}'
+        : post.authorUsername;
     return DecoratedBox(
       decoration: BoxDecoration(
         borderRadius: BorderRadius.circular(AppTheme.radiusMedium),
@@ -134,15 +140,11 @@ class PostCard extends StatelessWidget {
                             const SizedBox(width: 8),
                             Expanded(
                               child: Text(
-                                post.sourcePlatform ==
-                                        PostSourcePlatform.instagram
-                                    ? '@${post.authorUsername}'
-                                    : post.authorUsername,
+                                authorName,
                                 maxLines: 1,
                                 overflow: TextOverflow.ellipsis,
                                 style: const TextStyle(
                                   color: AppTheme.muted,
-                                  fontFamily: 'monospace',
                                   fontSize: 12,
                                 ),
                               ),

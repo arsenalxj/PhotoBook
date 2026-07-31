@@ -147,7 +147,7 @@
     display: grid; place-items: center; font-size: 11px; font-weight: 700; color: var(--accent-on);
     background: var(--accent);
   }
-  .author .uname { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .author .author-name { font-size: var(--text-xs); color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .platform-tag {
     flex: none; margin-left: auto; padding: 1px 7px; border: 1px solid var(--border); border-radius: var(--radius-sm);
     font-family: var(--font-mono); font-size: 10px; color: var(--muted); letter-spacing: .02em;
@@ -307,7 +307,7 @@
         </div>
         <div class="post-meta">
           <p class="caption">${p.caption}</p>
-          <div class="author"><span class="avatar">${p.name[0]}</span><span class="uname">${p.platform === 'IG' ? '@' + p.user : p.user}</span><span class="platform-tag">${p.platform}</span></div>
+          <div class="author"><span class="avatar">${p.name[0]}</span><span class="author-name">${p.name}</span><span class="platform-tag">${p.platform}</span></div>
         </div>
         <div class="card-overlay">
           <button class="overlay-btn" data-act="only">只看TA</button>

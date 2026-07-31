@@ -33,6 +33,16 @@ internal class InstagramClient internal constructor(
 
     fun clearSession() = sessions.clear()
 
+    fun copyableCookieHeader(): String {
+        val session =
+            sessions.read()
+                ?: throw ArchiveException("LOGIN_REQUIRED", "Instagram 尚未登录，请先登录")
+        if (session.status != InstagramSessionStatus.READY) {
+            throw ArchiveException("LOGIN_REQUIRED", "Instagram 登录已失效，请重新登录")
+        }
+        return session.cookieHeader()
+    }
+
     fun fetchPost(
         shortcode: String,
         isAttemptActive: () -> Boolean = { true },

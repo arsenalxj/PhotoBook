@@ -239,6 +239,8 @@ class XiaohongshuBridgeTest(unittest.TestCase):
             payload["sourceUrl"],
             "https://www.xiaohongshu.com/explore/64abc123456789ab",
         )
+        self.assertEqual(payload["authorUsername"], "author-1")
+        self.assertEqual(payload["authorDisplayName"], "作者")
         self.assertNotIn("secret", json.dumps(payload))
         self.assertEqual(
             [item["mediaRole"] for item in payload["media"]],
@@ -289,6 +291,7 @@ class XiaohongshuBridgeTest(unittest.TestCase):
 
         self.assertEqual(payload["sourcePostId"], "64abc123456789ab")
         self.assertEqual(payload["authorUsername"], "right")
+        self.assertEqual(payload["authorDisplayName"], "right")
 
     def test_balanced_state_parser_handles_undefined(self) -> None:
         state = xiaohongshu_bridge._parse_initial_state(

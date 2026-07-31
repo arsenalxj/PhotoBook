@@ -15,6 +15,7 @@ MethodChannel：`com.mantou.photobook/archive`
 | `beginInstagramLogin` | 无 | 无 | 清理 WebView 数据并开始新的官方网页登录 |
 | `captureInstagramSession` | 无 | Session 摘要 | 从 Android WebView CookieManager 验证并加密保存登录态 |
 | `cancelInstagramLogin` | 无 | 无 | 取消登录并清理 WebView 数据，不改变已保存 Session |
+| `copyInstagramCookies` | 无 | 无 | 仅在 Session 可用时由 Android 原生层写入敏感剪贴板，Cookie 不返回 Flutter |
 | `clearInstagramSession` | 无 | 无 | 清除加密 Session、Keystore 密钥和 WebView 数据 |
 | `saveR2Config` | 配置 map | 配置摘要 | 加密保存通过验证的 R2 配置 |
 | `clearR2Config` | 无 | 无 | 清除密钥和当前资料库绑定 |
@@ -29,7 +30,7 @@ EventChannel：`com.mantou.photobook/archive_events`
 
 事件类型为 `archiveChanged`、`jobChanged`、`runStarted` 和 `runFinished`。事件只用于驱动刷新和即时反馈，不作为权威状态；`jobChanged` 不携带任务快照，Flutter 收到后合并连续刷新请求并重新查询 SQLite。阶段或媒体项进度落库、入队、取消、删除、重试和任务结束时发送 `jobChanged`，不复用 `archiveChanged` 上报下载进度。`runFinished` 可携带脱敏后的同步错误，冷启动仍从 `app_meta.last_sync_error` 恢复错误状态。
 
-`getRuntimeState.instagramSession` 只返回非敏感摘要：未配置时为 `null`，否则为 `{status: "ready" | "needs_refresh", username, validatedAt}`。Flutter 侧不存在读取 Cookie 的接口。
+`getRuntimeState.instagramSession` 只返回非敏感摘要：未配置时为 `null`，否则为 `{status: "ready" | "needs_refresh", username, validatedAt}`。`copyInstagramCookies` 也只返回成功或失败；Flutter 侧不存在读取 Cookie 内容的接口。
 
 详情页批量保存由 Flutter 按帖子顺序逐项调用 `saveMedia`。普通媒体使用 `original`；完整 Live Photo 使用本次选择的统一 `static / gif / video` 模式；降级 Live Photo 固定使用 `static`。单项失败不回滚已经写入系统相册的副本，界面保留失败项供重试。
 

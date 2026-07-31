@@ -219,6 +219,34 @@ class InstagramClientTest {
     }
 
     @Test
+    fun `ready session exports sorted cookie header`() {
+        val sessions = FakeSessions(session(sessionId = "session-secret"))
+
+        val header = InstagramClient(FakeGateway { throw UnsupportedOperationException() }, sessions)
+            .copyableCookieHeader()
+
+        assertEquals("csrftoken=csrf-value; sessionid=session-secret", header)
+        assertEquals(1, sessions.readCount)
+    }
+
+    @Test
+    fun `missing or stale session cannot export cookies`() {
+        val missing = assertThrows(ArchiveException::class.java) {
+            InstagramClient(FakeGateway { throw UnsupportedOperationException() }, FakeSessions(null))
+                .copyableCookieHeader()
+        }
+        val stale = assertThrows(ArchiveException::class.java) {
+            InstagramClient(
+                FakeGateway { throw UnsupportedOperationException() },
+                FakeSessions(session().needsRefresh()),
+            ).copyableCookieHeader()
+        }
+
+        assertEquals("LOGIN_REQUIRED", missing.code)
+        assertEquals("LOGIN_REQUIRED", stale.code)
+    }
+
+    @Test
     fun `session string representation redacts cookies`() {
         val value = session(sessionId = "must-not-appear")
 

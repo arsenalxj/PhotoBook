@@ -151,6 +151,8 @@
   .device[data-state="logged-out"] .btn .lbl-login { display: inline; }
   .device[data-state="logged-in"] .btn .lbl-relogin,
   .device[data-state="expired"] .btn .lbl-relogin { display: inline; }
+  .btn-copy { display: none; }
+  .device[data-state="logged-in"] .btn-copy { display: inline-flex; }
   .device[data-state="logged-out"] .btn-clear { display: none; }
 
   /* ─── 屏幕 B:登录 WebView ─── */
@@ -331,6 +333,7 @@
           <button class="btn btn-primary" id="loginBtn" data-od-id="btn-login">
             <span class="lbl-login">登录 Instagram</span><span class="lbl-relogin">重新登录</span>
           </button>
+          <button class="btn btn-primary btn-copy" id="copyBtn" data-od-id="btn-copy-cookie">复制Cookie</button>
           <button class="btn btn-ghost-danger btn-clear" id="clearBtn" data-od-id="btn-clear-login">清除登录</button>
         </div>
       </div>
@@ -456,6 +459,10 @@
       setState('logged-in');
       showSnackbar('已登录 @wander_chen', true);
     }, 4200);
+  });
+
+  document.getElementById('copyBtn').addEventListener('click', () => {
+    showSnackbar('Cookie 已复制，60 秒后自动清除', true);
   });
 
   // 屏幕 A:清除登录 → 确认对话框 → 未登录态

@@ -209,7 +209,7 @@ private fun recoveryForegroundInfo(context: Context, text: String): ForegroundIn
         )
     val notification =
         NotificationCompat.Builder(context, RECOVERY_CHANNEL_ID)
-            .setSmallIcon(R.mipmap.ic_launcher)
+            .setSmallIcon(R.drawable.ic_notification)
             .setContentTitle("PhotoBook")
             .setContentText(text)
             .setContentIntent(openApp)
