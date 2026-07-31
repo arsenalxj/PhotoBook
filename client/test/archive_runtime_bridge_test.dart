@@ -60,9 +60,9 @@ void main() {
               'username': 'archive_user',
               'validatedAt': 1750000000000,
             },
-            'deleteMedia' => <String, Object>{
+            'deleteMediaSelection' => <String, Object>{
               'postId': 'post-1',
-              'postDeleteRequired': false,
+              'postDeleted': false,
             },
             'saveMedia' => 'PhotoBook_post-1_1.jpg',
             _ => null,
@@ -86,14 +86,17 @@ void main() {
     await bridge.retryJob('job-failed');
     await bridge.deleteJob('job-cancelled');
     await bridge.deletePost('post-1');
-    final deleted = await bridge.deleteMedia('media-1');
+    final deleted = await bridge.deleteMediaSelection('post-1', [
+      'media-1',
+      'media-2',
+    ]);
     await bridge.shareMedia(['media-1', 'media-2']);
     final savedName = await bridge.saveMedia('media-1');
 
     expect(deleted.postId, 'post-1');
     expect(session.username, 'archive_user');
     expect(session.status, InstagramSessionStatus.ready);
-    expect(deleted.postDeleteRequired, isFalse);
+    expect(deleted.postDeleted, isFalse);
     expect(savedName, 'PhotoBook_post-1_1.jpg');
     expect(clipboardOutcome, ClipboardImportOutcome.queued);
     expect(calls.map((call) => call.method), [
@@ -106,7 +109,7 @@ void main() {
       'retryJob',
       'deleteJob',
       'deletePost',
-      'deleteMedia',
+      'deleteMediaSelection',
       'shareMedia',
       'saveMedia',
     ]);
@@ -115,7 +118,10 @@ void main() {
     expect(calls[6].arguments, {'jobId': 'job-failed'});
     expect(calls[7].arguments, {'jobId': 'job-cancelled'});
     expect(calls[8].arguments, {'postId': 'post-1'});
-    expect(calls[9].arguments, {'mediaId': 'media-1'});
+    expect(calls[9].arguments, {
+      'postId': 'post-1',
+      'mediaIds': ['media-1', 'media-2'],
+    });
     expect(calls[10].arguments, {
       'mediaIds': ['media-1', 'media-2'],
       'exportMode': 'original',

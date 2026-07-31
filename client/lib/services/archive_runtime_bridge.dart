@@ -173,19 +173,19 @@ class R2ConfigInput {
   };
 }
 
-class DeleteMediaResult {
-  const DeleteMediaResult({
+class DeleteMediaSelectionResult {
+  const DeleteMediaSelectionResult({
     required this.postId,
-    required this.postDeleteRequired,
+    required this.postDeleted,
   });
 
   final String postId;
-  final bool postDeleteRequired;
+  final bool postDeleted;
 
-  factory DeleteMediaResult.fromMap(Map<Object?, Object?> map) =>
-      DeleteMediaResult(
+  factory DeleteMediaSelectionResult.fromMap(Map<Object?, Object?> map) =>
+      DeleteMediaSelectionResult(
         postId: map['postId']! as String,
-        postDeleteRequired: map['postDeleteRequired']! as bool,
+        postDeleted: map['postDeleted']! as bool,
       );
 }
 
@@ -278,13 +278,16 @@ class ArchiveRuntimeBridge {
   Future<void> deletePost(String postId) =>
       _methodChannel.invokeMethod<void>('deletePost', {'postId': postId});
 
-  Future<DeleteMediaResult> deleteMedia(String mediaId) async {
+  Future<DeleteMediaSelectionResult> deleteMediaSelection(
+    String postId,
+    List<String> mediaIds,
+  ) async {
     final value = await _methodChannel.invokeMapMethod<Object?, Object?>(
-      'deleteMedia',
-      {'mediaId': mediaId},
+      'deleteMediaSelection',
+      {'postId': postId, 'mediaIds': mediaIds},
     );
     if (value == null) throw StateError('媒体删除结果为空');
-    return DeleteMediaResult.fromMap(value);
+    return DeleteMediaSelectionResult.fromMap(value);
   }
 
   Future<void> shareMedia(

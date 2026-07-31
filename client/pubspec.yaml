@@ -1,7 +1,7 @@
 name: photobook
 description: "PhotoBook 个人多平台帖子归档客户端。"
 publish_to: 'none'
-version: 1.2.1+4
+version: 1.3.0+5
 
 environment:
   sdk: ^3.11.0

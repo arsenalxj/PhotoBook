@@ -361,7 +361,7 @@ class ArchiveDatabaseRepositoryTest {
     }
 
     @Test
-    fun `deleting one media writes tombstone and keeps the post`() {
+    fun `deleting a media selection writes tombstones and keeps the post`() {
         val sourcePostId = "DeleteMedia1"
         val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
         database.commitCompletedJob(
@@ -370,9 +370,15 @@ class ArchiveDatabaseRepositoryTest {
             LOCAL_DEVICE,
         )
 
-        val result = database.deleteMedia("instagram:$sourcePostId:0", LOCAL_DEVICE)
+        val postId = "instagram:$sourcePostId"
+        val result =
+            database.deleteMediaSelection(
+                postId,
+                listOf("$postId:0"),
+                LOCAL_DEVICE,
+            )
 
-        assertEquals(false, result.postDeleteRequired)
+        assertFalse(result.postDeleted)
         assertNull(database.originalDescriptor("instagram:$sourcePostId:0"))
         assertNotNull(database.originalDescriptor("instagram:$sourcePostId:1"))
         assertEquals(
@@ -386,7 +392,7 @@ class ArchiveDatabaseRepositoryTest {
     }
 
     @Test
-    fun `deleting the last media requests post confirmation without mutation`() {
+    fun `selecting every media deletes the post in one transaction`() {
         val sourcePostId = "DeleteLast1"
         val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
         database.commitCompletedJob(
@@ -395,17 +401,96 @@ class ArchiveDatabaseRepositoryTest {
             LOCAL_DEVICE,
         )
 
-        val result = database.deleteMedia("instagram:$sourcePostId:0", LOCAL_DEVICE)
+        val postId = "instagram:$sourcePostId"
+        val result =
+            database.deleteMediaSelection(
+                postId,
+                listOf("$postId:0"),
+                LOCAL_DEVICE,
+            )
 
-        assertEquals(true, result.postDeleteRequired)
-        assertNotNull(database.originalDescriptor("instagram:$sourcePostId:0"))
+        assertTrue(result.postDeleted)
+        assertNull(database.originalDescriptor("$postId:0"))
         assertEquals(
-            listOf("upsert_post"),
+            listOf("upsert_post", "delete_post"),
             database.listPendingSyncOperations("repository", LOCAL_DEVICE).map { it.operation },
         )
         assertEquals(
-            "completed",
+            "queued",
             database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId).status,
+        )
+    }
+
+    @Test
+    fun `invalid batch media selection rolls back without partial deletion`() {
+        val sourcePostId = "DeleteRollback1"
+        val postId = "instagram:$sourcePostId"
+        val otherSourcePostId = "DeleteRollback2"
+        val otherPostId = "instagram:$otherSourcePostId"
+        val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
+        database.commitCompletedJob(
+            job.id,
+            preparedPost(sourcePostId, "两张图", 'd', mediaCount = 2),
+            LOCAL_DEVICE,
+        )
+        val otherJob =
+            database.enqueue(
+                "https://www.instagram.com/p/$otherSourcePostId/",
+                otherSourcePostId,
+            )
+        database.commitCompletedJob(
+            otherJob.id,
+            preparedPost(otherSourcePostId, "另一张图", 'e'),
+            LOCAL_DEVICE,
+        )
+
+        assertThrows(ArchiveException::class.java) {
+            database.deleteMediaSelection(
+                postId,
+                listOf("$postId:0", "$otherPostId:0"),
+                LOCAL_DEVICE,
+            )
+        }
+
+        assertNotNull(database.originalDescriptor("$postId:0"))
+        assertNotNull(database.originalDescriptor("$postId:1"))
+        assertEquals(
+            listOf("upsert_post", "upsert_post"),
+            database.listPendingSyncOperations("repository", LOCAL_DEVICE).map { it.operation },
+        )
+    }
+
+    @Test
+    fun `selecting every sparse logical media deletes the post`() {
+        val sourcePostId = "DeleteSparse1"
+        val postId = "instagram:$sourcePostId"
+        val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
+        val base = preparedPost(sourcePostId, "稀疏索引", 'f', mediaCount = 2)
+        database.commitCompletedJob(
+            job.id,
+            base.copy(
+                media =
+                    listOf(
+                        base.media[0].copy(logicalIndex = 2),
+                        base.media[1].copy(logicalIndex = 7),
+                    ),
+            ),
+            LOCAL_DEVICE,
+        )
+
+        val result =
+            database.deleteMediaSelection(
+                postId,
+                listOf("$postId:0", "$postId:1"),
+                LOCAL_DEVICE,
+            )
+
+        assertTrue(result.postDeleted)
+        assertNull(database.originalDescriptor("$postId:0"))
+        assertNull(database.originalDescriptor("$postId:1"))
+        assertEquals(
+            listOf("upsert_post", "delete_post"),
+            database.listPendingSyncOperations("repository", LOCAL_DEVICE).map { it.operation },
         )
     }
 
@@ -445,7 +530,7 @@ class ArchiveDatabaseRepositoryTest {
             preparedPost(sourcePostId, "三张图", 'b', mediaCount = 3),
             LOCAL_DEVICE,
         )
-        database.deleteMedia("$postId:1", LOCAL_DEVICE)
+        database.deleteMediaSelection(postId, listOf("$postId:1"), LOCAL_DEVICE)
         database.seedRepositoryIfNeeded("new-repository", LOCAL_DEVICE)
         val snapshot =
             database.listPendingSyncOperations("new-repository", LOCAL_DEVICE)
@@ -629,9 +714,16 @@ class ArchiveDatabaseRepositoryTest {
             )
         database.commitCompletedJob(job.id, livePost, LOCAL_DEVICE)
 
-        val result = database.deleteMedia("instagram:$sourcePostId:0", LOCAL_DEVICE)
+        val postId = "instagram:$sourcePostId"
+        assertThrows(ArchiveException::class.java) {
+            database.deleteMediaSelection(postId, listOf("$postId:1"), LOCAL_DEVICE)
+        }
+        assertNotNull(database.originalDescriptor("$postId:0"))
+        assertNotNull(database.originalDescriptor("$postId:1"))
 
-        assertFalse(result.postDeleteRequired)
+        val result = database.deleteMediaSelection(postId, listOf("$postId:0"), LOCAL_DEVICE)
+
+        assertFalse(result.postDeleted)
         assertNull(database.originalDescriptor("instagram:$sourcePostId:0"))
         assertNull(database.originalDescriptor("instagram:$sourcePostId:1"))
         assertNotNull(database.originalDescriptor("instagram:$sourcePostId:2"))

@@ -61,9 +61,15 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             icon: const Icon(Icons.share_outlined),
           ),
           IconButton(
-            key: const ValueKey('delete-detail-post'),
-            tooltip: '删除帖子',
-            onPressed: () => _deletePost(post!),
+            key: const ValueKey('save-post-media'),
+            tooltip: '保存媒体',
+            onPressed: () => _savePostMedia(post!),
+            icon: const Icon(Icons.download_outlined),
+          ),
+          IconButton(
+            key: const ValueKey('delete-post-media'),
+            tooltip: '删除媒体',
+            onPressed: () => _deletePostMedia(post!),
             icon: const Icon(Icons.delete_outline),
           ),
           PopupMenuButton<_DetailMenuAction>(
@@ -109,7 +115,6 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                   _currentMediaIndex = index;
                 });
               },
-              onMediaAction: (media) => _handleMediaLongPress(post!, media),
             ),
           ),
           Padding(
@@ -168,123 +173,59 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         },
       );
 
-  Future<void> _deletePost(ArchivedPost post) async {
-    final deleted = await showDeletePostSheet(
+  Future<void> _savePostMedia(ArchivedPost post) async {
+    final savedCount = await showSaveMediaSelectionSheet(
       context: context,
       post: post,
-      onDelete: () => ref.read(appControllerProvider).deletePost(post.id),
+      onSave: (media, exportMode) async {
+        await ref
+            .read(appControllerProvider)
+            .saveMedia(media, exportMode: exportMode);
+      },
     );
-    if (deleted && mounted && Navigator.of(context).canPop()) {
-      Navigator.of(context).pop();
-    }
+    if (!mounted || savedCount == null || savedCount == 0) return;
+    await ref.read(appControllerProvider).refreshAfterMediaSave();
+    if (!mounted) return;
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已保存 $savedCount 项到系统相册')));
   }
 
-  Future<void> _handleMediaLongPress(ArchivedPost post, PostMedia media) async {
-    final action = await showMediaActionSheet(context: context, media: media);
-    if (!mounted || action == null) return;
-    switch (action) {
-      case MediaAction.save:
-        var exportMode = MediaExportMode.original;
-        if (media.isLivePhoto) {
-          if (!media.hasLiveMotion) {
-            exportMode = MediaExportMode.staticImage;
-          } else {
-            final selected = await showLivePhotoExportSheet(
-              context: context,
-              forShare: false,
-            );
-            if (selected == null) return;
-            exportMode = selected;
-          }
-        }
-        await _saveMedia(media, exportMode);
-      case MediaAction.delete:
-        await _deleteMedia(post, media);
+  Future<void> _deletePostMedia(ArchivedPost post) async {
+    final outcome = await showDeleteMediaSelectionSheet(
+      context: context,
+      post: post,
+      onDelete: (media) async {
+        final result = await ref
+            .read(appControllerProvider)
+            .deleteMediaSelection(post.id, media);
+        return result.postDeleted;
+      },
+    );
+    if (!mounted || outcome == null) return;
+    if (outcome.postDeleted) {
+      if (Navigator.of(context).canPop()) Navigator.of(context).pop();
+      return;
     }
-  }
-
-  Future<void> _saveMedia(
-    PostMedia media, [
-    MediaExportMode exportMode = MediaExportMode.original,
-  ]) async {
-    final messenger = ScaffoldMessenger.of(context);
-    final isGif = exportMode == MediaExportMode.gif;
-    messenger
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Row(
-            children: [
-              const SizedBox.square(
-                dimension: 18,
-                child: CircularProgressIndicator(strokeWidth: 2),
-              ),
-              const SizedBox(width: 12),
-              Expanded(child: Text(isGif ? '正在转换并保存 GIF...' : '正在准备媒体...')),
-            ],
-          ),
-          duration: const Duration(days: 1),
-        ),
+    final remaining = post.media
+        .where((item) => !outcome.deletedMediaIds.contains(item.id))
+        .toList(growable: false);
+    if (remaining.isNotEmpty) {
+      final currentMediaId = _currentMediaId;
+      final currentStillExists = remaining.any(
+        (item) => item.id == currentMediaId,
       );
-    try {
-      final displayName = await ref
-          .read(appControllerProvider)
-          .saveMedia(media, exportMode: exportMode);
-      if (!mounted) return;
-      final album =
-          exportMode == MediaExportMode.video ||
-              (exportMode == MediaExportMode.original &&
-                  media.mediaType == PostMediaType.video)
-          ? 'Movies/PhotoBook'
-          : 'Pictures/PhotoBook';
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(
-          SnackBar(
-            content: Text('已保存${isGif ? ' GIF' : ''}到 $album：$displayName'),
-            duration: const Duration(seconds: 8),
-          ),
-        );
-    } on Object catch (error) {
-      if (!mounted) return;
-      messenger
-        ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text(_messageFor(error))));
+      final targetIndex = currentStillExists
+          ? remaining.indexWhere((item) => item.id == currentMediaId)
+          : _currentMediaIndex.clamp(0, remaining.length - 1);
+      setState(() {
+        _currentMediaIndex = targetIndex;
+        _currentMediaId = remaining[targetIndex].id;
+      });
     }
-  }
-
-  Future<void> _deleteMedia(ArchivedPost post, PostMedia media) async {
-    try {
-      final result = await ref
-          .read(appControllerProvider)
-          .deleteMedia(media.id);
-      if (!mounted) return;
-      if (result.postDeleteRequired) {
-        await _deletePost(post);
-        return;
-      }
-      final deletedIndex = post.media.indexWhere((item) => item.id == media.id);
-      final remaining = post.media
-          .where((item) => item.id != media.id)
-          .toList(growable: false);
-      final targetIndex = deletedIndex >= remaining.length
-          ? remaining.length - 1
-          : deletedIndex;
-      final targetMediaId = remaining[targetIndex].id;
-      setState(() => _currentMediaId = targetMediaId);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            media.mediaType == PostMediaType.video ? '已删除该视频' : '已删除该图片',
-          ),
-        ),
-      );
-    } on Object catch (error) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(SnackBar(content: Text(_messageFor(error))));
-    }
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('已删除 ${outcome.deletedMediaIds.length} 项媒体')),
+    );
   }
 
   Future<void> _openSource(String sourceUrl) async {
@@ -374,13 +315,11 @@ class _LazyMediaViewer extends ConsumerStatefulWidget {
     required this.post,
     required this.currentMediaId,
     required this.onMediaChanged,
-    required this.onMediaAction,
   });
 
   final ArchivedPost post;
   final String currentMediaId;
   final void Function(String mediaId, int index) onMediaChanged;
-  final ValueChanged<PostMedia> onMediaAction;
 
   @override
   ConsumerState<_LazyMediaViewer> createState() => _LazyMediaViewerState();
@@ -543,17 +482,6 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
                 ),
               ),
             ),
-          Positioned(
-            right: 8,
-            bottom: 8,
-            child: IconButton.filledTonal(
-              tooltip: '媒体操作',
-              onPressed: currentIndex < 0
-                  ? null
-                  : () => widget.onMediaAction(widget.post.media[currentIndex]),
-              icon: const Icon(Icons.more_vert),
-            ),
-          ),
         ],
       ),
     );
@@ -571,7 +499,6 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
           width: media.width,
           height: media.height,
           isCurrent: isCurrent,
-          onLongPress: () => widget.onMediaAction(media),
         );
       }
       if (media.isLivePhoto) {
@@ -597,7 +524,6 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
                   width: media.width,
                   height: media.height,
                   isCurrent: isCurrent,
-                  onLongPress: () {},
                 )
               : Stack(
                   fit: StackFit.expand,
@@ -621,45 +547,37 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
                 ),
         );
       }
-      return GestureDetector(
+      return Stack(
         key: ValueKey('media-${media.id}'),
-        behavior: HitTestBehavior.opaque,
-        onLongPress: () => widget.onMediaAction(media),
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            _MediaPlaceholder(thumbnailPath: media.localThumbnailPath),
-            Image.file(
-              file,
-              fit: BoxFit.contain,
-              gaplessPlayback: true,
-              errorBuilder: (_, _, _) => const SizedBox.shrink(),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return GestureDetector(
-      key: ValueKey('media-${media.id}'),
-      behavior: HitTestBehavior.opaque,
-      onLongPress: () => widget.onMediaAction(media),
-      child: Stack(
         fit: StackFit.expand,
         children: [
           _MediaPlaceholder(thumbnailPath: media.localThumbnailPath),
-          if (isCurrent && _downloading.contains(media.id))
-            const Center(child: CircularProgressIndicator(color: Colors.white)),
-          if (isCurrent && _errors.containsKey(media.id))
-            Center(
-              child: IconButton.filled(
-                tooltip: '重新下载',
-                onPressed: () => _ensureMedia(media.id),
-                icon: const Icon(Icons.refresh),
-              ),
-            ),
+          Image.file(
+            file,
+            fit: BoxFit.contain,
+            gaplessPlayback: true,
+            errorBuilder: (_, _, _) => const SizedBox.shrink(),
+          ),
         ],
-      ),
+      );
+    }
+
+    return Stack(
+      key: ValueKey('media-${media.id}'),
+      fit: StackFit.expand,
+      children: [
+        _MediaPlaceholder(thumbnailPath: media.localThumbnailPath),
+        if (isCurrent && _downloading.contains(media.id))
+          const Center(child: CircularProgressIndicator(color: Colors.white)),
+        if (isCurrent && _errors.containsKey(media.id))
+          Center(
+            child: IconButton.filled(
+              tooltip: '重新下载',
+              onPressed: () => _ensureMedia(media.id),
+              icon: const Icon(Icons.refresh),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -688,7 +606,6 @@ class _LocalVideo extends StatefulWidget {
     required this.width,
     required this.height,
     required this.isCurrent,
-    required this.onLongPress,
     super.key,
   });
 
@@ -697,7 +614,6 @@ class _LocalVideo extends StatefulWidget {
   final int width;
   final int height;
   final bool isCurrent;
-  final VoidCallback onLongPress;
 
   @override
   State<_LocalVideo> createState() => _LocalVideoState();
@@ -826,7 +742,6 @@ class _LocalVideoState extends State<_LocalVideo> {
                 await _controller.play();
               }
             },
-      onLongPress: widget.onLongPress,
       child: content,
     );
   }

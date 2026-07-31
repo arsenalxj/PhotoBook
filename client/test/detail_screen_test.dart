@@ -282,7 +282,7 @@ void main() {
     expect(find.byKey(const ValueKey('live-media-live-still')), findsOneWidget);
   });
 
-  testWidgets('删除当前媒体后定位相邻项并将其作为分享默认项', (tester) async {
+  testWidgets('删除面板默认全选，部分删除后定位相邻项并更新分享默认项', (tester) async {
     final originals = [
       for (var index = 0; index < 3; index += 1)
         _writeImage(tempDirectory, 'delete-$index.png').path,
@@ -302,9 +302,16 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('2/3'), findsOneWidget);
 
-    await tester.longPress(find.byKey(const ValueKey('media-media-1')));
+    await tester.tap(find.byKey(const ValueKey('delete-post-media')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('delete-current-media')));
+    expect(find.text('3/3'), findsOneWidget);
+    expect(find.text('删除帖子'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('delete-media-0')));
+    await tester.tap(find.byKey(const ValueKey('delete-media-2')));
+    await tester.pump();
+    expect(find.text('1/3'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('delete-selected-media')));
     await tester.pumpAndSettle();
 
     expect(controller.deletedMediaIds, ['media-1']);
@@ -318,42 +325,62 @@ void main() {
     expect(controller.sharedMediaIds, ['media-2']);
   });
 
-  testWidgets('保存显示目标相册，删除最后媒体转为整帖确认', (tester) async {
-    final original = _writeImage(tempDirectory, 'single.png');
+  testWidgets('保存面板默认全选并允许取消选择', (tester) async {
+    final originals = [
+      _writeImage(tempDirectory, 'save-0.png').path,
+      _writeImage(tempDirectory, 'save-1.png').path,
+    ];
     final controller = _FakeAppController()
       ..phase = AppPhase.ready
       ..posts = [
-        _postWithMedia(
-          const [(width: 1080, height: 1350)],
-          localOriginalPaths: [original.path],
-        ),
+        _postWithMedia(const [
+          (width: 1080, height: 1350),
+          (width: 1080, height: 1350),
+        ], localOriginalPaths: originals),
       ];
     await _pumpDetail(tester, controller);
 
-    final media = find.byKey(const ValueKey('media-media-0'));
-    await tester.longPress(media);
+    await tester.tap(find.byKey(const ValueKey('save-post-media')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('save-current-media')));
+    expect(find.text('2/2'), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('save-media-1')));
+    await tester.pump();
+    expect(
+      find.descendant(of: find.byType(BottomSheet), matching: find.text('1/2')),
+      findsOneWidget,
+    );
+    await tester.tap(find.byKey(const ValueKey('save-selected-media')));
     await tester.pumpAndSettle();
 
     expect(controller.savedMediaIds, ['media-0']);
-    expect(find.textContaining('Pictures/PhotoBook'), findsOneWidget);
-
-    await tester.longPress(media);
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('delete-current-media')));
-    await tester.pumpAndSettle();
-
-    expect(find.text('删除这条帖子？'), findsOneWidget);
-    expect(controller.deletedMediaIds, ['media-0']);
-    expect(controller.deletedPostIds, isEmpty);
-
-    await tester.tap(find.byKey(const ValueKey('confirm-delete-post')));
-    await tester.pumpAndSettle();
-    expect(controller.deletedPostIds, ['post-1']);
+    expect(controller.mediaSaveRefreshCount, 1);
+    expect(find.text('已保存 1 项到系统相册'), findsOneWidget);
   });
 
-  testWidgets('GIF 转换进度持续显示到保存完成', (tester) async {
+  testWidgets('删除面板保持全选时直接删除整帖', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _postWithMedia(const [
+          (width: 1080, height: 1350),
+          (width: 1080, height: 1350),
+        ]),
+      ];
+    await _pumpDetail(tester, controller);
+
+    await tester.tap(find.byKey(const ValueKey('delete-post-media')));
+    await tester.pumpAndSettle();
+    expect(find.text('2/2'), findsOneWidget);
+    expect(find.text('删除帖子'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('delete-selected-media')));
+    await tester.pumpAndSettle();
+
+    expect(controller.deletedMediaIds, ['media-0', 'media-1']);
+    expect(find.text('帖子不存在'), findsOneWidget);
+  });
+
+  testWidgets('Live Photo 保存支持 GIF 且进度持续显示到保存完成', (tester) async {
     final pendingSave = Completer<void>();
     addTearDown(() {
       if (!pendingSave.isCompleted) pendingSave.complete();
@@ -373,38 +400,67 @@ void main() {
       ];
     await _pumpDetail(tester, controller);
 
-    await tester.tap(find.byTooltip('媒体操作'));
+    await tester.tap(find.byKey(const ValueKey('save-post-media')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('save-current-media')));
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('转换为 GIF 保存'));
+    expect(find.text('静态图'), findsOneWidget);
+    expect(find.text('GIF'), findsOneWidget);
+    expect(find.text('视频'), findsOneWidget);
+    await tester.tap(find.text('GIF'));
+    await tester.tap(find.byKey(const ValueKey('save-selected-media')));
     await tester.pump();
 
-    expect(find.text('正在转换并保存 GIF...'), findsOneWidget);
+    expect(find.text('正在保存 0/1'), findsOneWidget);
     await tester.pump(const Duration(seconds: 31));
-    expect(find.text('正在转换并保存 GIF...'), findsOneWidget);
+    expect(find.text('正在保存 0/1'), findsOneWidget);
 
     pendingSave.complete();
     await tester.pumpAndSettle();
     expect(controller.savedExportModes, [MediaExportMode.gif]);
   });
 
-  testWidgets('删除执行期间返回、遮罩和下拉都不能关闭确认抽屉', (tester) async {
+  testWidgets('保存部分失败时只保留失败项并允许重试', (tester) async {
+    final controller = _FakeAppController()
+      ..saveFailures.add('media-1')
+      ..phase = AppPhase.ready
+      ..posts = [
+        _postWithMedia(const [
+          (width: 1080, height: 1350),
+          (width: 1080, height: 1350),
+        ]),
+      ];
+    await _pumpDetail(tester, controller);
+
+    await tester.tap(find.byKey(const ValueKey('save-post-media')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('save-selected-media')));
+    await tester.pumpAndSettle();
+
+    expect(find.textContaining('1 项失败'), findsOneWidget);
+    expect(find.text('保存 1 项'), findsOneWidget);
+    await tester.tap(find.byKey(const ValueKey('save-selected-media')));
+    await tester.pumpAndSettle();
+
+    expect(controller.savedMediaIds, ['media-0', 'media-1', 'media-1']);
+    expect(controller.mediaSaveRefreshCount, 1);
+    expect(find.text('已保存 2 项到系统相册'), findsOneWidget);
+  });
+
+  testWidgets('删除执行期间返回、遮罩和下拉都不能关闭选择面板', (tester) async {
     final pendingDelete = Completer<void>();
     addTearDown(() {
       if (!pendingDelete.isCompleted) pendingDelete.complete();
     });
     final controller = _FakeAppController()
-      ..deletePostCompleter = pendingDelete
+      ..deleteSelectionCompleter = pendingDelete
       ..phase = AppPhase.ready
       ..posts = [
         _postWithMedia(const [(width: 1080, height: 1350)]),
       ];
     await _pumpDetail(tester, controller);
 
-    await tester.tap(find.byKey(const ValueKey('delete-detail-post')));
+    await tester.tap(find.byKey(const ValueKey('delete-post-media')));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('confirm-delete-post')));
+    await tester.tap(find.byKey(const ValueKey('delete-selected-media')));
     await tester.pump();
     expect(find.text('正在删除'), findsOneWidget);
 
@@ -418,7 +474,7 @@ void main() {
     expect(find.text('正在删除'), findsOneWidget);
     pendingDelete.complete();
     await tester.pumpAndSettle();
-    expect(controller.deletedPostIds, ['post-1']);
+    expect(controller.deletedMediaIds, ['media-0']);
   });
 
   testWidgets('分享准备期间返回、遮罩和下拉都不能关闭抽屉', (tester) async {
@@ -559,11 +615,12 @@ void main() {
 
     await tester.longPress(find.byKey(ValueKey('video-${second.path}')));
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('save-current-media')), findsOneWidget);
-    expect(find.text('删除该视频'), findsOneWidget);
+    expect(find.text('保存到系统相册'), findsNothing);
+    expect(find.byKey(const ValueKey('save-post-media')), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete-post-media')), findsOneWidget);
   });
 
-  testWidgets('视频初始化期间仍可长按打开媒体操作', (tester) async {
+  testWidgets('视频初始化期间长按不再打开媒体操作', (tester) async {
     final originalPlatform = VideoPlayerPlatform.instance;
     final videoPlatform = _FakeVideoPlayerPlatform(emitInitialized: false);
     VideoPlayerPlatform.instance = videoPlatform;
@@ -590,11 +647,10 @@ void main() {
     await tester.longPress(find.byKey(ValueKey('video-${video.path}')));
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.byKey(const ValueKey('save-current-media')), findsOneWidget);
-    expect(find.text('删除该视频'), findsOneWidget);
+    expect(find.text('保存到系统相册'), findsNothing);
   });
 
-  testWidgets('视频初始化失败后仍可长按打开媒体操作', (tester) async {
+  testWidgets('视频初始化失败后长按不再打开媒体操作', (tester) async {
     final originalPlatform = VideoPlayerPlatform.instance;
     final videoPlatform = _FakeVideoPlayerPlatform(creationFails: true);
     VideoPlayerPlatform.instance = videoPlatform;
@@ -622,8 +678,7 @@ void main() {
     await tester.longPress(find.byKey(ValueKey('video-${video.path}')));
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.byKey(const ValueKey('save-current-media')), findsOneWidget);
-    expect(find.text('删除该视频'), findsOneWidget);
+    expect(find.text('保存到系统相册'), findsNothing);
   });
 }
 
@@ -724,9 +779,11 @@ class _FakeAppController extends AppController {
   final List<MediaExportMode> savedExportModes = [];
   final List<String> deletedMediaIds = [];
   final List<String> deletedPostIds = [];
+  final Set<String> saveFailures = {};
+  int mediaSaveRefreshCount = 0;
   Completer<void>? shareCompleter;
   Completer<void>? saveCompleter;
-  Completer<void>? deletePostCompleter;
+  Completer<void>? deleteSelectionCompleter;
 
   @override
   Future<File> ensureOriginal(PostMedia media) async {
@@ -753,31 +810,42 @@ class _FakeAppController extends AppController {
     savedMediaIds.add(media.id);
     savedExportModes.add(exportMode);
     await saveCompleter?.future;
+    if (saveFailures.remove(media.id)) throw StateError('测试保存失败');
     return 'PhotoBook_${media.id}.jpg';
+  }
+
+  @override
+  Future<void> refreshAfterMediaSave() async {
+    mediaSaveRefreshCount += 1;
   }
 
   @override
   Future<void> deletePost(String postId) async {
     deletedPostIds.add(postId);
-    await deletePostCompleter?.future;
     posts = posts.where((post) => post.id != postId).toList(growable: false);
     notifyListeners();
   }
 
   @override
-  Future<DeleteMediaResult> deleteMedia(String mediaId) async {
-    deletedMediaIds.add(mediaId);
-    final post = posts.singleWhere(
-      (candidate) => candidate.media.any((media) => media.id == mediaId),
-    );
-    if (post.media.length == 1) {
-      return DeleteMediaResult(postId: post.id, postDeleteRequired: true);
+  Future<DeleteMediaSelectionResult> deleteMediaSelection(
+    String postId,
+    List<PostMedia> media,
+  ) async {
+    deletedMediaIds.addAll(media.map((item) => item.id));
+    await deleteSelectionCompleter?.future;
+    final post = posts.singleWhere((candidate) => candidate.id == postId);
+    final selectedIds = media.map((item) => item.id).toSet();
+    if (selectedIds.containsAll(post.media.map((item) => item.id))) {
+      posts = posts.where((item) => item.id != postId).toList(growable: false);
+      notifyListeners();
+      return DeleteMediaSelectionResult(postId: post.id, postDeleted: true);
     }
     final remaining = post.media
-        .where((media) => media.id != mediaId)
+        .where((item) => !selectedIds.contains(item.id))
         .toList(growable: false);
     final updated = ArchivedPost(
       id: post.id,
+      sourcePlatform: post.sourcePlatform,
       sourceUrl: post.sourceUrl,
       authorUsername: post.authorUsername,
       authorDisplayName: post.authorDisplayName,
@@ -796,7 +864,7 @@ class _FakeAppController extends AppController {
         if (candidate.id == post.id) updated else candidate,
     ];
     notifyListeners();
-    return DeleteMediaResult(postId: post.id, postDeleteRequired: false);
+    return DeleteMediaSelectionResult(postId: post.id, postDeleted: false);
   }
 }
 

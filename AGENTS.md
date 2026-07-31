@@ -31,6 +31,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - 配置相同规范化 `endpoint + bucket + prefix` 的设备视为同一资料库；Access Key 不参与资料库身份判断。
 - 每个安装生成独立 `device_id`。同步操作使用每设备单调递增 `seq`，每个远端设备维护独立高水位。
 - 媒体使用 SHA-256 内容寻址。帖子和单媒体删除通过本地墓碑及 R2 操作同步；删除只改变资料库可见状态，不物理删除 R2 内容寻址对象。
+- 详情页保存和删除都以界面可见的逻辑媒体为选择单位并默认全选；Live Photo 静态图和动态视频视为一项。批量保存逐项执行并允许部分成功；批量删除必须原子提交，选择全部媒体时写 `delete_post`，选择部分媒体时为选中逻辑媒体的全部物理文件写 `delete_media`。
 
 ## 安全约定
 
@@ -67,6 +68,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 ## 同步约定
 
 - 本地业务写入和同步 outbox 必须位于同一 SQLite 事务。
+- 同一帖子的一次批量删除必须在一个 SQLite 事务内校验并提交，任何选中媒体无效或 outbox 写入失败都不得留下部分删除。
 - 当前唯一同步格式只允许 `upsert_post`、`delete_post` 和 `delete_media`；收到其他操作必须拒绝且不得推进设备高水位。
 - `upsert_post` 必须携带帖子 `sourcePlatform`，以及每个媒体的 `logicalIndex + mediaRole`。所有设备必须先升级到支持当前格式的版本，再向同一资料库写入新操作。
 - 远端操作路径为 `<prefix>/devices/<device_id>/ops/<20 位 seq>.json`，不设置协议版本目录或版本字段。

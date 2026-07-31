@@ -59,7 +59,7 @@ data class OriginalMediaDescriptor(
     val mediaRole: String = MEDIA_ROLE_PRIMARY,
 )
 
-data class DeleteMediaResult(
+data class DeleteMediaSelectionResult(
     val postId: String,
-    val postDeleteRequired: Boolean,
+    val postDeleted: Boolean,
 )

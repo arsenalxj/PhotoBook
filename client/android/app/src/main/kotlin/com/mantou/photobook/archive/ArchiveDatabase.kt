@@ -528,91 +528,120 @@ class ArchiveDatabase(context: Context) :
         }
     }
 
-    fun deleteMedia(mediaId: String, deviceId: String): DeleteMediaResult {
+    fun deleteMediaSelection(
+        postId: String,
+        mediaIds: List<String>,
+        deviceId: String,
+    ): DeleteMediaSelectionResult {
         val db = writableDatabase
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
-            val media =
-                db.rawQuery(
-                    """
-                    SELECT m.post_id, p.source_platform, p.source_post_id, m.logical_index,
-                           (SELECT COUNT(DISTINCT logical_index) FROM post_media WHERE post_id = m.post_id)
-                    FROM post_media m
-                    JOIN posts p ON p.id = m.post_id
-                    WHERE m.id = ?
-                    """.trimIndent(),
-                    arrayOf(mediaId),
-                ).use { cursor ->
-                    if (!cursor.moveToFirst()) null
-                    else MediaOwner(
-                        postId = cursor.getString(0),
-                        sourcePlatform = cursor.getString(1),
-                        sourcePostId = cursor.getString(2),
-                        logicalIndex = cursor.getInt(3),
-                        mediaCount = cursor.getInt(4),
-                    )
-                } ?: throw ArchiveException("MEDIA_NOT_FOUND", "媒体不存在或已被删除")
-
-            if (media.mediaCount <= 1) {
-                db.setTransactionSuccessful()
-                return DeleteMediaResult(postId = media.postId, postDeleteRequired = true)
+            if (mediaIds.isEmpty() || mediaIds.toSet().size != mediaIds.size) {
+                throw ArchiveException("MEDIA_NOT_FOUND", "请选择有效媒体")
             }
-
-            val groupMediaIds =
+            val sourceIdentity = sourceIdentity(db, postId)
+                ?: throw ArchiveException("POST_NOT_FOUND", "帖子不存在或已被删除")
+            val physicalMedia =
                 db.rawQuery(
                     """
-                    SELECT id FROM post_media
-                    WHERE post_id = ? AND logical_index = ?
-                    ORDER BY CASE WHEN media_role = 'live_motion' THEN 0 ELSE 1 END, sort_index
+                    SELECT id, logical_index, media_role
+                    FROM post_media
+                    WHERE post_id = ?
+                    ORDER BY logical_index,
+                             CASE WHEN media_role = 'live_motion' THEN 0 ELSE 1 END,
+                             sort_index
                     """.trimIndent(),
-                    arrayOf(media.postId, media.logicalIndex.toString()),
+                    arrayOf(postId),
                 ).use { cursor ->
-                    buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+                    buildList {
+                        while (cursor.moveToNext()) {
+                            add(
+                                LogicalMediaRow(
+                                    mediaId = cursor.getString(0),
+                                    logicalIndex = cursor.getInt(1),
+                                    mediaRole = cursor.getString(2),
+                                ),
+                            )
+                        }
+                    }
                 }
-            var lastSeq = 0L
-            groupMediaIds.forEach { groupMediaId ->
-                val seq = nextLocalSeq(db)
-                val version = nextLogicalVersion(db)
-                writeEntityState(
+            if (physicalMedia.isEmpty()) {
+                throw ArchiveException("MEDIA_NOT_FOUND", "帖子没有可删除的媒体")
+            }
+            val logicalIndexes = physicalMedia.mapTo(linkedSetOf()) { it.logicalIndex }
+            val representativeIndexes =
+                physicalMedia
+                    .filter { it.mediaRole == MEDIA_ROLE_PRIMARY || it.mediaRole == MEDIA_ROLE_LIVE_STILL }
+                    .associate { it.mediaId to it.logicalIndex }
+            if (representativeIndexes.size != logicalIndexes.size ||
+                representativeIndexes.values.toSet() != logicalIndexes
+            ) {
+                throw ArchiveException("MEDIA_NOT_FOUND", "帖子媒体结构无效")
+            }
+            val selectedLogicalIndexes = mediaIds.map { mediaId ->
+                representativeIndexes[mediaId]
+                    ?: throw ArchiveException("MEDIA_NOT_FOUND", "选择包含无效媒体")
+            }.toSet()
+
+            if (selectedLogicalIndexes == logicalIndexes) {
+                deletePostInTransaction(
                     db,
-                    ENTITY_MEDIA,
-                    groupMediaId,
-                    STATE_DELETED,
-                    version,
+                    postId,
+                    sourceIdentity.first,
+                    sourceIdentity.second,
                     deviceId,
-                    seq,
                     now,
                 )
-                db.delete("post_media", "id = ?", arrayOf(groupMediaId))
-                insertSyncOperation(
-                    db = db,
-                    deviceId = deviceId,
-                    seq = seq,
-                    operation = "delete_media",
-                    entityId = groupMediaId,
-                    payloadJson = deleteMediaOperationJson(
+                db.setTransactionSuccessful()
+                return DeleteMediaSelectionResult(postId = postId, postDeleted = true)
+            }
+
+            var lastSeq = 0L
+            physicalMedia
+                .filter { selectedLogicalIndexes.contains(it.logicalIndex) }
+                .forEach { selectedMedia ->
+                    val seq = nextLocalSeq(db)
+                    val version = nextLogicalVersion(db)
+                    writeEntityState(
+                        db,
+                        ENTITY_MEDIA,
+                        selectedMedia.mediaId,
+                        STATE_DELETED,
+                        version,
                         deviceId,
                         seq,
-                        EntityVersion(version, deviceId, seq),
                         now,
-                        now,
-                        media.postId,
-                        groupMediaId,
-                    ),
-                    createdAt = now,
-                )
-                writeMeta(db, "local_sync_seq", seq.toString())
-                lastSeq = seq
-            }
-            updatePostMediaSummary(db, media.postId, deviceId, lastSeq, now)
+                    )
+                    db.delete("post_media", "id = ?", arrayOf(selectedMedia.mediaId))
+                    insertSyncOperation(
+                        db = db,
+                        deviceId = deviceId,
+                        seq = seq,
+                        operation = "delete_media",
+                        entityId = selectedMedia.mediaId,
+                        payloadJson = deleteMediaOperationJson(
+                            deviceId,
+                            seq,
+                            EntityVersion(version, deviceId, seq),
+                            now,
+                            now,
+                            postId,
+                            selectedMedia.mediaId,
+                        ),
+                        createdAt = now,
+                    )
+                    writeMeta(db, "local_sync_seq", seq.toString())
+                    lastSeq = seq
+                }
+            updatePostMediaSummary(db, postId, deviceId, lastSeq, now)
             db.delete(
                 "capture_jobs",
                 "source_platform = ? AND source_post_id = ? AND status = 'completed'",
-                arrayOf(media.sourcePlatform, media.sourcePostId),
+                arrayOf(sourceIdentity.first, sourceIdentity.second),
             )
             db.setTransactionSuccessful()
-            return DeleteMediaResult(postId = media.postId, postDeleteRequired = false)
+            return DeleteMediaSelectionResult(postId = postId, postDeleted = false)
         } finally {
             db.endTransaction()
         }
@@ -1751,12 +1780,10 @@ class ArchiveDatabase(context: Context) :
         val thumbnailPath: String?,
     )
 
-    private data class MediaOwner(
-        val postId: String,
-        val sourcePlatform: String,
-        val sourcePostId: String,
+    private data class LogicalMediaRow(
+        val mediaId: String,
         val logicalIndex: Int,
-        val mediaCount: Int,
+        val mediaRole: String,
     )
 
     private data class EntityStateSnapshot(

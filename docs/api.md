@@ -21,7 +21,7 @@ MethodChannel：`com.mantou.photobook/archive`
 | `syncNow` | 无 | 无 | 启动一次前台同步 |
 | `ensureOriginal` | `mediaId` | 本地文件路径 | 从当前 R2 按需恢复原媒体 |
 | `deletePost` | `postId` | 无 | 本地删除帖子并写入 `delete_post` outbox |
-| `deleteMedia` | `mediaId` | `postDeleteRequired` | 删除单媒体；只剩一个媒体时不写入并请求整帖删除确认 |
+| `deleteMediaSelection` | `postId + mediaIds` | `postId + postDeleted` | 原子删除选中的逻辑媒体；全选写 `delete_post`，部分选择为组内物理媒体写 `delete_media` |
 | `shareMedia` | `mediaIds` | 无 | 确保原媒体存在后打开 Android 系统分享面板 |
 | `saveMedia` | `mediaId` | 保存后的显示名称 | 将原媒体复制到系统相册 |
 
@@ -30,6 +30,10 @@ EventChannel：`com.mantou.photobook/archive_events`
 事件类型为 `archiveChanged`、`jobChanged`、`runStarted` 和 `runFinished`。事件只用于驱动刷新和即时反馈，不作为权威状态；`jobChanged` 不携带任务快照，Flutter 收到后合并连续刷新请求并重新查询 SQLite。阶段或媒体项进度落库、入队、取消、删除、重试和任务结束时发送 `jobChanged`，不复用 `archiveChanged` 上报下载进度。`runFinished` 可携带脱敏后的同步错误，冷启动仍从 `app_meta.last_sync_error` 恢复错误状态。
 
 `getRuntimeState.instagramSession` 只返回非敏感摘要：未配置时为 `null`，否则为 `{status: "ready" | "needs_refresh", username, validatedAt}`。Flutter 侧不存在读取 Cookie 的接口。
+
+详情页批量保存由 Flutter 按帖子顺序逐项调用 `saveMedia`。普通媒体使用 `original`；完整 Live Photo 使用本次选择的统一 `static / gif / video` 模式；降级 Live Photo 固定使用 `static`。单项失败不回滚已经写入系统相册的副本，界面保留失败项供重试。
+
+`deleteMediaSelection.mediaIds` 只能包含该帖子界面可见的逻辑媒体 ID，不能直接传入 `live_motion`。Android 必须在同一 SQLite 事务中校验完整选择：选择覆盖全部 `logical_index` 时只写一个 `delete_post`，否则对每个选中逻辑组的静态图和动态视频分别写现有 `delete_media`。校验或 outbox 写入失败时整批回滚。
 
 ## 2. App 更新
 

@@ -189,10 +189,23 @@ class AppController extends ChangeNotifier {
     await _reloadLocalState();
   }
 
-  Future<DeleteMediaResult> deleteMedia(String mediaId) async {
+  Future<DeleteMediaSelectionResult> deleteMediaSelection(
+    String postId,
+    List<PostMedia> media,
+  ) async {
     if (!_isAndroid) throw StateError('媒体删除仅支持 Android');
-    final result = await _runtimeBridge.deleteMedia(mediaId);
-    await _reloadLocalState();
+    final mediaIds = media.map((item) => item.id).toSet();
+    final result = await _runtimeBridge.deleteMediaSelection(
+      postId,
+      mediaIds.toList(growable: false),
+    );
+    try {
+      await _reloadLocalState();
+    } on Object {
+      _applyDeletedMediaSelection(postId, mediaIds, result.postDeleted);
+      _publishMessage('删除已完成，但列表刷新失败，稍后会自动重试');
+      unawaited(_retryLocalStateReload());
+    }
     return result;
   }
 
@@ -213,12 +226,16 @@ class AppController extends ChangeNotifier {
     MediaExportMode exportMode = MediaExportMode.original,
   }) async {
     if (!_isAndroid) throw StateError('保存到系统相册仅支持 Android');
-    final displayName = await _runtimeBridge.saveMedia(
-      media.id,
-      exportMode: exportMode.wireValue,
-    );
-    await _reloadLocalState();
-    return displayName;
+    return _runtimeBridge.saveMedia(media.id, exportMode: exportMode.wireValue);
+  }
+
+  Future<void> refreshAfterMediaSave() async {
+    try {
+      await _reloadLocalState();
+    } on Object {
+      _publishMessage('媒体已保存，但本地状态刷新失败');
+      unawaited(_retryLocalStateReload());
+    }
   }
 
   Future<void> setForeground(bool value) async {
@@ -279,6 +296,60 @@ class AppController extends ChangeNotifier {
       }
     } finally {
       _localReloadFuture = null;
+    }
+  }
+
+  void _applyDeletedMediaSelection(
+    String postId,
+    Set<String> mediaIds,
+    bool postDeleted,
+  ) {
+    final postIndex = posts.indexWhere((post) => post.id == postId);
+    if (postIndex < 0) return;
+    if (postDeleted) {
+      posts = [
+        for (final post in posts)
+          if (post.id != postId) post,
+      ];
+      notifyListeners();
+      return;
+    }
+
+    final post = posts[postIndex];
+    final remaining = post.media
+        .where((item) => !mediaIds.contains(item.id))
+        .toList(growable: false);
+    if (remaining.isEmpty) return;
+    final coverMediaId = remaining.any((item) => item.id == post.coverMediaId)
+        ? post.coverMediaId
+        : remaining.first.id;
+    final updated = ArchivedPost(
+      id: post.id,
+      sourcePlatform: post.sourcePlatform,
+      sourceUrl: post.sourceUrl,
+      authorUsername: post.authorUsername,
+      authorDisplayName: post.authorDisplayName,
+      caption: post.caption,
+      publishedAt: post.publishedAt,
+      locationName: post.locationName,
+      coverMediaId: coverMediaId,
+      mediaCount: remaining.length,
+      localAvatarPath: post.localAvatarPath,
+      media: remaining,
+    );
+    posts = [
+      for (final candidate in posts)
+        if (candidate.id == postId) updated else candidate,
+    ];
+    notifyListeners();
+  }
+
+  Future<void> _retryLocalStateReload() async {
+    await Future<void>.delayed(Duration.zero);
+    try {
+      await _reloadLocalState();
+    } on Object {
+      // A later foreground or archive event will request another refresh.
     }
   }
 

@@ -76,7 +76,7 @@ internal class ArchivePlatformHandler(
                 }
                 "ensureOriginal" -> ensureOriginal(call, result)
                 "deletePost" -> deletePost(call, result)
-                "deleteMedia" -> deleteMedia(call, result)
+                "deleteMediaSelection" -> deleteMediaSelection(call, result)
                 "shareMedia" -> shareMedia(call, result)
                 "saveMedia" -> saveMedia(call, result)
                 "syncNow" -> {
@@ -452,21 +452,26 @@ internal class ArchivePlatformHandler(
         result.success(null)
     }
 
-    private fun deleteMedia(call: MethodCall, result: MethodChannel.Result) {
-        val mediaId = call.argument<String>("mediaId").orEmpty()
-        if (mediaId.isBlank()) throw ArchiveException("MEDIA_NOT_FOUND", "媒体不存在")
+    private fun deleteMediaSelection(call: MethodCall, result: MethodChannel.Result) {
+        val postId = call.argument<String>("postId").orEmpty()
+        val mediaIds = call.argument<List<String>>("mediaIds").orEmpty()
+        if (postId.isBlank()) throw ArchiveException("POST_NOT_FOUND", "帖子不存在")
         ArchiveExecutionGate.acquire()
         val deleted =
             try {
-                database.deleteMedia(mediaId, DeviceIdentity(applicationContext).getOrCreate())
+                database.deleteMediaSelection(
+                    postId,
+                    mediaIds,
+                    DeviceIdentity(applicationContext).getOrCreate(),
+                )
             } finally {
                 ArchiveExecutionGate.release()
             }
-        if (!deleted.postDeleteRequired) afterArchiveMutation()
+        afterArchiveMutation()
         result.success(
             mapOf(
                 "postId" to deleted.postId,
-                "postDeleteRequired" to deleted.postDeleteRequired,
+                "postDeleted" to deleted.postDeleted,
             ),
         )
     }
