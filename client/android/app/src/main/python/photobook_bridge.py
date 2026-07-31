@@ -8,6 +8,7 @@ from typing import Any
 
 import instaloader
 from instaloader import exceptions as instaloader_exceptions
+from requests import exceptions as requests_exceptions
 
 
 _SHORTCODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
@@ -113,6 +114,7 @@ def _post_payload(post: Any, *, expected_shortcode: str) -> dict[str, Any]:
         raise RuntimeError(_error_json("INVALID_RESPONSE", "Instagram 帖子没有媒体"))
 
     return {
+        "sourcePlatform": "instagram",
         "sourcePostId": shortcode,
         "sourceUrl": f"https://www.instagram.com/{_post_kind(post, raw)}/{shortcode}/",
         "authorUsername": username,
@@ -189,6 +191,8 @@ def _media_payload(media: Any, index: int) -> dict[str, Any]:
     width, height = _dimensions(raw)
     return {
         "sortIndex": index,
+        "logicalIndex": index,
+        "mediaRole": "primary",
         "mediaType": "video" if is_video else "image",
         "url": _required_text(url, f"第 {index + 1} 个媒体地址"),
         "width": width,
@@ -316,6 +320,8 @@ def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]
             (
                 instaloader_exceptions.ConnectionException,
                 instaloader_exceptions.QueryReturnedBadRequestException,
+                requests_exceptions.ConnectionError,
+                requests_exceptions.Timeout,
             ),
         )
         for item in chain

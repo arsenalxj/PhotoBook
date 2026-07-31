@@ -7,6 +7,7 @@ import android.content.Context
 import android.content.ContentValues
 import android.content.Intent
 import android.database.Cursor
+import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Environment
 import android.os.Looper
@@ -170,6 +171,18 @@ class ArchiveMediaActionsTest {
     }
 
     @Test
+    fun `media store returns the actual display name assigned by provider`() {
+        Robolectric.setupContentProvider(
+            RenamedMediaProvider::class.java,
+            MediaStore.AUTHORITY,
+        )
+
+        val name = actions.save(media[0].id)
+
+        assertEquals("PhotoBook_renamed.jpg", name)
+    }
+
+    @Test
     @Config(sdk = [28])
     fun `legacy save returns the actual unique file name`() {
         clearLegacySavedFiles()
@@ -181,6 +194,17 @@ class ArchiveMediaActionsTest {
         assertEquals("PhotoBook_${SOURCE_POST_ID}_1_2.jpg", secondName)
         assertArrayEquals(media[0].bytes, File(legacyAlbumDirectory(), firstName).readBytes())
         assertArrayEquals(media[0].bytes, File(legacyAlbumDirectory(), secondName).readBytes())
+    }
+
+    @Test
+    @Config(sdk = [28])
+    fun `live photo video export saves only the motion object`() {
+        clearLegacySavedFiles()
+
+        val name = actions.save(media[0].id, ArchiveMediaActions.EXPORT_VIDEO)
+
+        assertEquals("PhotoBook_${SOURCE_POST_ID}_1.mp4", name)
+        assertArrayEquals(media[2].bytes, File(legacyVideoAlbumDirectory(), name).readBytes())
     }
 
     @Test
@@ -239,10 +263,18 @@ class ArchiveMediaActionsTest {
             "PhotoBook",
         )
 
+    private fun legacyVideoAlbumDirectory(): File =
+        File(
+            Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES),
+            "PhotoBook",
+        )
+
     private fun clearLegacySavedFiles() {
-        legacyAlbumDirectory().listFiles()
-            ?.filter { it.name.startsWith("PhotoBook_${SOURCE_POST_ID}_") }
-            ?.forEach(File::delete)
+        listOf(legacyAlbumDirectory(), legacyVideoAlbumDirectory()).forEach { directory ->
+            directory.listFiles()
+                ?.filter { it.name.startsWith("PhotoBook_${SOURCE_POST_ID}_") }
+                ?.forEach(File::delete)
+        }
     }
 
     private fun seedPost(): List<SeededMedia> {
@@ -283,6 +315,13 @@ class ArchiveMediaActionsTest {
                             thumbnailSha256 = thumbnailSha,
                             localOriginalPath = original.absolutePath,
                             localThumbnailPath = thumbnail.absolutePath,
+                            logicalIndex = if (index == 2) 0 else index,
+                            mediaRole =
+                                when (index) {
+                                    0 -> MEDIA_ROLE_LIVE_STILL
+                                    2 -> MEDIA_ROLE_LIVE_MOTION
+                                    else -> MEDIA_ROLE_PRIMARY
+                                },
                         ),
                 )
             }
@@ -363,6 +402,52 @@ class ArchiveMediaActionsTest {
             selectionArgs: Array<out String>?,
             sortOrder: String?,
         ): Cursor? = null
+
+        override fun getType(uri: Uri): String? = null
+    }
+
+    class RenamedMediaProvider : ContentProvider() {
+        private lateinit var output: File
+
+        override fun onCreate(): Boolean {
+            output = File(requireNotNull(context).cacheDir, "renamed-media-store-output")
+            return true
+        }
+
+        override fun insert(uri: Uri, values: ContentValues?): Uri =
+            ContentUris.withAppendedId(uri, 1)
+
+        override fun update(
+            uri: Uri,
+            values: ContentValues?,
+            selection: String?,
+            selectionArgs: Array<out String>?,
+        ): Int = 1
+
+        override fun delete(
+            uri: Uri,
+            selection: String?,
+            selectionArgs: Array<out String>?,
+        ): Int = 1
+
+        override fun openFile(uri: Uri, mode: String): ParcelFileDescriptor =
+            ParcelFileDescriptor.open(
+                output,
+                ParcelFileDescriptor.MODE_CREATE or
+                    ParcelFileDescriptor.MODE_TRUNCATE or
+                    ParcelFileDescriptor.MODE_READ_WRITE,
+            )
+
+        override fun query(
+            uri: Uri,
+            projection: Array<out String>?,
+            selection: String?,
+            selectionArgs: Array<out String>?,
+            sortOrder: String?,
+        ): Cursor =
+            MatrixCursor(arrayOf(MediaStore.MediaColumns.DISPLAY_NAME)).apply {
+                addRow(arrayOf("PhotoBook_renamed.jpg"))
+            }
 
         override fun getType(uri: Uri): String? = null
     }

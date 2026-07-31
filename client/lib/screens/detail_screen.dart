@@ -48,11 +48,15 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
 
     return Scaffold(
       appBar: AppBar(
-        title: Text('@${post.authorUsername}'),
+        title: Text(
+          post.sourcePlatform == PostSourcePlatform.instagram
+              ? '@${post.authorUsername}'
+              : post.authorDisplayName,
+        ),
         actions: [
           IconButton(
             key: const ValueKey('share-post-media'),
-            tooltip: '分享原媒体',
+            tooltip: '分享媒体',
             onPressed: () => _sharePost(post!, currentMedia.id),
             icon: const Icon(Icons.share_outlined),
           ),
@@ -105,7 +109,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                   _currentMediaIndex = index;
                 });
               },
-              onLongPress: (media) => _handleMediaLongPress(post!, media),
+              onMediaAction: (media) => _handleMediaLongPress(post!, media),
             ),
           ),
           Padding(
@@ -157,7 +161,11 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
         context: context,
         post: post,
         initialMediaId: currentMediaId,
-        onShare: ref.read(appControllerProvider).shareMedia,
+        onShare: (media, exportMode) async {
+          await ref
+              .read(appControllerProvider)
+              .shareMedia(media, exportMode: exportMode);
+        },
       );
 
   Future<void> _deletePost(ArchivedPost post) async {
@@ -176,33 +184,67 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     if (!mounted || action == null) return;
     switch (action) {
       case MediaAction.save:
-        await _saveMedia(media);
+        var exportMode = MediaExportMode.original;
+        if (media.isLivePhoto) {
+          if (!media.hasLiveMotion) {
+            exportMode = MediaExportMode.staticImage;
+          } else {
+            final selected = await showLivePhotoExportSheet(
+              context: context,
+              forShare: false,
+            );
+            if (selected == null) return;
+            exportMode = selected;
+          }
+        }
+        await _saveMedia(media, exportMode);
       case MediaAction.delete:
         await _deleteMedia(post, media);
     }
   }
 
-  Future<void> _saveMedia(PostMedia media) async {
+  Future<void> _saveMedia(
+    PostMedia media, [
+    MediaExportMode exportMode = MediaExportMode.original,
+  ]) async {
     final messenger = ScaffoldMessenger.of(context);
+    final isGif = exportMode == MediaExportMode.gif;
     messenger
       ..hideCurrentSnackBar()
       ..showSnackBar(
-        const SnackBar(
-          content: Text('正在准备原文件...'),
-          duration: Duration(seconds: 30),
+        SnackBar(
+          content: Row(
+            children: [
+              const SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+              const SizedBox(width: 12),
+              Expanded(child: Text(isGif ? '正在转换并保存 GIF...' : '正在准备媒体...')),
+            ],
+          ),
+          duration: const Duration(days: 1),
         ),
       );
     try {
       final displayName = await ref
           .read(appControllerProvider)
-          .saveMedia(media);
+          .saveMedia(media, exportMode: exportMode);
       if (!mounted) return;
-      final album = media.mediaType == PostMediaType.video
+      final album =
+          exportMode == MediaExportMode.video ||
+              (exportMode == MediaExportMode.original &&
+                  media.mediaType == PostMediaType.video)
           ? 'Movies/PhotoBook'
           : 'Pictures/PhotoBook';
       messenger
         ..hideCurrentSnackBar()
-        ..showSnackBar(SnackBar(content: Text('已保存到 $album：$displayName')));
+        ..showSnackBar(
+          SnackBar(
+            content: Text('已保存${isGif ? ' GIF' : ''}到 $album：$displayName'),
+            duration: const Duration(seconds: 8),
+          ),
+        );
     } on Object catch (error) {
       if (!mounted) return;
       messenger
@@ -311,7 +353,9 @@ class _AuthorHeader extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '@${post.authorUsername}',
+                  post.sourcePlatform == PostSourcePlatform.instagram
+                      ? '@${post.authorUsername}'
+                      : '小红书 · ${post.authorUsername}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: AppTheme.muted, fontSize: 13),
@@ -330,13 +374,13 @@ class _LazyMediaViewer extends ConsumerStatefulWidget {
     required this.post,
     required this.currentMediaId,
     required this.onMediaChanged,
-    required this.onLongPress,
+    required this.onMediaAction,
   });
 
   final ArchivedPost post;
   final String currentMediaId;
   final void Function(String mediaId, int index) onMediaChanged;
-  final ValueChanged<PostMedia> onLongPress;
+  final ValueChanged<PostMedia> onMediaAction;
 
   @override
   ConsumerState<_LazyMediaViewer> createState() => _LazyMediaViewerState();
@@ -346,6 +390,7 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
   final Map<String, String> _originalPaths = {};
   final Map<String, String> _errors = {};
   final Set<String> _downloading = {};
+  final Set<String> _livePressed = {};
   late final PageController _pageController;
 
   @override
@@ -367,6 +412,10 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
   void didUpdateWidget(_LazyMediaViewer oldWidget) {
     super.didUpdateWidget(oldWidget);
     final activeIds = widget.post.media.map((item) => item.id).toSet();
+    final activeMotionIds = widget.post.media
+        .map((item) => item.liveMotion?.id)
+        .whereType<String>();
+    activeIds.addAll(activeMotionIds);
     _originalPaths.removeWhere((mediaId, _) => !activeIds.contains(mediaId));
     _errors.removeWhere((mediaId, _) => !activeIds.contains(mediaId));
     _downloading.removeWhere((mediaId) => !activeIds.contains(mediaId));
@@ -389,6 +438,13 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
       final localPath = media.localOriginalPath;
       if (localPath != null && File(localPath).existsSync()) {
         _originalPaths[media.id] = localPath;
+      }
+      final motion = media.liveMotion;
+      final motionPath = motion?.localOriginalPath;
+      if (motion != null &&
+          motionPath != null &&
+          File(motionPath).existsSync()) {
+        _originalPaths[motion.id] = motionPath;
       }
     }
   }
@@ -421,6 +477,21 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
     }
   }
 
+  Future<void> _ensureLiveMotion(PostMedia media) async {
+    final motion = media.liveMotion;
+    if (motion == null || _originalPaths.containsKey(motion.id)) return;
+    if (!_downloading.add(motion.id)) return;
+    try {
+      final file = await ref.read(appControllerProvider).ensureOriginal(motion);
+      if (!mounted) return;
+      setState(() => _originalPaths[motion.id] = file.path);
+    } on Object catch (error) {
+      if (mounted) setState(() => _errors[motion.id] = error.toString());
+    } finally {
+      if (mounted) setState(() => _downloading.remove(motion.id));
+    }
+  }
+
   @override
   void dispose() {
     _pageController.dispose();
@@ -443,6 +514,8 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
               final mediaId = widget.post.media[index].id;
               widget.onMediaChanged(mediaId, index);
               unawaited(_ensureMedia(mediaId));
+              final media = widget.post.media[index];
+              if (media.hasLiveMotion) unawaited(_ensureLiveMotion(media));
             },
             itemBuilder: (context, index) {
               final media = widget.post.media[index];
@@ -470,6 +543,17 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
                 ),
               ),
             ),
+          Positioned(
+            right: 8,
+            bottom: 8,
+            child: IconButton.filledTonal(
+              tooltip: '媒体操作',
+              onPressed: currentIndex < 0
+                  ? null
+                  : () => widget.onMediaAction(widget.post.media[currentIndex]),
+              icon: const Icon(Icons.more_vert),
+            ),
+          ),
         ],
       ),
     );
@@ -487,13 +571,60 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
           width: media.width,
           height: media.height,
           isCurrent: isCurrent,
-          onLongPress: () => widget.onLongPress(media),
+          onLongPress: () => widget.onMediaAction(media),
+        );
+      }
+      if (media.isLivePhoto) {
+        final motionPath = media.liveMotion == null
+            ? null
+            : _originalPaths[media.liveMotion!.id];
+        final playing = _livePressed.contains(media.id) && motionPath != null;
+        return GestureDetector(
+          key: ValueKey('live-${media.id}'),
+          behavior: HitTestBehavior.opaque,
+          onLongPressStart: (_) {
+            setState(() => _livePressed.add(media.id));
+            unawaited(_ensureLiveMotion(media));
+          },
+          onLongPressEnd: (_) => setState(() => _livePressed.remove(media.id)),
+          onLongPressCancel: () =>
+              setState(() => _livePressed.remove(media.id)),
+          child: playing
+              ? _LocalVideo(
+                  key: ValueKey('live-motion-${media.liveMotion!.id}'),
+                  file: File(motionPath),
+                  thumbnailPath: media.localThumbnailPath,
+                  width: media.width,
+                  height: media.height,
+                  isCurrent: isCurrent,
+                  onLongPress: () {},
+                )
+              : Stack(
+                  fit: StackFit.expand,
+                  children: [
+                    _MediaPlaceholder(thumbnailPath: media.localThumbnailPath),
+                    Image.file(
+                      file,
+                      fit: BoxFit.contain,
+                      gaplessPlayback: true,
+                    ),
+                    if (media.hasLiveMotion)
+                      const Positioned(
+                        left: 12,
+                        top: 12,
+                        child: Icon(
+                          Icons.motion_photos_on,
+                          color: Colors.white,
+                        ),
+                      ),
+                  ],
+                ),
         );
       }
       return GestureDetector(
         key: ValueKey('media-${media.id}'),
         behavior: HitTestBehavior.opaque,
-        onLongPress: () => widget.onLongPress(media),
+        onLongPress: () => widget.onMediaAction(media),
         child: Stack(
           fit: StackFit.expand,
           children: [
@@ -512,7 +643,7 @@ class _LazyMediaViewerState extends ConsumerState<_LazyMediaViewer> {
     return GestureDetector(
       key: ValueKey('media-${media.id}'),
       behavior: HitTestBehavior.opaque,
-      onLongPress: () => widget.onLongPress(media),
+      onLongPress: () => widget.onMediaAction(media),
       child: Stack(
         fit: StackFit.expand,
         children: [

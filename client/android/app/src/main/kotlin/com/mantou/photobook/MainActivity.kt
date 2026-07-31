@@ -8,8 +8,9 @@ import androidx.core.app.ActivityCompat
 import com.mantou.photobook.archive.ArchiveDatabase
 import com.mantou.photobook.archive.ArchiveForegroundService
 import com.mantou.photobook.archive.ArchiveEventBus
+import com.mantou.photobook.archive.ArchiveLinkImporter
 import com.mantou.photobook.archive.ArchivePlatformHandler
-import com.mantou.photobook.archive.InstagramShareParser
+import com.mantou.photobook.archive.AutomaticClipboardImportGate
 import com.mantou.photobook.update.UpdateEventBus
 import com.mantou.photobook.update.UpdatePlatformHandler
 import io.flutter.embedding.android.FlutterActivity
@@ -17,6 +18,7 @@ import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.EventChannel
 
 class MainActivity : FlutterActivity() {
+    private val automaticClipboardImportGate = AutomaticClipboardImportGate()
     private var archivePlatformHandler: ArchivePlatformHandler? = null
     private var updatePlatformHandler: UpdatePlatformHandler? = null
 
@@ -35,7 +37,8 @@ class MainActivity : FlutterActivity() {
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
         val messenger = flutterEngine.dartExecutor.binaryMessenger
-        archivePlatformHandler = ArchivePlatformHandler(this, messenger)
+        archivePlatformHandler =
+            ArchivePlatformHandler(this, messenger, automaticClipboardImportGate)
         updatePlatformHandler = UpdatePlatformHandler(this, messenger)
         EventChannel(messenger, ArchivePlatformHandler.EVENT_CHANNEL)
             .setStreamHandler(ArchiveEventBus)
@@ -62,10 +65,11 @@ class MainActivity : FlutterActivity() {
 
     private fun handleShareIntent(intent: Intent?) {
         if (intent?.action != Intent.ACTION_SEND || intent.type != "text/plain") return
+        automaticClipboardImportGate.markSystemShareReceived()
         val sharedText = intent.getStringExtra(Intent.EXTRA_TEXT).orEmpty()
-        val link = InstagramShareParser.parse(sharedText) ?: return
         ArchiveDatabase(this).use { database ->
-            val job = database.enqueue(link.canonicalUrl, link.sourcePostId)
+            val request = ArchiveLinkImporter.parse(sharedText) ?: return
+            val job = ArchiveLinkImporter.enqueue(database, request)
             ArchiveEventBus.emitJobChanged()
             if (job.status != "completed") ArchiveForegroundService.start(this)
         }

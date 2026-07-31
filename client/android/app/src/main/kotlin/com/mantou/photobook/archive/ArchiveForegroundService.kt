@@ -48,13 +48,7 @@ class ArchiveForegroundService : Service() {
                 acquired = true
                 database.recoverInterruptedJobs()
                 ArchiveRunner(this, database).runPending { job, current, total ->
-                    val text =
-                        if (total > 0) {
-                            "正在保存 ${job.sourcePostId}（$current/$total）"
-                        } else {
-                            "正在保存 ${job.sourcePostId}"
-                        }
-                    updateNotification(text, current, total)
+                    updateNotification(archiveProgressText(job, current, total), current, total)
                 }
                 updateNotification("正在同步 R2", 0, 0)
                 syncAttempted = true
@@ -153,7 +147,7 @@ class ArchiveForegroundService : Service() {
                 CHANNEL_ID,
                 "帖子保存",
                 NotificationManager.IMPORTANCE_LOW,
-            ).apply { description = "显示正在保存的 Instagram 帖子" }
+            ).apply { description = "显示正在保存的平台帖子" }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
@@ -175,4 +169,11 @@ class ArchiveForegroundService : Service() {
             )
         }
     }
+}
+
+internal fun archiveProgressText(job: CaptureJob, current: Int, total: Int): String {
+    val target =
+        job.sourcePostId?.let { " $it" }
+            ?: if (job.sourcePlatform == SOURCE_PLATFORM_XIAOHONGSHU) "小红书帖子" else "帖子"
+    return if (total > 0) "正在保存$target（$current/$total）" else "正在保存$target"
 }

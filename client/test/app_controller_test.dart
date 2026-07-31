@@ -47,6 +47,47 @@ void main() {
     controller.dispose();
     await runtime.close();
   });
+
+  test('进入前台时使用自动模式检查剪贴板', () async {
+    final database = _ImmediateDatabase();
+    final runtime = _FakeRuntimeBridge();
+    final controller = AppController(
+      database: database,
+      runtimeBridge: runtime,
+      isAndroid: true,
+    );
+    await controller.initialize();
+
+    await controller.setForeground(true);
+    await controller.setForeground(true);
+
+    expect(runtime.clipboardAutomaticCalls, [true]);
+    expect(controller.message, isNull);
+
+    await controller.setForeground(false);
+    await controller.setForeground(true);
+
+    expect(runtime.clipboardAutomaticCalls, [true, true]);
+    controller.dispose();
+    await runtime.close();
+  });
+}
+
+class _ImmediateDatabase extends AppDatabase {
+  @override
+  Future<void> initialize() async {}
+
+  @override
+  Future<List<ArchivedPost>> listPosts() async => const [];
+
+  @override
+  Future<List<ArchiveJob>> listVisibleJobs() async => const [];
+
+  @override
+  Future<SyncStatus> readSyncStatus() async => const SyncStatus();
+
+  @override
+  Future<void> close() async {}
 }
 
 class _DelayedDatabase extends AppDatabase {
@@ -92,6 +133,7 @@ class _DelayedDatabase extends AppDatabase {
 class _FakeRuntimeBridge extends ArchiveRuntimeBridge {
   final StreamController<ArchiveRuntimeEvent> _events =
       StreamController<ArchiveRuntimeEvent>.broadcast(sync: true);
+  final List<bool> clipboardAutomaticCalls = [];
 
   @override
   Stream<ArchiveRuntimeEvent> get events => _events.stream;
@@ -102,6 +144,14 @@ class _FakeRuntimeBridge extends ArchiveRuntimeBridge {
 
   @override
   Future<void> syncNow() async {}
+
+  @override
+  Future<ClipboardImportOutcome> importClipboard({
+    required bool automatic,
+  }) async {
+    clipboardAutomaticCalls.add(automatic);
+    return ClipboardImportOutcome.unsupported;
+  }
 
   void emitJobChanged() {
     _events.add(

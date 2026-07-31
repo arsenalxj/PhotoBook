@@ -25,12 +25,20 @@ class ArchiveMediaActions(
     },
 ) {
     private val applicationContext = activity.applicationContext
+    private val gifExporter = LivePhotoGifExporter(applicationContext)
 
-    fun share(mediaIds: List<String>, onComplete: (Exception?) -> Unit) {
+    fun share(
+        mediaIds: List<String>,
+        exportMode: String = EXPORT_ORIGINAL,
+        onComplete: (Exception?) -> Unit,
+    ) {
         if (mediaIds.isEmpty()) {
             throw ArchiveException("SHARE_SELECTION_EMPTY", "请至少选择一个媒体")
         }
-        val originals = mediaIds.distinct().map(::resolveOriginal)
+        if (exportMode != EXPORT_ORIGINAL && mediaIds.distinct().size != 1) {
+            throw ArchiveException("SHARE_SELECTION_INVALID", "Live Photo 每次只能分享一个")
+        }
+        val originals = mediaIds.distinct().map { resolveExport(it, exportMode) }
         val videoCount = originals.count { it.descriptor.mediaType == "video" }
         if (videoCount != 0 && (videoCount != 1 || originals.size != 1)) {
             throw ArchiveException(
@@ -71,7 +79,7 @@ class ArchiveMediaActions(
         shareIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         activity.runOnUiThread {
             try {
-                startChooser(Intent.createChooser(shareIntent, "分享原媒体"))
+                startChooser(Intent.createChooser(shareIntent, "分享媒体"))
                 onComplete(null)
             } catch (error: Exception) {
                 onComplete(error)
@@ -79,10 +87,10 @@ class ArchiveMediaActions(
         }
     }
 
-    fun save(mediaId: String): String {
-        val original = resolveOriginal(mediaId)
+    fun save(mediaId: String, exportMode: String = EXPORT_ORIGINAL): String {
+        val original = resolveExport(mediaId, exportMode)
         val displayName =
-            "PhotoBook_${original.descriptor.sourcePostId}_${original.descriptor.sortIndex + 1}" +
+            "PhotoBook_${original.descriptor.sourcePostId}_${original.descriptor.logicalIndex + 1}" +
                 extensionForMime(original.descriptor.mimeType)
         return try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
@@ -103,6 +111,37 @@ class ArchiveMediaActions(
                 ?: throw ArchiveException("MEDIA_NOT_FOUND", "媒体不存在或已被删除")
         val file = R2SyncEngine(applicationContext, database).ensureOriginal(mediaId)
         return ResolvedOriginal(descriptor, file)
+    }
+
+    private fun resolveExport(mediaId: String, exportMode: String): ResolvedOriginal {
+        if (exportMode !in SUPPORTED_EXPORT_MODES) {
+            throw ArchiveException("MEDIA_EXPORT_MODE_INVALID", "不支持的媒体导出方式")
+        }
+        if (exportMode == EXPORT_ORIGINAL || exportMode == EXPORT_STATIC) {
+            return resolveOriginal(mediaId)
+        }
+        val motionDescriptor =
+            database.liveMotionDescriptor(mediaId)
+                ?: throw ArchiveException("LIVE_MOTION_UNAVAILABLE", "该 Live Photo 只有静态图")
+        val motionFile = R2SyncEngine(applicationContext, database).ensureOriginal(motionDescriptor.mediaId)
+        return when (exportMode) {
+            EXPORT_VIDEO -> ResolvedOriginal(motionDescriptor, motionFile)
+            EXPORT_GIF -> {
+                val gif = gifExporter.export(
+                    motionFile,
+                    "PhotoBook_${motionDescriptor.sourcePostId}_${motionDescriptor.logicalIndex + 1}",
+                )
+                ResolvedOriginal(
+                    motionDescriptor.copy(
+                        mediaType = "image",
+                        mimeType = "image/gif",
+                        localPath = gif.absolutePath,
+                    ),
+                    gif,
+                )
+            }
+            else -> error("已校验的媒体导出方式没有处理")
+        }
     }
 
     @RequiresApi(Build.VERSION_CODES.Q)
@@ -143,7 +182,17 @@ class ArchiveMediaActions(
             resolver.delete(uri, null, null)
             throw error
         }
-        return displayName
+        return runCatching {
+            resolver.query(
+                uri,
+                arrayOf(MediaStore.MediaColumns.DISPLAY_NAME),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
+        }.getOrNull() ?: displayName
     }
 
     private fun startChooser(chooser: Intent) {
@@ -206,6 +255,7 @@ class ArchiveMediaActions(
         when (mimeType.lowercase()) {
             "image/png" -> ".png"
             "image/webp" -> ".webp"
+            "image/gif" -> ".gif"
             "video/quicktime" -> ".mov"
             "video/webm" -> ".webm"
             "video/mp4" -> ".mp4"
@@ -218,6 +268,13 @@ class ArchiveMediaActions(
     )
 
     companion object {
+        const val EXPORT_ORIGINAL = "original"
+        const val EXPORT_STATIC = "static"
+        const val EXPORT_GIF = "gif"
+        const val EXPORT_VIDEO = "video"
+        private val SUPPORTED_EXPORT_MODES =
+            setOf(EXPORT_ORIGINAL, EXPORT_STATIC, EXPORT_GIF, EXPORT_VIDEO)
+
         fun requiresLegacyStoragePermission(): Boolean =
             Build.VERSION.SDK_INT < Build.VERSION_CODES.Q
     }

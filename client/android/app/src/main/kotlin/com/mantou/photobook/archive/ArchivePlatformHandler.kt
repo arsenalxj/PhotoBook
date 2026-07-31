@@ -2,7 +2,10 @@ package com.mantou.photobook.archive
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipboardManager
+import android.content.Context
 import android.content.pm.PackageManager
+import android.os.Build
 import android.util.Log
 import android.webkit.CookieManager
 import android.webkit.WebStorage
@@ -14,10 +17,12 @@ import io.flutter.plugin.common.StandardMethodCodec
 import java.util.concurrent.CompletableFuture
 import java.util.concurrent.CompletionException
 import java.util.concurrent.Executors
+import java.security.MessageDigest
 
-class ArchivePlatformHandler(
+internal class ArchivePlatformHandler(
     private val activity: Activity,
     messenger: BinaryMessenger,
+    private val automaticClipboardImportGate: AutomaticClipboardImportGate,
 ) : MethodChannel.MethodCallHandler {
     private val applicationContext = activity.applicationContext
     private val database = ArchiveDatabase(applicationContext)
@@ -27,6 +32,8 @@ class ArchivePlatformHandler(
     private val permissionExecutor = Executors.newSingleThreadExecutor()
     private val sessionExecutor = Executors.newSingleThreadExecutor()
     private val instagramLoginAttempts = InstagramLoginAttemptCoordinator()
+    private val clipboardPreferences =
+        applicationContext.getSharedPreferences(CLIPBOARD_PREFERENCES, Context.MODE_PRIVATE)
     private val webDataCleanupLock = Any()
     private var webDataCleanupTail = CompletableFuture.completedFuture(Unit)
     private var pendingLegacySave: PendingLegacySave? = null
@@ -52,6 +59,7 @@ class ArchivePlatformHandler(
         try {
             when (call.method) {
                 "getRuntimeState" -> result.success(runtimeState())
+                "importClipboard" -> importClipboard(call, result)
                 "retryJob" -> retryJob(call, result)
                 "cancelJob" -> cancelJob(call, result)
                 "deleteJob" -> deleteJob(call, result)
@@ -106,7 +114,7 @@ class ArchivePlatformHandler(
         }
         permissionExecutor.execute {
             try {
-                pending.result.success(saveMediaNow(pending.mediaId))
+                pending.result.success(saveMediaNow(pending.mediaId, pending.exportMode))
             } catch (error: Exception) {
                 reportError(pending.result, error)
             }
@@ -123,6 +131,67 @@ class ArchivePlatformHandler(
             "r2Config" to config?.summary(),
         )
     }
+
+    private fun importClipboard(call: MethodCall, result: MethodChannel.Result) {
+        val automatic = call.argument<Boolean>("automatic") == true
+        if (automatic && automaticClipboardImportGate.consumeSkip()) {
+            result.success(CLIPBOARD_SKIPPED)
+            return
+        }
+        val clipboard =
+            applicationContext.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+        val primaryClip =
+            runCatching {
+                clipboard.primaryClip
+            }.getOrElse {
+                result.success(CLIPBOARD_UNAVAILABLE)
+                return
+            }
+        if (automatic &&
+            primaryClip != null &&
+            (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                !isRecentClipboardTimestamp(
+                    primaryClip.description.timestamp,
+                    System.currentTimeMillis(),
+                ))
+        ) {
+            result.success(CLIPBOARD_STALE)
+            return
+        }
+        val sharedText =
+            primaryClip
+                ?.takeIf { it.itemCount > 0 }
+                ?.getItemAt(0)
+                ?.text
+                ?.toString()
+                .orEmpty()
+        if (sharedText.isBlank()) {
+            result.success(CLIPBOARD_EMPTY)
+            return
+        }
+        val request = ArchiveLinkImporter.parse(sharedText)
+        if (request == null) {
+            result.success(CLIPBOARD_UNSUPPORTED)
+            return
+        }
+        val fingerprint = clipboardFingerprint(request)
+        if (automatic &&
+            clipboardPreferences.getString(KEY_LAST_CLIPBOARD_FINGERPRINT, null) == fingerprint
+        ) {
+            result.success(CLIPBOARD_ALREADY_PROCESSED)
+            return
+        }
+        val job = ArchiveLinkImporter.enqueue(database, request)
+        clipboardPreferences.edit().putString(KEY_LAST_CLIPBOARD_FINGERPRINT, fingerprint).apply()
+        ArchiveEventBus.emitJobChanged()
+        if (job.status != "completed") ArchiveForegroundService.start(applicationContext)
+        result.success(if (job.status == "completed") CLIPBOARD_COMPLETED else CLIPBOARD_QUEUED)
+    }
+
+    private fun clipboardFingerprint(request: ArchiveImportRequest): String =
+        MessageDigest.getInstance("SHA-256")
+            .digest("${request.sourcePlatform}\n${request.requestKey}".toByteArray(Charsets.UTF_8))
+            .joinToString("") { byte -> "%02x".format(byte) }
 
     private fun captureInstagramSession(result: MethodChannel.Result) {
         activity.runOnUiThread {
@@ -404,9 +473,10 @@ class ArchivePlatformHandler(
 
     private fun shareMedia(call: MethodCall, result: MethodChannel.Result) {
         val mediaIds = call.argument<List<String>>("mediaIds").orEmpty()
+        val exportMode = call.argument<String>("exportMode") ?: ArchiveMediaActions.EXPORT_ORIGINAL
         ArchiveExecutionGate.acquire()
         try {
-            mediaActions.share(mediaIds) { error ->
+            mediaActions.share(mediaIds, exportMode) { error ->
                 if (error == null) result.success(null) else reportError(result, error)
             }
         } finally {
@@ -416,6 +486,7 @@ class ArchivePlatformHandler(
 
     private fun saveMedia(call: MethodCall, result: MethodChannel.Result) {
         val mediaId = call.argument<String>("mediaId").orEmpty()
+        val exportMode = call.argument<String>("exportMode") ?: ArchiveMediaActions.EXPORT_ORIGINAL
         if (mediaId.isBlank()) throw ArchiveException("MEDIA_NOT_FOUND", "媒体不存在")
         if (ArchiveMediaActions.requiresLegacyStoragePermission() &&
             ActivityCompat.checkSelfPermission(activity, Manifest.permission.WRITE_EXTERNAL_STORAGE) !=
@@ -425,7 +496,7 @@ class ArchivePlatformHandler(
                 if (pendingLegacySave != null) {
                     throw ArchiveException("MEDIA_ACTION_BUSY", "已有媒体保存操作正在等待授权")
                 }
-                pendingLegacySave = PendingLegacySave(mediaId, result)
+                pendingLegacySave = PendingLegacySave(mediaId, exportMode, result)
             }
             activity.runOnUiThread {
                 ActivityCompat.requestPermissions(
@@ -436,13 +507,16 @@ class ArchivePlatformHandler(
             }
             return
         }
-        result.success(saveMediaNow(mediaId))
+        result.success(saveMediaNow(mediaId, exportMode))
     }
 
-    private fun saveMediaNow(mediaId: String): String {
+    private fun saveMediaNow(
+        mediaId: String,
+        exportMode: String = ArchiveMediaActions.EXPORT_ORIGINAL,
+    ): String {
         ArchiveExecutionGate.acquire()
         return try {
-            mediaActions.save(mediaId)
+            mediaActions.save(mediaId, exportMode)
         } finally {
             ArchiveExecutionGate.release()
         }
@@ -504,6 +578,7 @@ class ArchivePlatformHandler(
 
     private data class PendingLegacySave(
         val mediaId: String,
+        val exportMode: String,
         val result: MethodChannel.Result,
     )
 
@@ -512,6 +587,16 @@ class ArchivePlatformHandler(
         const val EVENT_CHANNEL = "com.mantou.photobook/archive_events"
         private const val INSTAGRAM_URL = "https://www.instagram.com/"
         private const val LEGACY_STORAGE_PERMISSION_REQUEST = 102
+        private const val CLIPBOARD_PREFERENCES = "archive_clipboard"
+        private const val KEY_LAST_CLIPBOARD_FINGERPRINT = "last_fingerprint"
+        private const val CLIPBOARD_QUEUED = "queued"
+        private const val CLIPBOARD_COMPLETED = "completed"
+        private const val CLIPBOARD_EMPTY = "empty"
+        private const val CLIPBOARD_UNSUPPORTED = "unsupported"
+        private const val CLIPBOARD_ALREADY_PROCESSED = "already_processed"
+        private const val CLIPBOARD_SKIPPED = "skipped"
+        private const val CLIPBOARD_UNAVAILABLE = "unavailable"
+        private const val CLIPBOARD_STALE = "stale"
         private const val TAG = "ArchivePlatform"
     }
 }

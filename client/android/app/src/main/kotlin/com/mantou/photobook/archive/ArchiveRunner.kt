@@ -4,6 +4,7 @@ import android.content.Context
 
 class ArchiveRunner(context: Context, private val database: ArchiveDatabase) {
     private val instagram = InstagramClient(context)
+    private val xiaohongshu = XiaohongshuClient(context)
     private val media = MediaPipeline(context, database::isMediaShaReferenced)
     private val deviceId = DeviceIdentity(context).getOrCreate()
 
@@ -19,12 +20,25 @@ class ArchiveRunner(context: Context, private val database: ArchiveDatabase) {
             var committed = false
             try {
                 val remote =
-                    instagram.fetchPost(job.sourcePostId) {
-                        database.isJobAttemptActive(job.id, job.attemptCount, "fetching")
+                    when (job.sourcePlatform) {
+                        SOURCE_PLATFORM_INSTAGRAM -> {
+                            val sourcePostId = job.sourcePostId
+                                ?: throw ArchiveException("INVALID_RESPONSE", "Instagram 帖子编号尚未解析")
+                            instagram.fetchPost(sourcePostId) {
+                                database.isJobAttemptActive(job.id, job.attemptCount, "fetching")
+                            }
+                        }
+                        SOURCE_PLATFORM_XIAOHONGSHU ->
+                            xiaohongshu.fetchPost(database.jobSourceUrl(job.id)) {
+                                database.isJobAttemptActive(job.id, job.attemptCount, "fetching")
+                            }
+                        else -> throw ArchiveException("INVALID_URL", "不支持的帖子来源")
                     }
                 ensureAttemptActive(job, "fetching")
-                if (remote.sourcePostId != job.sourcePostId) {
-                    throw ArchiveException("SOURCE_MISMATCH", "Instagram 返回了不同的帖子编号")
+                if (remote.sourcePlatform != job.sourcePlatform ||
+                    (job.sourcePostId != null && remote.sourcePostId != job.sourcePostId)
+                ) {
+                    throw ArchiveException("SOURCE_MISMATCH", "解析结果与分享任务不一致")
                 }
                 updateProgress(job, "fetching", "downloading", 0, remote.media.size)
                 val preparedPost =

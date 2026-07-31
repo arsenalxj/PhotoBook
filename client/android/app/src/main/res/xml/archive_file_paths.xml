@@ -3,4 +3,7 @@
     <files-path
         name="archive_originals"
         path="archive/originals/" />
+    <cache-path
+        name="share_exports"
+        path="share_exports/" />
 </paths>

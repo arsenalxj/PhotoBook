@@ -115,6 +115,21 @@ class PostCard extends StatelessWidget {
                       ],
                       Row(
                         children: [
+                          Text(
+                            post.sourcePlatform == PostSourcePlatform.instagram
+                                ? 'IG'
+                                : '小红书',
+                            style: TextStyle(
+                              color:
+                                  post.sourcePlatform ==
+                                      PostSourcePlatform.instagram
+                                  ? const Color(0xFFC13584)
+                                  : const Color(0xFFE63D45),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          const SizedBox(width: 6),
                           _Avatar(path: post.localAvatarPath),
                           const SizedBox(width: 6),
                           Expanded(

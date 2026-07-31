@@ -1,21 +1,22 @@
 # PhotoBook
 
-PhotoBook 是一个运行在 Android 手机上的 Instagram 帖子归档 App。用户从 Instagram 或浏览器把帖子链接分享到 PhotoBook 后，App 会在手机内解析帖子、下载图片或视频，并保存到本机；整个归档流程不依赖自建服务器。
+PhotoBook 是一个运行在 Android 手机上的多平台帖子归档 App，当前支持 Instagram 和小红书公开帖子。用户从平台 App 或浏览器把帖子链接分享到 PhotoBook 后，App 会在手机内解析并保存图片、GIF、视频和 Live Photo；整个归档流程不依赖自建服务器。
 
-> PhotoBook 的 Instagram 解析能力主要基于开源项目 [Instaloader](https://github.com/instaloader/instaloader)。项目没有自行重写 Instagram 的数据解析协议，而是通过 Chaquopy 把固定版本的 Instaloader 打包进 Android APK，再围绕它实现移动端任务调度、媒体下载、本地存储、界面和可选的 Cloudflare R2 同步。
+> PhotoBook 的 Instagram 解析能力主要基于开源项目 [Instaloader](https://github.com/instaloader/instaloader)，小红书只匿名解析公开分享页中的页面状态，不接入登录、Cookie、签名接口或验证码绕过。两个解析器都通过 Chaquopy 在 APK 内运行，移动端任务调度、媒体下载、本地存储、界面和可选的 Cloudflare R2 同步由 PhotoBook 自己完成。
 
 ## 项目定位
 
 PhotoBook 解决的是“看到一条帖子，分享到手机 App 后长期保存”的问题，而不是在电脑上运行的批量爬取工具。
 
-- 支持公开图片帖、多图帖和 Reel。
+- 支持 Instagram 公开图片帖、多图帖和 Reel，以及小红书公开图片、视频、原生 GIF 和 Live Photo。
 - 接收 Android 系统分享，任务进入后台或锁屏后仍由前台服务继续执行。
 - 默认只保存在本机，不要求 PhotoBook 账号、设备配对、Worker、D1 或下载服务器。
 - 可选配置私有 Cloudflare R2，在多个设备之间同步帖子、预览和原媒体。
 - 支持查看、筛选、逻辑删除、保存原媒体和通过 Android 系统面板分享原文件，并可在首页任务列表查看阶段、取消、重试或删除归档任务。
+- Live Photo 默认显示静态图，长按播放动态；完整态可互斥保存或分享为静态图、GIF、视频，动态部分失败时静态降级且只提供静态图。
 - 使用 Android 默认网络；系统 VPN 是否接管流量由手机系统决定。
 
-当前只归档公开内容。每个帖子先匿名解析；只有 Instagram 明确要求登录时，才会使用用户通过官方 WebView 建立并加密保存在本机的 Session 重试一次。即使当前账号有权查看，私密账号帖子也不会归档。
+当前只归档公开内容。每个帖子先匿名解析；只有 Instagram 明确要求登录时，才会使用用户通过官方 WebView 建立并加密保存在本机的 Session 重试一次。小红书不提供登录重试；两个平台的私密内容都不会归档。
 
 ## 核心依赖：Instaloader
 
@@ -33,16 +34,16 @@ PhotoBook 没有直接采用 Instaloader 默认的命令行下载和目录管理
 
 ## 实现思路
 
-核心原则是让 Instaloader 处理 Instagram 数据解析，让 Android 原生层处理手机上的可靠执行和文件安全，让 Flutter 只负责用户界面。
+核心原则是让平台解析器只输出统一 JSON，让 Android 原生层处理手机上的可靠执行和文件安全，让 Flutter 只负责用户界面。
 
 ```mermaid
 flowchart TD
-    SHARE["Instagram / 浏览器分享链接"] --> ACTIVITY["Android 分享入口"]
+    SHARE["Instagram / 小红书 / 浏览器分享链接"] --> ACTIVITY["Android 分享入口"]
     ACTIVITY --> JOBS["SQLite 持久化任务"]
     JOBS --> SERVICE["dataSync 前台服务串行执行"]
     SERVICE --> BRIDGE["Kotlin → Chaquopy → Python 桥"]
-    BRIDGE --> INSTALOADER["Instaloader 解析帖子"]
-    INSTALOADER --> JSON["帖子 JSON + 媒体地址"]
+    BRIDGE --> PARSER["按平台选择公开帖解析器"]
+    PARSER --> JSON["统一帖子 JSON + 媒体地址"]
     JSON --> MEDIA["Android 原生流式下载与校验"]
     MEDIA --> LOCAL["App 沙盒媒体 + SQLite 元数据"]
     LOCAL --> UI["Flutter 首页、详情和任务状态"]
@@ -51,9 +52,9 @@ flowchart TD
 
 一次归档按以下顺序执行：
 
-1. `MainActivity` 从 `ACTION_SEND` 中提取并规范化 Instagram 链接，先把任务写入 SQLite，再启动前台服务。即使 Flutter 页面退出，任务也不会只存在于内存。
-2. `ArchiveForegroundService` 立即显示通知，并在单线程后台队列中处理任务，避免同时调用 Instaloader。
-3. Kotlin 通过 Chaquopy 调用 `photobook_bridge.py`。Python 桥使用 Instaloader 解析 shortcode，并把结果映射成 PhotoBook 约定的 JSON。
+1. `MainActivity` 从 `ACTION_SEND` 中识别平台链接，先把任务写入 SQLite，再启动前台服务。即使 Flutter 页面退出，任务也不会只存在于内存。
+2. `ArchiveForegroundService` 立即显示通知，并在单线程后台队列中串行处理平台解析与下载任务。
+3. Kotlin 通过 Chaquopy 调用 Instagram 或小红书 Python 桥，并把解析结果映射成 PhotoBook 约定的统一 JSON。
 4. `MediaPipeline` 使用 Android 网络 API 流式下载媒体。文件先写入 `.part`，同步计算 SHA-256，完成后再原子发布到内容寻址目录，同时生成头像、缩略图和视频元数据。
 5. 帖子、媒体、任务完成状态和 R2 outbox 在同一个 SQLite 事务中提交。准备或提交失败时，只回滚本次新增且尚未被引用的文件。
 6. 本地归档完成后才尝试 R2 同步。R2 失败不会撤销已经保存的本机帖子，后续由前台服务或 WorkManager 继续恢复。
@@ -63,7 +64,7 @@ flowchart TD
 | 组件 | 主要职责 |
 | --- | --- |
 | Instaloader | 解析 Instagram 帖子、作者、媒体列表和可选登录 Session |
-| Chaquopy / Python 桥 | 在 APK 内运行 Instaloader，并把 Python 结果转换成稳定的 JSON 协议 |
+| Chaquopy / Python 桥 | 在 APK 内运行 Instagram 和小红书解析器，并输出稳定的统一 JSON 协议 |
 | Kotlin Android 层 | 分享接收、前台服务、任务恢复、媒体下载、SQLite、Keystore、R2 同步和应用更新 |
 | Flutter | 首页、详情、任务列表、Instagram 登录页、R2 设置及状态展示 |
 | SQLite | 本机帖子、媒体清单、抓取任务、错误记录和同步状态的权威数据源 |
@@ -99,7 +100,7 @@ docs/                                     中文架构、构建和运维文档
 ## 使用方式
 
 1. 从 [GitHub Releases](https://github.com/arsenalxj/PhotoBook/releases/latest) 下载并安装适合 `arm64-v8a` Android 手机的最新 APK。
-2. 在 Instagram 或浏览器中打开公开帖子，点击“分享”，选择 PhotoBook。
+2. 在 Instagram、小红书或浏览器中打开公开帖子，点击“分享”，通过系统分享面板选择 PhotoBook。若平台只显示自定义分享面板，可复制链接后打开 PhotoBook；App 进入前台时会自动识别最近 10 分钟复制的链接，也可点首页粘贴按钮手动重试。
 3. PhotoBook 会显示前台通知并在本机完成解析、下载和入库；完成后通知自动消失。
 4. 首页右上角任务列表可查看当前阶段，并取消、重试或删除任务记录。
 5. 需要提高公开帖解析成功率时，可在设置页通过 Instagram 官方网页建立本机会话。
@@ -117,7 +118,7 @@ flutter test
 flutter build apk --debug
 ```
 
-完整的 Python 桥测试、Android 单元测试、lint、ABI 约束和真机检查见 [`docs/deployment.md`](docs/deployment.md)。APK 能成功构建不代表 Instagram 当前仍允许正常解析，正式发布前仍需用真实公开图片帖、多图帖和 Reel 做真机验证。
+完整的 Python 桥测试、Android 单元测试、lint、ABI 约束和真机检查见 [`docs/deployment.md`](docs/deployment.md)。APK 能成功构建不代表平台页面仍与脱敏 fixture 一致，正式发布前仍需用 Instagram 公开图片帖、多图帖、Reel，以及小红书图片、视频、GIF、完整和降级 Live Photo 做真机验证。
 
 本机 debug 需要覆盖正式 App 并保留数据时，可在不会提交的 `client/android/local.properties` 中配置仓库外的签名属性文件：
 
@@ -145,4 +146,4 @@ PHOTOBOOK_TARGET_ABIS=arm64-v8a \
 
 ## 说明
 
-PhotoBook 是个人归档工具，与 Instagram、Meta 或 Instaloader 项目没有隶属或官方合作关系。请只归档自己有权访问和保存的内容，并遵守所在地法律、平台条款和内容版权要求。
+PhotoBook 是个人归档工具，与 Instagram、Meta、小红书、行吟信息科技或 Instaloader 项目没有隶属或官方合作关系。请只归档自己有权访问和保存的内容，并遵守所在地法律、平台条款和内容版权要求。

@@ -41,6 +41,7 @@ void main() {
       AppTheme.light.colorScheme.error,
     );
     expect(find.byIcon(Icons.settings_outlined), findsOneWidget);
+    expect(find.byTooltip('粘贴链接'), findsOneWidget);
     expect(find.text('PhotoBook'), findsOneWidget);
 
     await tester.tap(find.byTooltip('任务列表'));
@@ -48,6 +49,16 @@ void main() {
 
     expect(find.byType(TaskListScreen), findsOneWidget);
     expect(find.text('任务列表'), findsOneWidget);
+  });
+
+  testWidgets('首页粘贴按钮触发剪贴板导入', (tester) async {
+    final controller = _FakeAppController()..phase = AppPhase.ready;
+    await _pumpHome(tester, controller);
+
+    await tester.tap(find.byTooltip('粘贴链接'));
+    await tester.pump();
+
+    expect(controller.clipboardImportCount, 1);
   });
 
   testWidgets('只有进行中任务时角标使用非错误色', (tester) async {
@@ -127,6 +138,29 @@ void main() {
     expect(controller.deletedPostIds, ['post-a']);
     expect(find.text('还没有保存的帖子'), findsOneWidget);
   });
+
+  testWidgets('同名作者按来源平台隔离筛选', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _post(id: 'ig-alice', username: 'alice', displayName: 'Alice'),
+        _post(
+          id: 'xhs-alice',
+          username: 'alice',
+          displayName: '小红书 Alice',
+          sourcePlatform: PostSourcePlatform.xiaohongshu,
+        ),
+      ];
+    await _pumpHome(tester, controller);
+
+    await tester.longPress(find.byKey(const ValueKey('xhs-alice')));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('filter-author-action')));
+    await tester.pump();
+
+    expect(find.byKey(const ValueKey('xhs-alice')), findsOneWidget);
+    expect(find.byKey(const ValueKey('ig-alice')), findsNothing);
+  });
 }
 
 Future<void> _pumpHome(WidgetTester tester, AppController controller) =>
@@ -141,9 +175,13 @@ ArchivedPost _post({
   required String id,
   required String username,
   required String displayName,
+  PostSourcePlatform sourcePlatform = PostSourcePlatform.instagram,
 }) => ArchivedPost(
   id: id,
-  sourceUrl: 'https://www.instagram.com/p/$id/',
+  sourcePlatform: sourcePlatform,
+  sourceUrl: sourcePlatform == PostSourcePlatform.instagram
+      ? 'https://www.instagram.com/p/$id/'
+      : 'https://www.xiaohongshu.com/explore/$id',
   authorUsername: username,
   authorDisplayName: displayName,
   caption: id,
@@ -162,6 +200,12 @@ ArchivedPost _post({
 
 class _FakeAppController extends AppController {
   final List<String> deletedPostIds = [];
+  int clipboardImportCount = 0;
+
+  @override
+  Future<void> importClipboard({bool automatic = false}) async {
+    clipboardImportCount += 1;
+  }
 
   @override
   Future<void> deletePost(String postId) async {

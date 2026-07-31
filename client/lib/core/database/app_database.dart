@@ -15,7 +15,7 @@ class AppDatabase {
     : _databaseFactory = databaseFactory ?? databaseFactorySqflitePlugin,
       _databasePath = databasePath;
 
-  static const version = 1;
+  static const version = 2;
 
   final DatabaseFactory _databaseFactory;
   final String? _databasePath;
@@ -34,6 +34,11 @@ class AppDatabase {
           await database.rawQuery('PRAGMA journal_mode = WAL');
         },
         onCreate: _createSchema,
+        onUpgrade: (_, oldVersion, newVersion) async {
+          throw StateError(
+            '开发阶段不支持数据库从 $oldVersion 升级到 $newVersion，请清除 App 数据后重新安装',
+          );
+        },
       ),
     );
   }
@@ -59,7 +64,8 @@ class AppDatabase {
     await database.execute('''
       CREATE TABLE posts (
         id TEXT PRIMARY KEY,
-        source_post_id TEXT NOT NULL UNIQUE,
+        source_platform TEXT NOT NULL,
+        source_post_id TEXT NOT NULL,
         source_url TEXT NOT NULL,
         author_username TEXT NOT NULL,
         author_display_name TEXT NOT NULL,
@@ -75,7 +81,8 @@ class AppDatabase {
         updated_at INTEGER NOT NULL,
         local_avatar_path TEXT,
         sync_device_id TEXT NOT NULL DEFAULT '',
-        sync_seq INTEGER NOT NULL DEFAULT 0
+        sync_seq INTEGER NOT NULL DEFAULT 0,
+        UNIQUE(source_platform, source_post_id)
       )
     ''');
     await database.execute(
@@ -86,6 +93,8 @@ class AppDatabase {
         id TEXT PRIMARY KEY,
         post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
         sort_index INTEGER NOT NULL,
+        logical_index INTEGER NOT NULL,
+        media_role TEXT NOT NULL,
         media_type TEXT NOT NULL,
         mime_type TEXT NOT NULL,
         width INTEGER NOT NULL,
@@ -112,7 +121,9 @@ class AppDatabase {
       CREATE TABLE IF NOT EXISTS capture_jobs (
         id TEXT PRIMARY KEY,
         source_url TEXT NOT NULL,
-        source_post_id TEXT NOT NULL UNIQUE,
+        source_platform TEXT NOT NULL,
+        request_key TEXT NOT NULL,
+        source_post_id TEXT,
         status TEXT NOT NULL,
         progress_current INTEGER NOT NULL DEFAULT 0,
         progress_total INTEGER NOT NULL DEFAULT 0,
@@ -121,7 +132,8 @@ class AppDatabase {
         error_code TEXT,
         error_message TEXT,
         created_at INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
+        updated_at INTEGER NOT NULL,
+        UNIQUE(source_platform, request_key)
       )
     ''');
     await database.execute(
@@ -195,6 +207,7 @@ class AppDatabase {
       'posts',
       columns: const [
         'id',
+        'source_platform',
         'source_url',
         'author_username',
         'author_display_name',
@@ -213,7 +226,11 @@ class AppDatabase {
       columns: const [
         'id',
         'post_id',
+        'sort_index',
+        'logical_index',
+        'media_role',
         'media_type',
+        'mime_type',
         'width',
         'height',
         'local_thumbnail_path',
@@ -227,7 +244,12 @@ class AppDatabase {
       groupedMedia.putIfAbsent(postId, () => []).add(_mediaFromRow(row));
     }
     return postRows
-        .map((row) => _postFromRow(row, groupedMedia[row['id']] ?? const []))
+        .map(
+          (row) => _postFromRow(
+            row,
+            _logicalMedia(groupedMedia[row['id']] ?? const []),
+          ),
+        )
         .where((post) => post.media.isNotEmpty)
         .toList(growable: false);
   }
@@ -237,6 +259,7 @@ class AppDatabase {
       'capture_jobs',
       columns: const [
         'id',
+        'source_platform',
         'source_post_id',
         'status',
         'progress_current',
@@ -294,6 +317,7 @@ class AppDatabase {
   ArchivedPost _postFromRow(Map<String, Object?> row, List<PostMedia> media) =>
       ArchivedPost(
         id: row['id']! as String,
+        sourcePlatform: PostSourcePlatform.parse(row['source_platform']),
         sourceUrl: row['source_url']! as String,
         authorUsername: row['author_username']! as String,
         authorDisplayName: row['author_display_name']! as String,
@@ -301,17 +325,43 @@ class AppDatabase {
         publishedAt: row['published_at']! as int,
         locationName: row['location_name'] as String?,
         coverMediaId: row['cover_media_id']! as String,
-        mediaCount: row['media_count']! as int,
+        mediaCount: media.length,
         localAvatarPath: row['local_avatar_path'] as String?,
         media: media,
       );
 
   PostMedia _mediaFromRow(Map<String, Object?> row) => PostMedia(
     id: row['id']! as String,
+    sortIndex: row['sort_index']! as int,
+    logicalIndex: row['logical_index']! as int,
+    mediaRole: PostMediaRole.parse(row['media_role']),
     mediaType: PostMediaType.parse(row['media_type']),
+    mimeType: row['mime_type']! as String,
     width: row['width']! as int,
     height: row['height']! as int,
     localThumbnailPath: row['local_thumbnail_path'] as String?,
     localOriginalPath: row['local_original_path'] as String?,
   );
+
+  List<PostMedia> _logicalMedia(List<PostMedia> physicalMedia) {
+    final grouped = <int, List<PostMedia>>{};
+    for (final media in physicalMedia) {
+      grouped.putIfAbsent(media.logicalIndex, () => []).add(media);
+    }
+    final logical = <PostMedia>[];
+    for (final entry
+        in grouped.entries.toList()..sort((a, b) => a.key.compareTo(b.key))) {
+      final visible = entry.value.where(
+        (item) => item.mediaRole != PostMediaRole.liveMotion,
+      );
+      if (visible.isEmpty) continue;
+      final primary = visible.first;
+      final motion = entry.value.cast<PostMedia?>().firstWhere(
+        (item) => item?.mediaRole == PostMediaRole.liveMotion,
+        orElse: () => null,
+      );
+      logical.add(primary.copyWith(liveMotion: motion));
+    }
+    return logical;
+  }
 }

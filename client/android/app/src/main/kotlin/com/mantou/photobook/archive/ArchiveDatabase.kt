@@ -59,12 +59,27 @@ class ArchiveDatabase(context: Context) :
         }
     }
 
-    fun enqueue(sourceUrl: String, sourcePostId: String): CaptureJob {
+    fun enqueue(sourceUrl: String, sourcePostId: String): CaptureJob =
+        enqueue(
+            sourceUrl = sourceUrl,
+            sourcePlatform = SOURCE_PLATFORM_INSTAGRAM,
+            requestKey = sourcePostId,
+            sourcePostId = sourcePostId,
+        )
+
+    fun enqueue(
+        sourceUrl: String,
+        sourcePlatform: String,
+        requestKey: String,
+        sourcePostId: String? = null,
+    ): CaptureJob {
+        require(sourcePlatform in SUPPORTED_SOURCE_PLATFORMS) { "不支持的来源平台" }
+        require(requestKey.isNotBlank()) { "任务去重键不能为空" }
         val db = writableDatabase
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
-            findJobBySource(db, sourcePostId)?.let { existing ->
+            findJobByRequest(db, sourcePlatform, requestKey)?.let { existing ->
                 if (existing.status == "failed") {
                     val values =
                         ContentValues().apply {
@@ -82,11 +97,11 @@ class ArchiveDatabase(context: Context) :
                 return existing
             }
 
-            val alreadyArchived =
+            val alreadyArchived = sourcePostId != null &&
                 db.rawQuery(
                     """
                     SELECT 1 FROM posts p
-                    WHERE p.source_post_id = ?
+                    WHERE p.source_platform = ? AND p.source_post_id = ?
                       AND NOT EXISTS (
                         SELECT 1 FROM sync_entity_states s
                         WHERE s.entity_type = 'media'
@@ -95,7 +110,7 @@ class ArchiveDatabase(context: Context) :
                       )
                     LIMIT 1
                     """.trimIndent(),
-                    arrayOf(sourcePostId),
+                    arrayOf(sourcePlatform, sourcePostId),
                 ).use { it.moveToFirst() }
             val id = UUID.randomUUID().toString()
             val status = if (alreadyArchived) "completed" else "queued"
@@ -103,6 +118,8 @@ class ArchiveDatabase(context: Context) :
                 ContentValues().apply {
                     put("id", id)
                     put("source_url", sourceUrl)
+                    put("source_platform", sourcePlatform)
+                    put("request_key", requestKey)
                     put("source_post_id", sourcePostId)
                     put("status", status)
                     put("progress_current", 0)
@@ -114,7 +131,7 @@ class ArchiveDatabase(context: Context) :
                 }
             db.insertOrThrow("capture_jobs", null, values)
             db.setTransactionSuccessful()
-            return CaptureJob(id, sourcePostId, status, 0)
+            return CaptureJob(id, sourcePostId, status, 0, sourcePlatform, requestKey)
         } finally {
             db.endTransaction()
         }
@@ -162,6 +179,15 @@ class ArchiveDatabase(context: Context) :
             db.endTransaction()
         }
     }
+
+    fun jobSourceUrl(jobId: String): String =
+        readableDatabase.rawQuery(
+            "SELECT source_url FROM capture_jobs WHERE id = ?",
+            arrayOf(jobId),
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) throw ArchiveException("INVALID_URL", "分享任务不存在")
+            cursor.getString(0)
+        }
 
     fun updateJobProgress(
         jobId: String,
@@ -350,12 +376,27 @@ class ArchiveDatabase(context: Context) :
                 db.setTransactionSuccessful()
                 return false
             }
+            val jobIdentity =
+                db.rawQuery(
+                    "SELECT source_platform, source_post_id FROM capture_jobs WHERE id = ?",
+                    arrayOf(jobId),
+                ).use { cursor ->
+                    check(cursor.moveToFirst()) { "归档任务不存在" }
+                    cursor.getString(0) to cursor.getNullableString("source_post_id")
+                }
+            require(jobIdentity.first == post.sourcePlatform) { "任务来源平台与解析结果不一致" }
+            require(jobIdentity.second == null || jobIdentity.second == post.sourcePostId) {
+                "任务帖子编号与解析结果不一致"
+            }
+            require(SOURCE_POST_ID_PATTERN.matches(post.sourcePostId)) { "帖子来源编号无效" }
+            requireCanonicalSourceUrl(post.sourcePlatform, post.sourcePostId, post.sourceUrl)
             val seq = nextLocalSeq(db)
             val version = nextLogicalVersion(db)
             val previousMediaIds = mediaIdsForPost(db, post.id).toSet()
             val postValues =
                 ContentValues().apply {
                     put("id", post.id)
+                    put("source_platform", post.sourcePlatform)
                     put("source_post_id", post.sourcePostId)
                     put("source_url", post.sourceUrl)
                     put("author_username", post.authorUsername)
@@ -396,6 +437,8 @@ class ArchiveDatabase(context: Context) :
                         put("id", mediaId)
                         put("post_id", post.id)
                         put("sort_index", media.sortIndex)
+                        put("logical_index", media.logicalIndex)
+                        put("media_role", media.mediaRole)
                         put("media_type", media.mediaType)
                         put("mime_type", media.mimeType)
                         put("width", media.width)
@@ -447,6 +490,7 @@ class ArchiveDatabase(context: Context) :
 
             val jobValues =
                 ContentValues().apply {
+                    put("source_post_id", post.sourcePostId)
                     put("status", "completed")
                     put("progress_current", post.media.size)
                     put("progress_total", post.media.size)
@@ -468,9 +512,16 @@ class ArchiveDatabase(context: Context) :
         val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
-            val sourcePostId = sourcePostId(db, postId)
+            val sourceIdentity = sourceIdentity(db, postId)
                 ?: throw ArchiveException("POST_NOT_FOUND", "帖子不存在或已被删除")
-            deletePostInTransaction(db, postId, sourcePostId, deviceId, now)
+            deletePostInTransaction(
+                db,
+                postId,
+                sourceIdentity.first,
+                sourceIdentity.second,
+                deviceId,
+                now,
+            )
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -485,8 +536,8 @@ class ArchiveDatabase(context: Context) :
             val media =
                 db.rawQuery(
                     """
-                    SELECT m.post_id, p.source_post_id,
-                           (SELECT COUNT(*) FROM post_media WHERE post_id = m.post_id)
+                    SELECT m.post_id, p.source_platform, p.source_post_id, m.logical_index,
+                           (SELECT COUNT(DISTINCT logical_index) FROM post_media WHERE post_id = m.post_id)
                     FROM post_media m
                     JOIN posts p ON p.id = m.post_id
                     WHERE m.id = ?
@@ -494,54 +545,74 @@ class ArchiveDatabase(context: Context) :
                     arrayOf(mediaId),
                 ).use { cursor ->
                     if (!cursor.moveToFirst()) null
-                    else Triple(cursor.getString(0), cursor.getString(1), cursor.getInt(2))
+                    else MediaOwner(
+                        postId = cursor.getString(0),
+                        sourcePlatform = cursor.getString(1),
+                        sourcePostId = cursor.getString(2),
+                        logicalIndex = cursor.getInt(3),
+                        mediaCount = cursor.getInt(4),
+                    )
                 } ?: throw ArchiveException("MEDIA_NOT_FOUND", "媒体不存在或已被删除")
 
-            val (postId, sourcePostId, mediaCount) = media
-            if (mediaCount <= 1) {
+            if (media.mediaCount <= 1) {
                 db.setTransactionSuccessful()
-                return DeleteMediaResult(postId = postId, postDeleteRequired = true)
+                return DeleteMediaResult(postId = media.postId, postDeleteRequired = true)
             }
 
-            val seq = nextLocalSeq(db)
-            val version = nextLogicalVersion(db)
-            writeEntityState(
-                db,
-                ENTITY_MEDIA,
-                mediaId,
-                STATE_DELETED,
-                version,
-                deviceId,
-                seq,
-                now,
-            )
-            db.delete("post_media", "id = ?", arrayOf(mediaId))
-            updatePostMediaSummary(db, postId, deviceId, seq, now)
-            db.delete(
-                "capture_jobs",
-                "source_post_id = ? AND status = 'completed'",
-                arrayOf(sourcePostId),
-            )
-            insertSyncOperation(
-                db = db,
-                deviceId = deviceId,
-                seq = seq,
-                operation = "delete_media",
-                entityId = mediaId,
-                payloadJson = deleteMediaOperationJson(
+            val groupMediaIds =
+                db.rawQuery(
+                    """
+                    SELECT id FROM post_media
+                    WHERE post_id = ? AND logical_index = ?
+                    ORDER BY CASE WHEN media_role = 'live_motion' THEN 0 ELSE 1 END, sort_index
+                    """.trimIndent(),
+                    arrayOf(media.postId, media.logicalIndex.toString()),
+                ).use { cursor ->
+                    buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+                }
+            var lastSeq = 0L
+            groupMediaIds.forEach { groupMediaId ->
+                val seq = nextLocalSeq(db)
+                val version = nextLogicalVersion(db)
+                writeEntityState(
+                    db,
+                    ENTITY_MEDIA,
+                    groupMediaId,
+                    STATE_DELETED,
+                    version,
                     deviceId,
                     seq,
-                    EntityVersion(version, deviceId, seq),
                     now,
-                    now,
-                    postId,
-                    mediaId,
-                ),
-                createdAt = now,
+                )
+                db.delete("post_media", "id = ?", arrayOf(groupMediaId))
+                insertSyncOperation(
+                    db = db,
+                    deviceId = deviceId,
+                    seq = seq,
+                    operation = "delete_media",
+                    entityId = groupMediaId,
+                    payloadJson = deleteMediaOperationJson(
+                        deviceId,
+                        seq,
+                        EntityVersion(version, deviceId, seq),
+                        now,
+                        now,
+                        media.postId,
+                        groupMediaId,
+                    ),
+                    createdAt = now,
+                )
+                writeMeta(db, "local_sync_seq", seq.toString())
+                lastSeq = seq
+            }
+            updatePostMediaSummary(db, media.postId, deviceId, lastSeq, now)
+            db.delete(
+                "capture_jobs",
+                "source_platform = ? AND source_post_id = ? AND status = 'completed'",
+                arrayOf(media.sourcePlatform, media.sourcePostId),
             )
-            writeMeta(db, "local_sync_seq", seq.toString())
             db.setTransactionSuccessful()
-            return DeleteMediaResult(postId = postId, postDeleteRequired = false)
+            return DeleteMediaResult(postId = media.postId, postDeleteRequired = false)
         } finally {
             db.endTransaction()
         }
@@ -550,6 +621,7 @@ class ArchiveDatabase(context: Context) :
     private fun deletePostInTransaction(
         db: SQLiteDatabase,
         postId: String,
+        sourcePlatform: String,
         sourcePostId: String,
         deviceId: String,
         now: Long,
@@ -569,8 +641,8 @@ class ArchiveDatabase(context: Context) :
         db.delete("posts", "id = ?", arrayOf(postId))
         db.delete(
             "capture_jobs",
-            "source_post_id = ? AND status = 'completed'",
-            arrayOf(sourcePostId),
+            "source_platform = ? AND source_post_id = ? AND status = 'completed'",
+            arrayOf(sourcePlatform, sourcePostId),
         )
         insertSyncOperation(
             db = db,
@@ -938,7 +1010,8 @@ class ArchiveDatabase(context: Context) :
     fun originalDescriptor(mediaId: String): OriginalMediaDescriptor? =
         readableDatabase.rawQuery(
             """
-            SELECT m.id, m.post_id, p.source_post_id, m.sort_index, m.media_type,
+            SELECT m.id, m.post_id, p.source_platform, p.source_post_id,
+                   m.sort_index, m.logical_index, m.media_role, m.media_type,
                    m.mime_type, m.original_sha256, m.original_size, m.local_original_path
             FROM post_media m
             JOIN posts p ON p.id = m.post_id
@@ -950,15 +1023,29 @@ class ArchiveDatabase(context: Context) :
             OriginalMediaDescriptor(
                 mediaId = cursor.getString(0),
                 postId = cursor.getString(1),
-                sourcePostId = cursor.getString(2),
-                sortIndex = cursor.getInt(3),
-                mediaType = cursor.getString(4),
-                mimeType = cursor.getString(5),
-                sha256 = cursor.getString(6),
-                expectedSize = cursor.getLong(7),
-                localPath = cursor.getNullableString(8),
+                sourcePlatform = cursor.getString(2),
+                sourcePostId = cursor.getString(3),
+                sortIndex = cursor.getInt(4),
+                logicalIndex = cursor.getInt(5),
+                mediaRole = cursor.getString(6),
+                mediaType = cursor.getString(7),
+                mimeType = cursor.getString(8),
+                sha256 = cursor.getString(9),
+                expectedSize = cursor.getLong(10),
+                localPath = cursor.getNullableString(11),
             )
         }
+
+    fun liveMotionDescriptor(mediaId: String): OriginalMediaDescriptor? {
+        val still = originalDescriptor(mediaId) ?: return null
+        if (still.mediaRole != MEDIA_ROLE_LIVE_STILL) return null
+        val motionId =
+            readableDatabase.rawQuery(
+                "SELECT id FROM post_media WHERE post_id = ? AND logical_index = ? AND media_role = ? LIMIT 1",
+                arrayOf(still.postId, still.logicalIndex.toString(), MEDIA_ROLE_LIVE_MOTION),
+            ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+        return motionId?.let(::originalDescriptor)
+    }
 
     fun updateOriginalPath(mediaId: String, sha256: String, localPath: String) {
         val values =
@@ -1023,11 +1110,14 @@ class ArchiveDatabase(context: Context) :
         val payload = operation.getJSONObject("payload")
         val post = payload.getJSONObject("post")
         require(post.getString("id") == entityId) { "同步帖子 ID 不匹配" }
+        val sourcePlatform = post.getString("sourcePlatform")
+        require(sourcePlatform in SUPPORTED_SOURCE_PLATFORMS) { "同步帖子来源平台无效" }
         val sourcePostId = post.getString("sourcePostId")
         require(SHORTCODE_PATTERN.matches(sourcePostId)) { "同步帖子来源编号无效" }
-        require(entityId == "instagram:$sourcePostId") {
+        require(entityId == "$sourcePlatform:$sourcePostId") {
             "同步帖子来源编号与 ID 不匹配"
         }
+        requireCanonicalSourceUrl(sourcePlatform, sourcePostId, post.getString("sourceUrl"))
         val avatarSha = post.optionalString("authorAvatarSha256")
         require(avatarSha == null || SHA256_PATTERN.matches(avatarSha)) {
             "同步头像校验值无效"
@@ -1042,11 +1132,14 @@ class ArchiveDatabase(context: Context) :
         }
         val mediaIds = linkedSetOf<String>()
         val sortIndexes = mutableSetOf<Int>()
+        val logicalRoles = mutableMapOf<Int, MutableSet<String>>()
         for (index in 0 until mediaArray.length()) {
             val media = mediaArray.getJSONObject(index)
             require(media.getString("postId") == entityId) { "同步媒体所属帖子不匹配" }
             val sortIndex = media.getInt("sortIndex")
             require(sortIndex >= 0 && sortIndexes.add(sortIndex)) { "同步媒体索引无效或重复" }
+            val logicalIndex = media.getInt("logicalIndex")
+            require(logicalIndex >= 0) { "同步逻辑媒体索引无效" }
             val mediaId = media.getString("id")
             require(mediaId == "$entityId:$sortIndex" && mediaIds.add(mediaId)) {
                 "同步媒体 ID 无效或重复"
@@ -1054,6 +1147,17 @@ class ArchiveDatabase(context: Context) :
             val mediaType = media.getString("mediaType")
             require(mediaType in SUPPORTED_MEDIA_TYPES) {
                 "同步媒体类型无效"
+            }
+            val mediaRole = media.getString("mediaRole")
+            require(mediaRole in SUPPORTED_MEDIA_ROLES) { "同步媒体角色无效" }
+            require(logicalRoles.getOrPut(logicalIndex, ::mutableSetOf).add(mediaRole)) {
+                "同步逻辑媒体角色重复"
+            }
+            require(mediaRole != MEDIA_ROLE_LIVE_STILL || mediaType == "image") {
+                "Live Photo 静态媒体类型无效"
+            }
+            require(mediaRole != MEDIA_ROLE_LIVE_MOTION || mediaType == "video") {
+                "Live Photo 动态媒体类型无效"
             }
             require(media.getString("mimeType").lowercase().startsWith("$mediaType/")) {
                 "同步媒体 MIME 类型无效"
@@ -1071,6 +1175,13 @@ class ArchiveDatabase(context: Context) :
             require(SHA256_PATTERN.matches(media.getString("thumbnailSha256"))) {
                 "同步缩略图校验值无效"
             }
+        }
+        logicalRoles.values.forEach { roles ->
+            require(
+                roles == setOf(MEDIA_ROLE_PRIMARY) ||
+                    roles == setOf(MEDIA_ROLE_LIVE_STILL) ||
+                    roles == setOf(MEDIA_ROLE_LIVE_STILL, MEDIA_ROLE_LIVE_MOTION),
+            ) { "同步逻辑媒体分组无效" }
         }
         require(post.getString("coverMediaId") in mediaIds) { "同步封面媒体不存在" }
         val incomingUpdatedAt = post.getLong("updatedAt")
@@ -1107,6 +1218,7 @@ class ArchiveDatabase(context: Context) :
         val values =
             ContentValues().apply {
                 put("id", entityId)
+                put("source_platform", sourcePlatform)
                 put("source_post_id", post.getString("sourcePostId"))
                 put("source_url", post.getString("sourceUrl"))
                 put("author_username", post.getString("authorUsername"))
@@ -1186,7 +1298,7 @@ class ArchiveDatabase(context: Context) :
         entityId: String,
         entityVersion: EntityVersion,
     ) {
-        val sourcePostId = sourcePostIdFromEntityId(entityId)
+        val sourceIdentity = sourceIdentityFromEntityId(entityId)
         val payload = operation.getJSONObject("payload")
         val deletedAt = payload.getLong("deletedAt")
         require(deletedAt > 0) { "同步帖子删除时间无效" }
@@ -1205,8 +1317,8 @@ class ArchiveDatabase(context: Context) :
         db.delete("posts", "id = ?", arrayOf(entityId))
         db.delete(
             "capture_jobs",
-            "source_post_id = ? AND status = 'completed'",
-            arrayOf(sourcePostId),
+            "source_platform = ? AND source_post_id = ? AND status = 'completed'",
+            arrayOf(sourceIdentity.first, sourceIdentity.second),
         )
     }
 
@@ -1223,7 +1335,7 @@ class ArchiveDatabase(context: Context) :
         require(entityId.startsWith("$postId:")) { "同步媒体删除所属帖子不匹配" }
         val deletedAt = payload.getLong("deletedAt")
         require(deletedAt > 0) { "同步媒体删除时间无效" }
-        val sourcePostId = sourcePostIdFromEntityId(postId)
+        val sourceIdentity = sourceIdentityFromEntityId(postId)
         if (!shouldApplyEntity(db, ENTITY_MEDIA, entityId, entityVersion)) return
 
         writeEntityState(
@@ -1246,8 +1358,8 @@ class ArchiveDatabase(context: Context) :
         )
         db.delete(
             "capture_jobs",
-            "source_post_id = ? AND status = 'completed'",
-            arrayOf(sourcePostId),
+            "source_platform = ? AND source_post_id = ? AND status = 'completed'",
+            arrayOf(sourceIdentity.first, sourceIdentity.second),
         )
     }
 
@@ -1278,6 +1390,8 @@ class ArchiveDatabase(context: Context) :
             ContentValues().apply {
                 put("post_id", postId)
                 put("sort_index", media.getInt("sortIndex"))
+                put("logical_index", media.getInt("logicalIndex"))
+                put("media_role", media.getString("mediaRole"))
                 put("media_type", media.getString("mediaType"))
                 put("mime_type", media.getString("mimeType"))
                 put("width", media.getInt("width"))
@@ -1321,17 +1435,22 @@ class ArchiveDatabase(context: Context) :
         }
     }
 
-    private fun sourcePostId(db: SQLiteDatabase, postId: String): String? =
+    private fun sourceIdentity(db: SQLiteDatabase, postId: String): Pair<String, String>? =
         db.rawQuery(
-            "SELECT source_post_id FROM posts WHERE id = ?",
+            "SELECT source_platform, source_post_id FROM posts WHERE id = ?",
             arrayOf(postId),
-        ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+        ).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0) to cursor.getString(1) else null
+        }
 
-    private fun sourcePostIdFromEntityId(postId: String): String {
-        require(postId.startsWith("instagram:")) { "同步帖子 ID 无效" }
-        val sourcePostId = postId.removePrefix("instagram:")
+    private fun sourceIdentityFromEntityId(postId: String): Pair<String, String> {
+        val separator = postId.indexOf(':')
+        require(separator > 0 && separator < postId.lastIndex) { "同步帖子 ID 无效" }
+        val sourcePlatform = postId.substring(0, separator)
+        require(sourcePlatform in SUPPORTED_SOURCE_PLATFORMS) { "同步帖子来源平台无效" }
+        val sourcePostId = postId.substring(separator + 1)
         require(SHORTCODE_PATTERN.matches(sourcePostId)) { "同步帖子来源编号无效" }
-        return sourcePostId
+        return sourcePlatform to sourcePostId
     }
 
     private fun mediaIdsForPost(db: SQLiteDatabase, postId: String): List<String> =
@@ -1522,6 +1641,7 @@ class ArchiveDatabase(context: Context) :
                 require(cursor.moveToFirst()) { "待同步帖子不存在" }
                 JSONObject()
                     .put("id", postId)
+                    .put("sourcePlatform", cursor.getString(cursor.getColumnIndexOrThrow("source_platform")))
                     .put("sourcePostId", cursor.getString(cursor.getColumnIndexOrThrow("source_post_id")))
                     .put("sourceUrl", cursor.getString(cursor.getColumnIndexOrThrow("source_url")))
                     .put("authorUsername", cursor.getString(cursor.getColumnIndexOrThrow("author_username")))
@@ -1545,6 +1665,8 @@ class ArchiveDatabase(context: Context) :
                         .put("id", cursor.getString(cursor.getColumnIndexOrThrow("id")))
                         .put("postId", postId)
                         .put("sortIndex", cursor.getInt(cursor.getColumnIndexOrThrow("sort_index")))
+                        .put("logicalIndex", cursor.getInt(cursor.getColumnIndexOrThrow("logical_index")))
+                        .put("mediaRole", cursor.getString(cursor.getColumnIndexOrThrow("media_role")))
                         .put("mediaType", cursor.getString(cursor.getColumnIndexOrThrow("media_type")))
                         .put("mimeType", cursor.getString(cursor.getColumnIndexOrThrow("mime_type")))
                         .put("width", cursor.getInt(cursor.getColumnIndexOrThrow("width")))
@@ -1629,6 +1751,14 @@ class ArchiveDatabase(context: Context) :
         val thumbnailPath: String?,
     )
 
+    private data class MediaOwner(
+        val postId: String,
+        val sourcePlatform: String,
+        val sourcePostId: String,
+        val logicalIndex: Int,
+        val mediaCount: Int,
+    )
+
     private data class EntityStateSnapshot(
         val entityType: String,
         val entityId: String,
@@ -1657,10 +1787,14 @@ class ArchiveDatabase(context: Context) :
         db.insertWithOnConflict("app_meta", null, values, SQLiteDatabase.CONFLICT_REPLACE)
     }
 
-    private fun findJobBySource(db: SQLiteDatabase, sourcePostId: String): CaptureJob? =
+    private fun findJobByRequest(
+        db: SQLiteDatabase,
+        sourcePlatform: String,
+        requestKey: String,
+    ): CaptureJob? =
         db.rawQuery(
-            "SELECT * FROM capture_jobs WHERE source_post_id = ? LIMIT 1",
-            arrayOf(sourcePostId),
+            "SELECT * FROM capture_jobs WHERE source_platform = ? AND request_key = ? LIMIT 1",
+            arrayOf(sourcePlatform, requestKey),
         ).use { cursor -> if (cursor.moveToFirst()) cursor.toCaptureJob() else null }
 
     private fun createBaseSchema(db: SQLiteDatabase) {
@@ -1669,7 +1803,8 @@ class ArchiveDatabase(context: Context) :
             """
             CREATE TABLE posts (
                 id TEXT PRIMARY KEY,
-                source_post_id TEXT NOT NULL UNIQUE,
+                source_platform TEXT NOT NULL,
+                source_post_id TEXT NOT NULL,
                 source_url TEXT NOT NULL,
                 author_username TEXT NOT NULL,
                 author_display_name TEXT NOT NULL,
@@ -1685,7 +1820,8 @@ class ArchiveDatabase(context: Context) :
                 updated_at INTEGER NOT NULL,
                 local_avatar_path TEXT,
                 sync_device_id TEXT NOT NULL DEFAULT '',
-                sync_seq INTEGER NOT NULL DEFAULT 0
+                sync_seq INTEGER NOT NULL DEFAULT 0,
+                UNIQUE(source_platform, source_post_id)
             )
             """.trimIndent(),
         )
@@ -1696,6 +1832,8 @@ class ArchiveDatabase(context: Context) :
                 id TEXT PRIMARY KEY,
                 post_id TEXT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
                 sort_index INTEGER NOT NULL,
+                logical_index INTEGER NOT NULL,
+                media_role TEXT NOT NULL,
                 media_type TEXT NOT NULL,
                 mime_type TEXT NOT NULL,
                 width INTEGER NOT NULL,
@@ -1721,7 +1859,9 @@ class ArchiveDatabase(context: Context) :
             CREATE TABLE IF NOT EXISTS capture_jobs (
                 id TEXT PRIMARY KEY,
                 source_url TEXT NOT NULL,
-                source_post_id TEXT NOT NULL UNIQUE,
+                source_platform TEXT NOT NULL,
+                request_key TEXT NOT NULL,
+                source_post_id TEXT,
                 status TEXT NOT NULL,
                 progress_current INTEGER NOT NULL DEFAULT 0,
                 progress_total INTEGER NOT NULL DEFAULT 0,
@@ -1730,7 +1870,8 @@ class ArchiveDatabase(context: Context) :
                 error_code TEXT,
                 error_message TEXT,
                 created_at INTEGER NOT NULL,
-                updated_at INTEGER NOT NULL
+                updated_at INTEGER NOT NULL,
+                UNIQUE(source_platform, request_key)
             )
             """.trimIndent(),
         )
@@ -1807,9 +1948,11 @@ class ArchiveDatabase(context: Context) :
     private fun Cursor.toCaptureJob(): CaptureJob =
         CaptureJob(
             id = getString(getColumnIndexOrThrow("id")),
-            sourcePostId = getString(getColumnIndexOrThrow("source_post_id")),
+            sourcePostId = getNullableString("source_post_id"),
             status = getString(getColumnIndexOrThrow("status")),
             attemptCount = getInt(getColumnIndexOrThrow("attempt_count")),
+            sourcePlatform = getString(getColumnIndexOrThrow("source_platform")),
+            requestKey = getString(getColumnIndexOrThrow("request_key")),
         )
 
     private fun Cursor.getNullableString(column: String): String? {
@@ -1828,7 +1971,7 @@ class ArchiveDatabase(context: Context) :
 
     companion object {
         const val DATABASE_NAME = "photobook.db"
-        const val DATABASE_VERSION = 1
+        const val DATABASE_VERSION = 2
         private const val RATE_LIMIT_MS = 30L * 60L * 1000L
         private const val ENTITY_POST = "post"
         private const val ENTITY_MEDIA = "media"
@@ -1837,8 +1980,12 @@ class ArchiveDatabase(context: Context) :
         private const val MAX_LOGICAL_VERSION = Long.MAX_VALUE - 1
         private val SHA256_PATTERN = Regex("^[0-9a-f]{64}$")
         private val SHORTCODE_PATTERN = Regex("^[A-Za-z0-9_-]+$")
-        private val MEDIA_ID_PATTERN = Regex("^instagram:[A-Za-z0-9_-]+:[0-9]+$")
+        private val MEDIA_ID_PATTERN = Regex("^(instagram|xiaohongshu):[A-Za-z0-9_-]+:[0-9]+$")
+        private val SUPPORTED_SOURCE_PLATFORMS =
+            setOf(SOURCE_PLATFORM_INSTAGRAM, SOURCE_PLATFORM_XIAOHONGSHU)
         private val SUPPORTED_MEDIA_TYPES = setOf("image", "video")
+        private val SUPPORTED_MEDIA_ROLES =
+            setOf(MEDIA_ROLE_PRIMARY, MEDIA_ROLE_LIVE_STILL, MEDIA_ROLE_LIVE_MOTION)
 
         private fun retryDelayMs(attemptCount: Int): Long {
             val exponent = (attemptCount - 1).coerceIn(0, 5)

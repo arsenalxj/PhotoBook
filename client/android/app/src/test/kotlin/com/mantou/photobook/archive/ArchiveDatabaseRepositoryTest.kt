@@ -340,6 +340,10 @@ class ArchiveDatabaseRepositoryTest {
                     operation.getJSONObject("payload").getJSONArray("media").getJSONObject(0)
                         .put("originalSha256", "../../outside")
                 },
+                mutated { operation ->
+                    operation.getJSONObject("payload").getJSONObject("post")
+                        .put("sourceUrl", "https://www.instagram.com/p/AnotherPost/")
+                },
                 mutated { operation -> operation.put("operation", "unsupported_operation") },
             )
 
@@ -548,15 +552,115 @@ class ArchiveDatabaseRepositoryTest {
         assertEquals(1, database.peerHighWater("repository", SECOND_DELETE_DEVICE))
     }
 
+    @Test
+    fun `resolved short-link identity is bound before completion`() {
+        val sourcePostId = "64abc"
+        val shareUrl = "https://xhslink.com/a/test"
+        val job =
+            database.enqueue(
+                sourceUrl = shareUrl,
+                sourcePlatform = SOURCE_PLATFORM_XIAOHONGSHU,
+                requestKey = shareUrl,
+            )
+        val claimed = database.claimNextJob()!!
+        assertTrue(
+            database.updateJobProgress(
+                job.id,
+                claimed.attemptCount,
+                "fetching",
+                "committing",
+                1,
+                1,
+            ),
+        )
+
+        assertTrue(
+            database.commitCompletedJob(
+                job.id,
+                claimed.attemptCount,
+                preparedPost(
+                    sourcePostId,
+                    "小红书短链",
+                    '8',
+                    sourcePlatform = SOURCE_PLATFORM_XIAOHONGSHU,
+                ),
+                LOCAL_DEVICE,
+            ),
+        )
+        val boundSourcePostId =
+            database.readableDatabase.rawQuery(
+                "SELECT source_post_id FROM capture_jobs WHERE id = ?",
+                arrayOf(job.id),
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                cursor.getString(0)
+            }
+        assertEquals(sourcePostId, boundSourcePostId)
+
+        database.deletePost("xiaohongshu:$sourcePostId", LOCAL_DEVICE)
+        assertEquals(
+            "queued",
+            database.enqueue(
+                sourceUrl = shareUrl,
+                sourcePlatform = SOURCE_PLATFORM_XIAOHONGSHU,
+                requestKey = shareUrl,
+            ).status,
+        )
+    }
+
+    @Test
+    fun `deleting live photo removes still and motion atomically`() {
+        val sourcePostId = "LiveDelete1"
+        val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
+        val base = preparedPost(sourcePostId, "Live Photo", '7', mediaCount = 3)
+        val livePost =
+            base.copy(
+                media =
+                    listOf(
+                        base.media[0].copy(logicalIndex = 0, mediaRole = MEDIA_ROLE_LIVE_STILL),
+                        base.media[1].copy(
+                            logicalIndex = 0,
+                            mediaRole = MEDIA_ROLE_LIVE_MOTION,
+                            mediaType = "video",
+                            mimeType = "video/mp4",
+                        ),
+                        base.media[2].copy(logicalIndex = 1, mediaRole = MEDIA_ROLE_PRIMARY),
+                    ),
+            )
+        database.commitCompletedJob(job.id, livePost, LOCAL_DEVICE)
+
+        val result = database.deleteMedia("instagram:$sourcePostId:0", LOCAL_DEVICE)
+
+        assertFalse(result.postDeleteRequired)
+        assertNull(database.originalDescriptor("instagram:$sourcePostId:0"))
+        assertNull(database.originalDescriptor("instagram:$sourcePostId:1"))
+        assertNotNull(database.originalDescriptor("instagram:$sourcePostId:2"))
+        val deletedIds =
+            database.readableDatabase.rawQuery(
+                "SELECT entity_id FROM sync_ops WHERE operation = 'delete_media' ORDER BY seq",
+                null,
+            ).use { cursor -> buildList { while (cursor.moveToNext()) add(cursor.getString(0)) } }
+        assertEquals(
+            listOf("instagram:$sourcePostId:1", "instagram:$sourcePostId:0"),
+            deletedIds,
+        )
+    }
+
     private fun preparedPost(
         sourcePostId: String,
         caption: String,
         hashChar: Char,
         mediaCount: Int = 1,
+        sourcePlatform: String = SOURCE_PLATFORM_INSTAGRAM,
     ): PreparedPost {
         return PreparedPost(
             sourcePostId = sourcePostId,
-            sourceUrl = "https://www.instagram.com/p/$sourcePostId/",
+            sourceUrl =
+                if (sourcePlatform == SOURCE_PLATFORM_XIAOHONGSHU) {
+                    "https://www.xiaohongshu.com/explore/$sourcePostId"
+                } else {
+                    "https://www.instagram.com/p/$sourcePostId/"
+                },
             authorUsername = "author",
             authorDisplayName = "Author",
             authorProfileUrl = "https://www.instagram.com/author/",
@@ -565,6 +669,7 @@ class ArchiveDatabaseRepositoryTest {
             caption = caption,
             publishedAt = 1_750_000_000_000,
             locationName = null,
+            sourcePlatform = sourcePlatform,
             media =
                 List(mediaCount) { index ->
                     val original =

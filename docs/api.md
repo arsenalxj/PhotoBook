@@ -98,6 +98,14 @@ fetch_post(shortcode: str, session_json: str | None = None) -> str
 
 传入 Session 时，成功响应的 `refreshedSession` 包含 Instaloader 更新后的 Cookie，只允许 Kotlin 立即重新加密保存。调用策略固定为匿名请求优先；只有匿名调用返回 `LOGIN_REQUIRED`，Kotlin 才读取 `ready` Session 并调用第二次。Python 层不得写数据库、下载媒体、读取 R2 密钥或保存默认 Instaloader session 文件。异常由 Kotlin 映射为稳定错误码：`NETWORK_ERROR`、`POST_UNAVAILABLE`、`LOGIN_REQUIRED`、`RATE_LIMITED` 或 `INVALID_RESPONSE`。
 
+### 小红书公开页桥
+
+```text
+xiaohongshu_bridge.fetch_post(request_url: str) -> str
+```
+
+输入只允许小红书 HTTPS 分享域名。小红书 App 复制出的 `http://xhslink.cn` 或 `http://xhslink.com` 官方短链在本机改写为 HTTPS 后再请求；其他 HTTP 地址仍拒绝。短链最多跟随 6 次跳转且每一跳重新校验域名；解析结果直接返回统一帖子 JSON，`sourcePlatform` 固定为 `xiaohongshu`。Live Photo 为同一 `logicalIndex` 返回相邻的 `live_still(image)` 和 `live_motion(video)`；普通图片、视频和 GIF 使用 `primary`。规范 `sourceUrl` 不携带分享 query 或 `xsec_token`。稳定错误码包括 `INVALID_URL`、`POST_UNAVAILABLE`、`VERIFICATION_REQUIRED`、`RATE_LIMITED`、`NETWORK_ERROR` 和 `INVALID_RESPONSE`。
+
 ## 4. R2 操作对象
 
 路径：`<prefix>/devices/<deviceId>/ops/<seq>.json`
@@ -112,11 +120,25 @@ fetch_post(shortcode: str, session_json: str | None = None) -> str
     "seq": 1
   },
   "operation": "upsert_post",
-  "entityId": "instagram:Abc123",
+  "entityId": "xiaohongshu:64abc",
   "createdAt": 1750000000000,
   "payload": {
-    "post": {},
-    "media": []
+    "post": {
+      "id": "xiaohongshu:64abc",
+      "sourcePlatform": "xiaohongshu",
+      "sourcePostId": "64abc"
+    },
+    "media": [
+      {
+        "id": "xiaohongshu:64abc:0",
+        "postId": "xiaohongshu:64abc",
+        "sortIndex": 0,
+        "logicalIndex": 0,
+        "mediaRole": "live_still",
+        "mediaType": "image",
+        "mimeType": "image/jpeg"
+      }
+    ]
   }
 }
 ```
@@ -125,7 +147,7 @@ fetch_post(shortcode: str, session_json: str | None = None) -> str
 
 `delete_post` 的 `entityId` 是帖子 ID，payload 只记录 `deletedAt`；`delete_media` 的 `entityId` 是媒体 ID，payload 同时记录 `postId`、`mediaId` 和 `deletedAt`。删除操作不携带文件，也不得删除 R2 内容寻址对象。
 
-接收端还必须验证 `mediaCount` 与媒体数组长度一致、`coverMediaId` 属于媒体数组，且每个媒体 ID 都严格等于 `<entityId>:<sortIndex>`。`sortIndex` 必须非负且在同帖内唯一；单媒体删除后允许索引不连续，以保持媒体 ID 稳定。所有媒体 SHA-256 必须是 64 位小写十六进制，禁止把未校验字段拼入本地文件路径。实体状态以 `entityVersion` 的 `(version, deviceId, seq)` 比较；逻辑版本必须是仍可安全递增的正整数，禁止溢出。业务行不存在时也必须保存墓碑，只有更新版本的 upsert 才能恢复实体。
+接收端还必须验证 `sourcePlatform` 只允许 `instagram / xiaohongshu`，帖子 ID 严格等于 `<sourcePlatform>:<sourcePostId>`。`mediaCount` 必须与媒体数组长度一致，`coverMediaId` 必须属于媒体数组，每个媒体 ID 都严格等于 `<entityId>:<sortIndex>`。`sortIndex` 和 `logicalIndex` 必须非负，`sortIndex` 在同帖内唯一；`mediaRole` 只允许 `primary / live_still / live_motion`，其中 `live_still` 必须为图片、`live_motion` 必须为视频。单媒体删除后允许索引不连续，以保持媒体 ID 稳定。GIF 仍使用 `mediaType=image + mimeType=image/gif`。所有媒体 SHA-256 必须是 64 位小写十六进制，禁止把未校验字段拼入本地文件路径。实体状态以 `entityVersion` 的 `(version, deviceId, seq)` 比较；逻辑版本必须是仍可安全递增的正整数，禁止溢出。业务行不存在时也必须保存墓碑，只有更新版本的 upsert 才能恢复实体。
 
 切换资料库时，本设备会在历史本地操作之后追加当前 active 帖子和 deleted 帖子/媒体墓碑快照。快照沿用 `sync_entity_states` 中的原始 `entityVersion`，只分配新的顶层传输 seq，避免旧设备快照被误判为更新业务状态。媒体上传以每条操作 payload 的哈希为准，不能用帖子表的现值代替历史操作引用。
 
@@ -144,6 +166,6 @@ fetch_post(shortcode: str, session_json: str | None = None) -> str
 ## 6. 当前格式约束
 
 - R2 直接使用 `<prefix>/devices/` 和 `<prefix>/media/`，JSON 不携带协议版本字段。
-- 项目处于开发阶段，格式变化后直接卸载 App 并清空对应 R2 prefix，不保留兼容或迁移逻辑。
+- 当前 SQLite 结构版本为 v2。项目处于开发阶段，v1 不迁移；格式变化后直接卸载 App 并清空对应 R2 prefix，不保留旧 SQLite 或 R2 兼容逻辑。
 - 所有时间使用 UTC epoch milliseconds；同步正确性不依赖设备时间排序。
 - JSON key 使用 lowerCamelCase；R2 object key 使用小写英文目录。

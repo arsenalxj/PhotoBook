@@ -20,6 +20,8 @@ MinIO 9.0.3 默认依赖的 `simple-xml-safe` 需要 Android 不提供的 StAX�
 
 ## 2. 固定 Instaloader
 
+Live Photo 转 GIF 固定使用 `com.squareup:gifencoder:0.10.1`，来源为 Maven Central，许可证为 Apache-2.0。只在用户明确选择“保存/分享为 GIF”时本机转码；原生 GIF 不重新编码。
+
 客户端必须使用项目记录的 fork 提交：
 
 ```text
@@ -45,7 +47,7 @@ PYTHONPATH=android/app/src/main/python \
   --with idna==3.18 \
   --with urllib3==2.7.0 \
   --with certifi==2026.7.22 \
-  pytest android/app/src/test/python/test_photobook_bridge.py -q
+  pytest android/app/src/test/python -q
 cd android
 ./gradlew :app:testDebugUnitTest :app:lintDebug
 cd ..

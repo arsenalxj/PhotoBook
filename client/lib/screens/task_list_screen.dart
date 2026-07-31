@@ -143,6 +143,7 @@ class _TaskListScreenState extends ConsumerState<TaskListScreen> {
   }
 
   bool _needsLogin(AppController controller, ArchiveJob job) =>
+      job.sourcePlatform == 'instagram' &&
       job.errorCode == 'LOGIN_REQUIRED' &&
       controller.instagramSession?.status != InstagramSessionStatus.ready;
 

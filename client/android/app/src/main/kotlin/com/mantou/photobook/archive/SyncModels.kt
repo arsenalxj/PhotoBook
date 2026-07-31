@@ -54,6 +54,9 @@ data class OriginalMediaDescriptor(
     val sha256: String,
     val expectedSize: Long,
     val localPath: String?,
+    val sourcePlatform: String = SOURCE_PLATFORM_INSTAGRAM,
+    val logicalIndex: Int = sortIndex,
+    val mediaRole: String = MEDIA_ROLE_PRIMARY,
 )
 
 data class DeleteMediaResult(

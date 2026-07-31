@@ -2,14 +2,14 @@
 
 ## 项目目标
 
-PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系统分享链接，在手机内通过 Chaquopy 运行 Instaloader，并由 Android 前台服务完成解析、下载、落库和可选 Cloudflare R2 同步。项目不依赖自建服务器、Worker、D1、PhotoBook 账号或设备配对；Instagram 登录是可选的本机会话能力。
+PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 Instagram 和小红书公开帖子。App 接收系统分享链接，在手机内通过 Chaquopy 运行平台解析器，并由 Android 前台服务完成解析、下载、落库和可选 Cloudflare R2 同步。项目不依赖自建服务器、Worker、D1、PhotoBook 账号或设备配对；Instagram 登录是可选的本机会话能力，小红书只支持匿名公开内容。
 
 ## 目录约定
 
 - `client/`：Flutter Android 客户端，也是唯一运行时应用。
 - `client/android/app/src/main/kotlin/com/mantou/photobook/archive/`：分享接收、前台服务、任务执行、本地数据库和 R2 同步。
 - `client/android/app/src/main/kotlin/com/mantou/photobook/update/`：GitHub Release APK 下载、校验和系统安装。
-- `client/android/app/src/main/python/`：Chaquopy Python 桥，只承载 Instaloader 解析。
+- `client/android/app/src/main/python/`：Chaquopy Python 桥，只承载 Instagram Instaloader 与小红书公开页解析。
 - `client/android/python/wheels/`：固定版本的纯 Python wheel；来源和校验值必须记录。
 - `client/lib/`：Flutter UI、页面状态和原生桥接。
 - `client/tool/`：构建与发布使用的确定性元数据校验脚本，不承载运行时业务。
@@ -23,6 +23,9 @@ PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系�
 ## 数据归属
 
 - 本机 SQLite 是本机帖子元数据、媒体清单、抓取任务、失败记录和同步状态的权威数据源。
+- 帖子 ID 固定为 `<source_platform>:<source_post_id>`；`source_platform` 当前只允许 `instagram` 和 `xiaohongshu`。不同平台的原始帖子 ID 不共享命名空间。
+- 媒体 ID 固定为 `<post_id>:<sort_index>`。`logical_index` 表示用户看到的逻辑媒体序号，`media_role` 只允许 `primary / live_still / live_motion`；Live Photo 的静态图和动态视频使用相同 `logical_index`。
+- `media_type` 只允许 `image / video`；GIF 使用 `media_type=image + mime_type=image/gif`，不增加独立媒体类型。
 - 本机媒体文件保存在 App 沙盒；SQLite 只保存路径、大小和 SHA-256，不保存二进制。
 - R2 是用户可选配置的共享资料库。未配置 R2 时，本地归档功能必须完整可用。
 - 配置相同规范化 `endpoint + bucket + prefix` 的设备视为同一资料库；Access Key 不参与资料库身份判断。
@@ -47,6 +50,7 @@ PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系�
 
 - Android `applicationId`、namespace 和 Kotlin 根包统一为 `com.mantou.photobook`；Flutter 原生通道使用同一前缀。
 - `ACTION_SEND` 必须在原生 Activity 可见期间先持久化任务，再启动 `dataSync` 前台服务。
+- 剪贴板只允许在 App 冷启动或重新进入前台后读取一次；系统分享启动时不得同时读取。自动模式只处理最近 10 分钟复制的白名单帖子链接，同一规范化链接自动导入一次，不保存或记录其他剪贴板内容；首页必须保留不受时间限制的手动粘贴入口。
 - 前台服务必须立即显示通知；所有任务结束后移除通知并停止自身。
 - Instaloader 同步调用只能在串行后台队列运行，禁止阻塞主线程。
 - Instaloader 单次网络请求超时固定为 30 秒；运行中任务取消后进入 `cancelling`，解析或下载返回并完成文件回滚、临时目录清理后才进入 `failed + CANCELLED`。取消期间不得读取 Session、发起认证重试或保存刷新后的 Session。
@@ -64,6 +68,7 @@ PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系�
 
 - 本地业务写入和同步 outbox 必须位于同一 SQLite 事务。
 - 当前唯一同步格式只允许 `upsert_post`、`delete_post` 和 `delete_media`；收到其他操作必须拒绝且不得推进设备高水位。
+- `upsert_post` 必须携带帖子 `sourcePlatform`，以及每个媒体的 `logicalIndex + mediaRole`。所有设备必须先升级到支持当前格式的版本，再向同一资料库写入新操作。
 - 远端操作路径为 `<prefix>/devices/<device_id>/ops/<20 位 seq>.json`，不设置协议版本目录或版本字段。
 - 操作顶层 `device_id + seq` 只表示传输顺序；帖子和媒体状态使用独立的 `entity_version(version + device_id + seq)` 确定新旧。墓碑必须能在业务行不存在时独立保存，旧 upsert 不得复活已删除实体。
 - 远端逻辑版本必须处于可递增的正整数范围；接收和本地递增都必须显式防止 `Long` 溢出。
@@ -80,6 +85,7 @@ PhotoBook 是个人使用的 Android Instagram 帖子归档 App。App 接收系�
 
 - 抓取临时文件放 App 沙盒 `archive/jobs/<job_id>/`。
 - 更新临时文件放 App 缓存 `updates/`，下载写 `.part`，完成校验后原子改名；失败、取消和过期缓存必须清理。
+- Live Photo 转 GIF 临时文件放 App 缓存 `share_exports/`；系统分享面板可能延迟读取，拉起后不得立即删除，只清理超过 24 小时的文件。
 - 永久媒体分别放 `archive/avatars/`、`archive/thumbnails/` 和 `archive/originals/`。
 - 下载先写 `.part`，完成大小与 SHA-256 校验后原子改名。
 - 成功或最终失败都清理对应任务临时目录；启动时清理超过 24 小时的遗留 `.part` 和任务目录。

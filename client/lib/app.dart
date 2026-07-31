@@ -38,6 +38,7 @@ class _PhotoBookAppState extends ConsumerState<PhotoBookApp> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
         _updateSavingSnackBar(ref.read(appControllerProvider).savingCount);
+        unawaited(ref.read(appControllerProvider).setForeground(true));
         unawaited(ref.read(updateControllerProvider).checkOnLaunch());
       }
     });

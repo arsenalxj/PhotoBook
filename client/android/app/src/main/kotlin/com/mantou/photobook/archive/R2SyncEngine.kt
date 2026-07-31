@@ -348,6 +348,7 @@ class R2SyncEngine(
         when (mimeType.lowercase()) {
             "image/png" -> ".png"
             "image/webp" -> ".webp"
+            "image/gif" -> ".gif"
             "video/quicktime" -> ".mov"
             "video/webm" -> ".webm"
             "video/mp4" -> ".mp4"

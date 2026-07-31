@@ -15,6 +15,7 @@ from instaloader.exceptions import (
     QueryReturnedNotFoundException,
     TooManyRequestsException,
 )
+from requests.exceptions import SSLError, Timeout
 
 
 class _PostWithoutLocation(SimpleNamespace):
@@ -278,6 +279,22 @@ class SessionBridgeTest(unittest.TestCase):
         code, _ = photobook_bridge._classify_error(wrapped, authenticated=False)
 
         self.assertEqual(code, "RATE_LIMITED")
+
+    def test_classifies_requests_transport_errors_as_retryable_network_error(self) -> None:
+        errors = (
+            SSLError("SSL: UNEXPECTED_EOF_WHILE_READING"),
+            Timeout("request timed out"),
+        )
+
+        for error in errors:
+            with self.subTest(exception_name=type(error).__name__):
+                code, message = photobook_bridge._classify_error(
+                    error,
+                    authenticated=False,
+                )
+
+                self.assertEqual(code, "NETWORK_ERROR")
+                self.assertTrue(message)
 
     def test_classifies_authenticated_abort_as_expired_login(self) -> None:
         login_redirect = AbortDownloadException(

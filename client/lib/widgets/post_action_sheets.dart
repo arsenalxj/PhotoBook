@@ -8,6 +8,41 @@ import '../models/post.dart';
 
 enum MediaAction { save, delete }
 
+Future<MediaExportMode?> showLivePhotoExportSheet({
+  required BuildContext context,
+  required bool forShare,
+}) => showModalBottomSheet<MediaExportMode>(
+  context: context,
+  builder: (sheetContext) => SafeArea(
+    child: Padding(
+      padding: const EdgeInsets.fromLTRB(8, 10, 8, 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const _SheetHandle(),
+          const SizedBox(height: 8),
+          ListTile(
+            leading: const Icon(Icons.image_outlined),
+            title: Text(forShare ? '分享静态图' : '保存静态图'),
+            onTap: () =>
+                Navigator.pop(sheetContext, MediaExportMode.staticImage),
+          ),
+          ListTile(
+            leading: const Icon(Icons.gif_box_outlined),
+            title: Text(forShare ? '转换为 GIF 分享' : '转换为 GIF 保存'),
+            onTap: () => Navigator.pop(sheetContext, MediaExportMode.gif),
+          ),
+          ListTile(
+            leading: const Icon(Icons.videocam_outlined),
+            title: Text(forShare ? '分享为视频' : '保存为视频'),
+            onTap: () => Navigator.pop(sheetContext, MediaExportMode.video),
+          ),
+        ],
+      ),
+    ),
+  ),
+);
+
 Future<bool> showDeletePostSheet({
   required BuildContext context,
   required ArchivedPost post,
@@ -39,7 +74,9 @@ Future<bool> showDeletePostSheet({
                   ),
                   const SizedBox(height: 8),
                   Text(
-                    '${post.authorDisplayName}  ·  @${post.authorUsername}',
+                    post.sourcePlatform == PostSourcePlatform.instagram
+                        ? '${post.authorDisplayName}  ·  @${post.authorUsername}'
+                        : '${post.authorDisplayName}  ·  小红书',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(color: AppTheme.muted),
@@ -119,7 +156,8 @@ Future<void> showShareMediaSheet({
   required BuildContext context,
   required ArchivedPost post,
   required String initialMediaId,
-  required Future<void> Function(List<PostMedia>) onShare,
+  required Future<void> Function(List<PostMedia>, MediaExportMode exportMode)
+  onShare,
 }) async {
   await showModalBottomSheet<void>(
     context: context,
@@ -128,6 +166,7 @@ Future<void> showShareMediaSheet({
     enableDrag: false,
     builder: (sheetContext) {
       final selectedIds = <String>{initialMediaId};
+      var liveExportMode = MediaExportMode.staticImage;
       var isSharing = false;
       String? errorMessage;
       return StatefulBuilder(
@@ -136,7 +175,7 @@ Future<void> showShareMediaSheet({
             if (isSharing) return;
             setState(() {
               errorMessage = null;
-              if (media.mediaType == PostMediaType.video) {
+              if (media.mediaType == PostMediaType.video || media.isLivePhoto) {
                 selectedIds
                   ..clear()
                   ..add(media.id);
@@ -145,12 +184,20 @@ Future<void> showShareMediaSheet({
               final selectedVideo = post.media.any(
                 (item) =>
                     selectedIds.contains(item.id) &&
-                    item.mediaType == PostMediaType.video,
+                    (item.mediaType == PostMediaType.video || item.isLivePhoto),
               );
               if (selectedVideo) selectedIds.clear();
               if (!selectedIds.add(media.id)) selectedIds.remove(media.id);
             });
           }
+
+          final selectedMedia = post.media
+              .where((item) => selectedIds.contains(item.id))
+              .toList(growable: false);
+          final selectedLive =
+              selectedMedia.length == 1 && selectedMedia.single.isLivePhoto
+              ? selectedMedia.single
+              : null;
 
           return PopScope(
             canPop: !isSharing,
@@ -172,7 +219,7 @@ Future<void> showShareMediaSheet({
                       children: [
                         const Expanded(
                           child: Text(
-                            '选择要分享的原媒体',
+                            '选择要分享的媒体',
                             style: TextStyle(
                               fontSize: 20,
                               fontWeight: FontWeight.w700,
@@ -215,6 +262,34 @@ Future<void> showShareMediaSheet({
                         );
                       },
                     ),
+                    if (selectedLive?.hasLiveMotion == true) ...[
+                      const SizedBox(height: 16),
+                      SegmentedButton<MediaExportMode>(
+                        segments: const [
+                          ButtonSegment(
+                            value: MediaExportMode.staticImage,
+                            icon: Icon(Icons.image_outlined),
+                            label: Text('静态图'),
+                          ),
+                          ButtonSegment(
+                            value: MediaExportMode.gif,
+                            icon: Icon(Icons.gif_box_outlined),
+                            label: Text('GIF'),
+                          ),
+                          ButtonSegment(
+                            value: MediaExportMode.video,
+                            icon: Icon(Icons.videocam_outlined),
+                            label: Text('视频'),
+                          ),
+                        ],
+                        selected: {liveExportMode},
+                        onSelectionChanged: isSharing
+                            ? null
+                            : (selection) => setState(
+                                () => liveExportMode = selection.single,
+                              ),
+                      ),
+                    ],
                     if (errorMessage != null) ...[
                       const SizedBox(height: 12),
                       Text(
@@ -235,12 +310,12 @@ Future<void> showShareMediaSheet({
                                 errorMessage = null;
                               });
                               try {
-                                final selected = post.media
-                                    .where(
-                                      (item) => selectedIds.contains(item.id),
-                                    )
-                                    .toList(growable: false);
-                                await onShare(selected);
+                                final exportMode = selectedLive == null
+                                    ? MediaExportMode.original
+                                    : selectedLive.hasLiveMotion
+                                    ? liveExportMode
+                                    : MediaExportMode.staticImage;
+                                await onShare(selectedMedia, exportMode);
                                 if (sheetContext.mounted) {
                                   Navigator.of(sheetContext).pop();
                                 }
@@ -262,7 +337,7 @@ Future<void> showShareMediaSheet({
                             )
                           : const Icon(Icons.share_outlined),
                       label: Text(
-                        isSharing ? '正在准备原文件' : '分享 ${selectedIds.length} 项',
+                        isSharing ? '正在准备媒体' : '分享 ${selectedIds.length} 项',
                       ),
                     ),
                   ],

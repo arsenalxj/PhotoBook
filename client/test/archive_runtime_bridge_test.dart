@@ -54,6 +54,7 @@ void main() {
         .setMockMethodCallHandler(methodChannel, (call) async {
           calls.add(call);
           return switch (call.method) {
+            'importClipboard' => 'queued',
             'captureInstagramSession' => <String, Object>{
               'status': 'ready',
               'username': 'archive_user',
@@ -76,6 +77,7 @@ void main() {
       eventChannel: eventChannel,
     );
 
+    final clipboardOutcome = await bridge.importClipboard(automatic: true);
     await bridge.beginInstagramLogin();
     final session = await bridge.captureInstagramSession();
     await bridge.cancelInstagramLogin();
@@ -93,7 +95,9 @@ void main() {
     expect(session.status, InstagramSessionStatus.ready);
     expect(deleted.postDeleteRequired, isFalse);
     expect(savedName, 'PhotoBook_post-1_1.jpg');
+    expect(clipboardOutcome, ClipboardImportOutcome.queued);
     expect(calls.map((call) => call.method), [
+      'importClipboard',
       'beginInstagramLogin',
       'captureInstagramSession',
       'cancelInstagramLogin',
@@ -106,14 +110,19 @@ void main() {
       'shareMedia',
       'saveMedia',
     ]);
-    expect(calls[4].arguments, {'jobId': 'job-active'});
-    expect(calls[5].arguments, {'jobId': 'job-failed'});
-    expect(calls[6].arguments, {'jobId': 'job-cancelled'});
-    expect(calls[7].arguments, {'postId': 'post-1'});
-    expect(calls[8].arguments, {'mediaId': 'media-1'});
-    expect(calls[9].arguments, {
+    expect(calls[0].arguments, {'automatic': true});
+    expect(calls[5].arguments, {'jobId': 'job-active'});
+    expect(calls[6].arguments, {'jobId': 'job-failed'});
+    expect(calls[7].arguments, {'jobId': 'job-cancelled'});
+    expect(calls[8].arguments, {'postId': 'post-1'});
+    expect(calls[9].arguments, {'mediaId': 'media-1'});
+    expect(calls[10].arguments, {
       'mediaIds': ['media-1', 'media-2'],
+      'exportMode': 'original',
     });
-    expect(calls[10].arguments, {'mediaId': 'media-1'});
+    expect(calls[11].arguments, {
+      'mediaId': 'media-1',
+      'exportMode': 'original',
+    });
   });
 }

@@ -42,19 +42,39 @@ class MediaPipeline(
             val avatar =
                 prepareAvatar(
                     remote.authorAvatarUrl,
+                    remote.sourcePlatform,
                     jobDirectory,
                     createdFiles,
                     isAttemptActive,
                 )
             val preparedMedia =
-                remote.media.mapIndexed { index, item ->
+                buildList {
+                    remote.media.forEachIndexed { index, item ->
                     ensureAttemptActive(isAttemptActive)
-                    val prepared =
-                        prepareMedia(item, jobDirectory, createdFiles, isAttemptActive)
+                    val filesBefore = createdFiles.toSet()
+                    try {
+                        add(
+                            prepareMedia(
+                                item,
+                                remote.sourcePlatform,
+                                jobDirectory,
+                                createdFiles,
+                                isAttemptActive,
+                            ),
+                        )
+                    } catch (error: ArchiveException) {
+                        if (item.mediaRole != MEDIA_ROLE_LIVE_MOTION) throw error
+                        val motionFiles = createdFiles - filesBefore
+                        rollbackFiles(motionFiles.map(File::getAbsolutePath))
+                        createdFiles.removeAll(motionFiles)
+                    }
                     ensureAttemptActive(isAttemptActive)
                     onProgress(index + 1, remote.media.size)
-                    prepared
+                    }
                 }
+            if (preparedMedia.isEmpty()) {
+                throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "帖子没有可保存的媒体")
+            }
             PreparedPost(
                 sourcePostId = remote.sourcePostId,
                 sourceUrl = remote.sourceUrl,
@@ -68,6 +88,7 @@ class MediaPipeline(
                 locationName = remote.locationName,
                 media = preparedMedia,
                 createdFilePaths = createdFiles.map(File::getAbsolutePath),
+                sourcePlatform = remote.sourcePlatform,
             )
         } catch (error: Exception) {
             rollbackFiles(createdFiles.map(File::getAbsolutePath))
@@ -100,6 +121,7 @@ class MediaPipeline(
 
     private fun prepareAvatar(
         url: String?,
+        sourcePlatform: String,
         jobDirectory: File,
         createdFiles: MutableSet<File>,
         isAttemptActive: () -> Boolean,
@@ -111,6 +133,7 @@ class MediaPipeline(
                     url,
                     File(jobDirectory, "avatar.part"),
                     "image",
+                    sourcePlatform,
                     isAttemptActive,
                 )
             ensureAttemptActive(isAttemptActive)
@@ -129,6 +152,7 @@ class MediaPipeline(
 
     private fun prepareMedia(
         remote: RemoteMedia,
+        sourcePlatform: String,
         jobDirectory: File,
         createdFiles: MutableSet<File>,
         isAttemptActive: () -> Boolean,
@@ -138,6 +162,7 @@ class MediaPipeline(
                 remote.url,
                 File(jobDirectory, "media-${remote.sortIndex}.part"),
                 remote.mediaType,
+                sourcePlatform,
                 isAttemptActive,
             )
         ensureAttemptActive(isAttemptActive)
@@ -190,6 +215,8 @@ class MediaPipeline(
             thumbnailSha256 = thumbnail.sha256,
             localOriginalPath = original.file.absolutePath,
             localThumbnailPath = thumbnail.file.absolutePath,
+            logicalIndex = remote.logicalIndex,
+            mediaRole = remote.mediaRole,
         )
     }
 
@@ -197,20 +224,15 @@ class MediaPipeline(
         url: String,
         target: File,
         mediaType: String,
+        sourcePlatform: String,
         isAttemptActive: () -> Boolean,
     ): DownloadedFile {
         ensureAttemptActive(isAttemptActive)
-        val connection =
-            (URL(url).openConnection() as HttpURLConnection).apply {
-                instanceFollowRedirects = true
-                connectTimeout = 30_000
-                readTimeout = 60_000
-                requestMethod = "GET"
-                setRequestProperty("User-Agent", USER_AGENT)
-                setRequestProperty("Accept", "*/*")
-            }
+        var connection: HttpURLConnection? = null
         try {
-            val status = connection.responseCode
+            val activeConnection = openMediaConnection(url, sourcePlatform, isAttemptActive)
+            connection = activeConnection
+            val status = activeConnection.responseCode
             if (status !in 200..299) {
                 val code =
                     when {
@@ -220,12 +242,12 @@ class MediaPipeline(
                     }
                 throw ArchiveException(
                     code,
-                    "Instagram 媒体下载失败（HTTP $status）",
+                    "媒体下载失败（HTTP $status）",
                 )
             }
             val digest = MessageDigest.getInstance("SHA-256")
             FileOutputStream(target, false).use { output ->
-                connection.inputStream.use { input ->
+                activeConnection.inputStream.use { input ->
                     val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
                     var nextCancellationCheck =
                         System.nanoTime() + CANCELLATION_CHECK_INTERVAL_NANOS
@@ -245,9 +267,9 @@ class MediaPipeline(
                 }
             }
             if (target.length() <= 0) {
-                throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "Instagram 返回了空媒体文件")
+                throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "媒体地址返回了空文件")
             }
-            val mimeType = normalizeMimeType(connection.contentType, mediaType)
+            val mimeType = normalizeMimeType(activeConnection.contentType, mediaType, target)
             return DownloadedFile(target, digest.digest().toHex(), mimeType)
         } catch (error: ArchiveException) {
             target.delete()
@@ -259,12 +281,73 @@ class MediaPipeline(
             target.delete()
             throw ArchiveException("NETWORK_ERROR", "媒体下载失败，请检查系统网络或 VPN", error)
         } finally {
-            connection.disconnect()
+            connection?.disconnect()
         }
+    }
+
+    private fun openMediaConnection(
+        value: String,
+        sourcePlatform: String,
+        isAttemptActive: () -> Boolean,
+    ): HttpURLConnection {
+        var current = value
+        repeat(MAX_MEDIA_REDIRECTS + 1) { redirectCount ->
+            ensureAttemptActive(isAttemptActive)
+            validateMediaUrl(current, sourcePlatform)
+            val connection =
+                (URL(current).openConnection() as HttpURLConnection).apply {
+                    instanceFollowRedirects = false
+                    connectTimeout = 30_000
+                    readTimeout = 60_000
+                    requestMethod = "GET"
+                    setRequestProperty("User-Agent", USER_AGENT)
+                    setRequestProperty("Accept", "*/*")
+                    if (sourcePlatform == SOURCE_PLATFORM_XIAOHONGSHU) {
+                        setRequestProperty("Referer", "https://www.xiaohongshu.com/")
+                    }
+                }
+            val status =
+                try {
+                    connection.responseCode
+                } catch (error: Exception) {
+                    connection.disconnect()
+                    throw error
+                }
+            if (status !in REDIRECT_STATUSES) return connection
+            if (redirectCount >= MAX_MEDIA_REDIRECTS) {
+                connection.disconnect()
+                throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "媒体地址跳转次数过多")
+            }
+            val location = connection.getHeaderField("Location")
+            connection.disconnect()
+            if (location.isNullOrBlank()) {
+                throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "媒体地址返回了无效跳转")
+            }
+            current = resolveMediaRedirect(current, location, sourcePlatform)
+        }
+        throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "媒体地址跳转次数过多")
     }
 
     private fun ensureAttemptActive(isAttemptActive: () -> Boolean) {
         if (!isAttemptActive()) throw ArchiveAttemptStoppedException()
+    }
+
+    private fun validateMediaUrl(value: String, sourcePlatform: String) {
+        val url = runCatching { URL(value) }.getOrNull()
+            ?: throw ArchiveException("INVALID_RESPONSE", "媒体地址无效")
+        if (url.protocol != "https" || url.userInfo != null || url.port !in listOf(-1, 443)) {
+            throw ArchiveException("INVALID_RESPONSE", "媒体地址不安全")
+        }
+        val host = url.host.lowercase()
+        val allowedSuffixes =
+            if (sourcePlatform == SOURCE_PLATFORM_XIAOHONGSHU) {
+                XIAOHONGSHU_MEDIA_SUFFIXES
+            } else {
+                INSTAGRAM_MEDIA_SUFFIXES
+            }
+        if (allowedSuffixes.none { host == it || host.endsWith(".$it") }) {
+            throw ArchiveException("INVALID_RESPONSE", "媒体地址不属于来源平台")
+        }
     }
 
     private fun imageMetadata(file: File, remote: RemoteMedia): MediaMetadata {
@@ -423,7 +506,14 @@ class MediaPipeline(
         return digest.digest().toHex()
     }
 
-    private fun normalizeMimeType(contentType: String?, mediaType: String): String {
+    private fun normalizeMimeType(
+        contentType: String?,
+        mediaType: String,
+        file: File,
+    ): String {
+        if (mediaType == "image") {
+            imageMimeTypeFromHeader(file)?.let { return it }
+        }
         val normalized = contentType?.substringBefore(';')?.trim()?.lowercase().orEmpty()
         if (normalized.startsWith("image/") || normalized.startsWith("video/")) return normalized
         return if (mediaType == "video") "video/mp4" else "image/jpeg"
@@ -433,6 +523,7 @@ class MediaPipeline(
         when (mimeType.lowercase()) {
             "image/png" -> ".png"
             "image/webp" -> ".webp"
+            "image/gif" -> ".gif"
             "video/quicktime" -> ".mov"
             "video/webm" -> ".webm"
             "video/mp4" -> ".mp4"
@@ -452,7 +543,50 @@ class MediaPipeline(
         private const val AVATAR_MAX_EDGE = 256
         private const val STALE_FILE_AGE_MS = 24L * 60L * 60L * 1000L
         private const val CANCELLATION_CHECK_INTERVAL_NANOS = 250_000_000L
+        private const val MAX_MEDIA_REDIRECTS = 5
+        private val REDIRECT_STATUSES = setOf(301, 302, 303, 307, 308)
         private val SHA256_PATTERN = Regex("^[0-9a-f]{64}$")
+        private val INSTAGRAM_MEDIA_SUFFIXES =
+            setOf("cdninstagram.com", "fbcdn.net", "instagram.com")
+        private val XIAOHONGSHU_MEDIA_SUFFIXES =
+            setOf("xhscdn.com", "xhscdn.net", "xhsimg.com", "xiaohongshu.com", "rednote.com")
+
+        internal fun imageMimeTypeFromHeader(file: File): String? {
+            val signature = FileInputStream(file).use { input -> ByteArray(6).also { input.read(it) } }
+            return if (signature.toString(Charsets.US_ASCII) in setOf("GIF87a", "GIF89a")) {
+                "image/gif"
+            } else {
+                null
+            }
+        }
+
+        internal fun resolveMediaRedirect(
+            current: String,
+            location: String,
+            sourcePlatform: String,
+        ): String {
+            val resolved =
+                runCatching { URL(URL(current), location).toString() }
+                    .getOrElse {
+                        throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "媒体地址返回了无效跳转", it)
+                    }
+            val url = runCatching { URL(resolved) }.getOrNull()
+                ?: throw ArchiveException("INVALID_RESPONSE", "媒体地址无效")
+            if (url.protocol != "https" || url.userInfo != null || url.port !in listOf(-1, 443)) {
+                throw ArchiveException("INVALID_RESPONSE", "媒体地址不安全")
+            }
+            val host = url.host.lowercase()
+            val allowedSuffixes =
+                if (sourcePlatform == SOURCE_PLATFORM_XIAOHONGSHU) {
+                    XIAOHONGSHU_MEDIA_SUFFIXES
+                } else {
+                    INSTAGRAM_MEDIA_SUFFIXES
+                }
+            if (allowedSuffixes.none { host == it || host.endsWith(".$it") }) {
+                throw ArchiveException("INVALID_RESPONSE", "媒体地址不属于来源平台")
+            }
+            return resolved
+        }
         private const val USER_AGENT =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 Chrome/126 Mobile Safari/537.36"
 

@@ -19,7 +19,9 @@ void main() {
   late Directory tempDirectory;
 
   setUp(() {
-    tempDirectory = Directory.systemTemp.createTempSync('photobook_detail_test_');
+    tempDirectory = Directory.systemTemp.createTempSync(
+      'photobook_detail_test_',
+    );
   });
 
   tearDown(() {
@@ -201,6 +203,85 @@ void main() {
     expect(controller.sharedMediaIds, ['media-2']);
   });
 
+  testWidgets('降级 Live Photo 分享直接使用静态图', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [_livePost(hasMotion: false)];
+    await _pumpDetail(tester, controller);
+
+    await tester.tap(find.byKey(const ValueKey('share-post-media')));
+    await tester.pumpAndSettle();
+    expect(find.text('GIF'), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('share-selected-media')));
+    await tester.pumpAndSettle();
+
+    expect(controller.sharedMediaIds, ['media-live-still']);
+    expect(controller.sharedExportMode, MediaExportMode.staticImage);
+    expect(find.text('GIF'), findsNothing);
+  });
+
+  testWidgets('完整 Live Photo 分享提供静态图 GIF 视频三种选项', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [_livePost(hasMotion: true)];
+    await _pumpDetail(tester, controller);
+
+    await tester.tap(find.byKey(const ValueKey('share-post-media')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('静态图'), findsOneWidget);
+    expect(find.text('GIF'), findsOneWidget);
+    expect(find.text('视频'), findsOneWidget);
+    await tester.tap(find.text('GIF'));
+    await tester.pump();
+    await tester.tap(find.byKey(const ValueKey('share-selected-media')));
+    await tester.pumpAndSettle();
+    expect(controller.sharedExportMode, MediaExportMode.gif);
+  });
+
+  testWidgets('完整 Live Photo 按住播放动态且松手恢复静态图', (tester) async {
+    final originalPlatform = VideoPlayerPlatform.instance;
+    final videoPlatform = _FakeVideoPlayerPlatform();
+    VideoPlayerPlatform.instance = videoPlatform;
+    addTearDown(() async {
+      await tester.pumpWidget(const SizedBox.shrink());
+      await tester.pump();
+      await videoPlatform.close();
+      VideoPlayerPlatform.instance = originalPlatform;
+    });
+    final still = _writeImage(tempDirectory, 'live-still.png');
+    final motion = File('${tempDirectory.path}/live-motion.mp4')
+      ..writeAsBytesSync([]);
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _livePost(
+          hasMotion: true,
+          stillPath: still.path,
+          motionPath: motion.path,
+        ),
+      ];
+    await _pumpDetail(tester, controller);
+
+    final gesture = await tester.startGesture(
+      tester.getCenter(find.byKey(const ValueKey('live-media-live-still'))),
+    );
+    await tester.pump(const Duration(milliseconds: 600));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey('live-motion-media-live-motion')),
+      findsOneWidget,
+    );
+    await gesture.up();
+    await tester.pump();
+    expect(
+      find.byKey(const ValueKey('live-motion-media-live-motion')),
+      findsNothing,
+    );
+    expect(find.byKey(const ValueKey('live-media-live-still')), findsOneWidget);
+  });
+
   testWidgets('删除当前媒体后定位相邻项并将其作为分享默认项', (tester) async {
     final originals = [
       for (var index = 0; index < 3; index += 1)
@@ -272,6 +353,42 @@ void main() {
     expect(controller.deletedPostIds, ['post-1']);
   });
 
+  testWidgets('GIF 转换进度持续显示到保存完成', (tester) async {
+    final pendingSave = Completer<void>();
+    addTearDown(() {
+      if (!pendingSave.isCompleted) pendingSave.complete();
+    });
+    final still = _writeImage(tempDirectory, 'save-live-still.png');
+    final motion = File('${tempDirectory.path}/save-live-motion.mp4')
+      ..writeAsBytesSync([]);
+    final controller = _FakeAppController()
+      ..saveCompleter = pendingSave
+      ..phase = AppPhase.ready
+      ..posts = [
+        _livePost(
+          hasMotion: true,
+          stillPath: still.path,
+          motionPath: motion.path,
+        ),
+      ];
+    await _pumpDetail(tester, controller);
+
+    await tester.tap(find.byTooltip('媒体操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('save-current-media')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('转换为 GIF 保存'));
+    await tester.pump();
+
+    expect(find.text('正在转换并保存 GIF...'), findsOneWidget);
+    await tester.pump(const Duration(seconds: 31));
+    expect(find.text('正在转换并保存 GIF...'), findsOneWidget);
+
+    pendingSave.complete();
+    await tester.pumpAndSettle();
+    expect(controller.savedExportModes, [MediaExportMode.gif]);
+  });
+
   testWidgets('删除执行期间返回、遮罩和下拉都不能关闭确认抽屉', (tester) async {
     final pendingDelete = Completer<void>();
     addTearDown(() {
@@ -321,7 +438,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byKey(const ValueKey('share-selected-media')));
     await tester.pump();
-    expect(find.text('正在准备原文件'), findsOneWidget);
+    expect(find.text('正在准备媒体'), findsOneWidget);
 
     await tester.binding.handlePopRoute();
     await tester.pump(const Duration(milliseconds: 300));
@@ -330,7 +447,7 @@ void main() {
     await tester.drag(find.byType(BottomSheet), const Offset(0, 400));
     await tester.pump(const Duration(milliseconds: 300));
 
-    expect(find.text('正在准备原文件'), findsOneWidget);
+    expect(find.text('正在准备媒体'), findsOneWidget);
     expect(
       tester
           .widget<IconButton>(find.byKey(const ValueKey('close-share-sheet')))
@@ -368,7 +485,7 @@ void main() {
                 context: context,
                 post: post,
                 initialMediaId: post.media.first.id,
-                onShare: (_) async {},
+                onShare: (_, _) async {},
               ),
               child: const Text('打开分享'),
             ),
@@ -558,12 +675,57 @@ ArchivedPost _postWithMedia(
   );
 }
 
+ArchivedPost _livePost({
+  required bool hasMotion,
+  String? stillPath,
+  String? motionPath,
+}) {
+  final motion = PostMedia(
+    id: 'media-live-motion',
+    mediaType: PostMediaType.video,
+    mediaRole: PostMediaRole.liveMotion,
+    logicalIndex: 0,
+    sortIndex: 1,
+    mimeType: 'video/mp4',
+    width: 1080,
+    height: 1440,
+    localOriginalPath: motionPath,
+  );
+  return ArchivedPost(
+    id: 'post-1',
+    sourcePlatform: PostSourcePlatform.xiaohongshu,
+    sourceUrl: 'https://www.xiaohongshu.com/explore/live',
+    authorUsername: 'author',
+    authorDisplayName: '作者',
+    caption: '',
+    publishedAt: 1,
+    coverMediaId: 'media-live-still',
+    mediaCount: 1,
+    media: [
+      PostMedia(
+        id: 'media-live-still',
+        mediaType: PostMediaType.image,
+        mediaRole: PostMediaRole.liveStill,
+        logicalIndex: 0,
+        mimeType: 'image/jpeg',
+        width: 1080,
+        height: 1440,
+        localOriginalPath: stillPath,
+        liveMotion: hasMotion ? motion : null,
+      ),
+    ],
+  );
+}
+
 class _FakeAppController extends AppController {
   List<String> sharedMediaIds = [];
+  MediaExportMode? sharedExportMode;
   final List<String> savedMediaIds = [];
+  final List<MediaExportMode> savedExportModes = [];
   final List<String> deletedMediaIds = [];
   final List<String> deletedPostIds = [];
   Completer<void>? shareCompleter;
+  Completer<void>? saveCompleter;
   Completer<void>? deletePostCompleter;
 
   @override
@@ -574,14 +736,23 @@ class _FakeAppController extends AppController {
   }
 
   @override
-  Future<void> shareMedia(List<PostMedia> media) async {
+  Future<void> shareMedia(
+    List<PostMedia> media, {
+    MediaExportMode exportMode = MediaExportMode.original,
+  }) async {
     sharedMediaIds = media.map((item) => item.id).toList(growable: false);
+    sharedExportMode = exportMode;
     await shareCompleter?.future;
   }
 
   @override
-  Future<String> saveMedia(PostMedia media) async {
+  Future<String> saveMedia(
+    PostMedia media, {
+    MediaExportMode exportMode = MediaExportMode.original,
+  }) async {
     savedMediaIds.add(media.id);
+    savedExportModes.add(exportMode);
+    await saveCompleter?.future;
     return 'PhotoBook_${media.id}.jpg';
   }
 

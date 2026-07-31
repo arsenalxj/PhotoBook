@@ -30,8 +30,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         : controller.posts
               .where(
                 (post) =>
+                    post.sourcePlatform == _authorFilter!.sourcePlatform &&
                     post.authorUsername.toLowerCase() ==
-                    _authorFilter!.username.toLowerCase(),
+                        _authorFilter!.username.toLowerCase(),
               )
               .toList(growable: false);
 
@@ -56,6 +57,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                 ),
               ),
+            IconButton(
+              tooltip: '粘贴链接',
+              onPressed: controller.isImportingClipboard
+                  ? null
+                  : () => controller.importClipboard(),
+              icon: const Icon(Icons.content_paste_outlined),
+            ),
             Badge.count(
               count: controller.taskCount,
               isLabelVisible: controller.taskCount > 0,
@@ -142,6 +150,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     setState(() {
       _activePostId = null;
       _authorFilter = _AuthorFilter(
+        sourcePlatform: post.sourcePlatform,
         username: post.authorUsername,
         label: post.authorDisplayName.trim().isEmpty
             ? '@${post.authorUsername}'
@@ -244,8 +253,13 @@ class _EmptyLibrary extends StatelessWidget {
 }
 
 class _AuthorFilter {
-  const _AuthorFilter({required this.username, required this.label});
+  const _AuthorFilter({
+    required this.sourcePlatform,
+    required this.username,
+    required this.label,
+  });
 
+  final PostSourcePlatform sourcePlatform;
   final String username;
   final String label;
 }

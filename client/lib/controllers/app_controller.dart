@@ -27,6 +27,8 @@ class AppController extends ChangeNotifier {
   Future<void>? _localReloadFuture;
   int _localReloadRevision = 0;
   bool _fullReloadRequested = false;
+  bool _clipboardImportInProgress = false;
+  bool _isForeground = false;
 
   AppPhase phase = AppPhase.initializing;
   List<ArchivedPost> posts = const [];
@@ -45,6 +47,7 @@ class AppController extends ChangeNotifier {
   int get taskCount => tasks.length;
   bool get hasRealFailures => tasks.any((job) => job.isFailure);
   int get savingCount => activeJobCount;
+  bool get isImportingClipboard => _clipboardImportInProgress;
 
   Future<void> initialize() async {
     await _database.initialize();
@@ -87,6 +90,43 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refreshTasks() => _reloadTaskState();
+
+  Future<void> importClipboard({bool automatic = false}) async {
+    if (!_isAndroid || _clipboardImportInProgress) return;
+    _clipboardImportInProgress = true;
+    notifyListeners();
+    try {
+      final outcome = await _runtimeBridge.importClipboard(
+        automatic: automatic,
+      );
+      if (outcome == ClipboardImportOutcome.queued ||
+          outcome == ClipboardImportOutcome.completed) {
+        await _reloadTaskState();
+      }
+      if (!automatic) {
+        switch (outcome) {
+          case ClipboardImportOutcome.queued:
+            _publishMessage('已添加到保存任务');
+          case ClipboardImportOutcome.completed:
+            _publishMessage('这条帖子已经保存');
+          case ClipboardImportOutcome.empty:
+          case ClipboardImportOutcome.unsupported:
+            _publishMessage('剪贴板里没有支持的帖子链接');
+          case ClipboardImportOutcome.unavailable:
+            _publishMessage('暂时无法读取剪贴板，请稍后重试');
+          case ClipboardImportOutcome.alreadyProcessed:
+          case ClipboardImportOutcome.skipped:
+          case ClipboardImportOutcome.stale:
+            break;
+        }
+      }
+    } on PlatformException catch (error) {
+      if (!automatic) _publishMessage(error.message ?? '读取剪贴板失败');
+    } finally {
+      _clipboardImportInProgress = false;
+      notifyListeners();
+    }
+  }
 
   Future<void> retryJob(ArchiveJob job) async {
     if (!_isAndroid) return;
@@ -156,23 +196,38 @@ class AppController extends ChangeNotifier {
     return result;
   }
 
-  Future<void> shareMedia(List<PostMedia> media) async {
+  Future<void> shareMedia(
+    List<PostMedia> media, {
+    MediaExportMode exportMode = MediaExportMode.original,
+  }) async {
     if (!_isAndroid) throw StateError('媒体分享仅支持 Android');
-    await _runtimeBridge.shareMedia(media.map((item) => item.id).toList());
+    await _runtimeBridge.shareMedia(
+      media.map((item) => item.id).toList(),
+      exportMode: exportMode.wireValue,
+    );
     await _reloadLocalState();
   }
 
-  Future<String> saveMedia(PostMedia media) async {
+  Future<String> saveMedia(
+    PostMedia media, {
+    MediaExportMode exportMode = MediaExportMode.original,
+  }) async {
     if (!_isAndroid) throw StateError('保存到系统相册仅支持 Android');
-    final displayName = await _runtimeBridge.saveMedia(media.id);
+    final displayName = await _runtimeBridge.saveMedia(
+      media.id,
+      exportMode: exportMode.wireValue,
+    );
     await _reloadLocalState();
     return displayName;
   }
 
   Future<void> setForeground(bool value) async {
+    if (_isForeground == value) return;
+    _isForeground = value;
     if (!value) return;
     await _reloadLocalState();
     await _reloadRuntimeState();
+    await importClipboard(automatic: true);
     if (_isAndroid && (activeJobCount > 0 || r2Config != null)) {
       unawaited(_runtimeBridge.syncNow());
     }

@@ -9,6 +9,29 @@ enum ArchiveRuntimeEventType {
   runFinished,
 }
 
+enum ClipboardImportOutcome {
+  queued,
+  completed,
+  empty,
+  unsupported,
+  alreadyProcessed,
+  skipped,
+  stale,
+  unavailable;
+
+  factory ClipboardImportOutcome.fromWireValue(String value) => switch (value) {
+    'queued' => queued,
+    'completed' => completed,
+    'empty' => empty,
+    'unsupported' => unsupported,
+    'already_processed' => alreadyProcessed,
+    'skipped' => skipped,
+    'stale' => stale,
+    'unavailable' => unavailable,
+    _ => throw FormatException('未知剪贴板导入结果'),
+  };
+}
+
 class ArchiveRuntimeEvent {
   const ArchiveRuntimeEvent({
     required this.type,
@@ -194,6 +217,16 @@ class ArchiveRuntimeBridge {
     return ArchiveRuntimeState.fromMap(value);
   }
 
+  Future<ClipboardImportOutcome> importClipboard({
+    required bool automatic,
+  }) async {
+    final value = await _methodChannel.invokeMethod<String>('importClipboard', {
+      'automatic': automatic,
+    });
+    if (value == null) throw StateError('剪贴板导入结果为空');
+    return ClipboardImportOutcome.fromWireValue(value);
+  }
+
   Future<void> retryJob(String jobId) =>
       _methodChannel.invokeMethod<void>('retryJob', {'jobId': jobId});
 
@@ -254,12 +287,21 @@ class ArchiveRuntimeBridge {
     return DeleteMediaResult.fromMap(value);
   }
 
-  Future<void> shareMedia(List<String> mediaIds) =>
-      _methodChannel.invokeMethod<void>('shareMedia', {'mediaIds': mediaIds});
+  Future<void> shareMedia(
+    List<String> mediaIds, {
+    String exportMode = 'original',
+  }) => _methodChannel.invokeMethod<void>('shareMedia', {
+    'mediaIds': mediaIds,
+    'exportMode': exportMode,
+  });
 
-  Future<String> saveMedia(String mediaId) async {
+  Future<String> saveMedia(
+    String mediaId, {
+    String exportMode = 'original',
+  }) async {
     final displayName = await _methodChannel.invokeMethod<String>('saveMedia', {
       'mediaId': mediaId,
+      'exportMode': exportMode,
     });
     if (displayName == null || displayName.isEmpty) {
       throw StateError('系统相册保存结果为空');
