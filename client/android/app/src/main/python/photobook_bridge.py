@@ -3,33 +3,23 @@ from __future__ import annotations
 import json
 import re
 from datetime import datetime, timezone
-from html.parser import HTMLParser
 from http.cookies import SimpleCookie
 from typing import Any
-from urllib.parse import urlparse
 
 import instaloader
-import requests
 from instaloader import exceptions as instaloader_exceptions
 from requests import exceptions as requests_exceptions
 
 
 _SHORTCODE_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
+_HTTP_RESPONSE_STATUS_PATTERN = re.compile(
+    r"(?:^|:\s)([1-5]\d{2})\s+[^\r\n]*?\s+when accessing https?://",
+    re.IGNORECASE,
+)
 _FORK_COMMIT = "b1d233362e335cbbccba5c5e4b614a1032764118"
 _POST_METADATA_DOC_ID = "27128499623469141"
-_HTML_MEDIA_ERROR_CODE = "4630001"
-_HTML_MEDIA_ERROR_DESCRIPTION = "Media should not be an HtmlResponse"
-_SHORTCODE_WEB_INFO_ERROR_PATH = (
-    "xdt_api__v1__media__shortcode__web_info",
-)
-_PUBLIC_POST_META_PROPERTIES = frozenset(
-    {
-        "og:title",
-        "og:image",
-        "og:description",
-    }
-)
 _MEDIA_INFO_REQUIRED = object()
+_SESSION_PROBE_REQUIRED = object()
 
 
 class _MetadataResponseContext:
@@ -51,32 +41,6 @@ class _MetadataResponseContext:
         if doc_id == _POST_METADATA_DOC_ID and variables.get("shortcode") == self._shortcode:
             self.response = response
         return response
-
-
-class _PublicPostPageParser(HTMLParser):
-    def __init__(self) -> None:
-        super().__init__()
-        self.canonical_urls: set[str] = set()
-        self.meta_properties: set[str] = set()
-
-    def handle_starttag(
-        self,
-        tag: str,
-        attrs: list[tuple[str, str | None]],
-    ) -> None:
-        attributes = dict(attrs)
-        if tag == "link":
-            rel = str(attributes.get("rel") or "").lower().split()
-            href = str(attributes.get("href") or "").strip()
-            if "canonical" in rel and href:
-                self.canonical_urls.add(href)
-            return
-        if tag != "meta":
-            return
-        name = str(attributes.get("property") or "").lower().strip()
-        content = str(attributes.get("content") or "").strip()
-        if name in _PUBLIC_POST_META_PROPERTIES and content:
-            self.meta_properties.add(name)
 
 
 def health_check() -> str:
@@ -132,6 +96,8 @@ def fetch_post(shortcode: str, session_json: str | None = None) -> str:
             normalized,
             authenticated=session is not None,
         )
+        if post is _SESSION_PROBE_REQUIRED:
+            return json.dumps({"sessionProbeRequired": True}, separators=(",", ":"))
         if post is _MEDIA_INFO_REQUIRED:
             return json.dumps({"mediaInfoRequired": True}, separators=(",", ":"))
         return _fetch_result_json(loader, session, post, normalized)
@@ -139,6 +105,8 @@ def fetch_post(shortcode: str, session_json: str | None = None) -> str:
         raise
     except Exception as error:
         code, message = _classify_error(error, authenticated=session is not None)
+        if session is None and code == "LOGIN_REQUIRED":
+            return json.dumps({"sessionProbeRequired": True}, separators=(",", ":"))
         raise RuntimeError(_error_json(code, message)) from error
 
 
@@ -158,6 +126,12 @@ def fetch_post_media_info(shortcode: str, session_json: str | None = None) -> st
         raise
     except Exception as error:
         code, message = _classify_error(error, authenticated=session is not None)
+        if code == "POST_UNAVAILABLE":
+            code = "POST_INACCESSIBLE"
+            message = (
+                "Instagram 登录后仍无法访问该帖子；帖子可能已删除、当前账号无权访问，"
+                "或存在地区/年龄限制"
+            )
         raise RuntimeError(_error_json(code, message)) from error
 
 
@@ -180,7 +154,12 @@ def _fetch_result_json(
 ) -> str:
     profile = post.owner_profile
     if bool(getattr(profile, "is_private", False)):
-        raise RuntimeError(_error_json("POST_UNAVAILABLE", "当前版本只支持公开帖子"))
+        raise RuntimeError(
+            _error_json(
+                "PRIVATE_POST",
+                "发布账号为私密账号，PhotoBook 只归档公开帖子",
+            )
+        )
     return json.dumps(
         {
             "post": _post_payload(post, expected_shortcode=shortcode),
@@ -213,7 +192,12 @@ def _post_payload(post: Any, *, expected_shortcode: str) -> dict[str, Any]:
     else:
         media = [_media_payload(post, 0)]
     if not media:
-        raise RuntimeError(_error_json("INVALID_RESPONSE", "Instagram 帖子没有媒体"))
+        raise RuntimeError(
+            _error_json(
+                "UNSUPPORTED_RESPONSE",
+                "Instagram 返回的帖子结构没有可识别媒体，请检查 PhotoBook 更新",
+            )
+        )
 
     return {
         "sourcePlatform": "instagram",
@@ -234,25 +218,21 @@ def _fetch_post_metadata(loader: Any, shortcode: str, *, authenticated: bool) ->
     context = _MetadataResponseContext(loader.context, shortcode)
     try:
         return instaloader.Post.from_shortcode(context, shortcode)
+    except instaloader_exceptions.QueryReturnedForbiddenException:
+        return _MEDIA_INFO_REQUIRED if authenticated else _SESSION_PROBE_REQUIRED
     except instaloader_exceptions.BadResponseException as error:
-        is_html_media_response = _is_html_media_response(context.response)
-        is_shortcode_execution_error = _is_shortcode_web_info_execution_error(
-            context.response
-        )
-        if not is_html_media_response and not is_shortcode_execution_error:
-            raise
-        if (
-            is_shortcode_execution_error
-            and not is_html_media_response
-            and not authenticated
-            and not _anonymous_permalink_confirms_public_post(shortcode)
-        ):
-            raise
-        if not authenticated:
-            raise RuntimeError(
-                _error_json("LOGIN_REQUIRED", "Instagram 要求登录以兼容解析该公开帖子")
-            ) from error
-        return _MEDIA_INFO_REQUIRED
+        explicit_failure = _metadata_explicit_failure(context.response)
+        if explicit_failure is not None:
+            code, message = explicit_failure
+            raise RuntimeError(_error_json(code, message)) from error
+        if _is_ambiguous_metadata_response(context.response):
+            return _MEDIA_INFO_REQUIRED if authenticated else _SESSION_PROBE_REQUIRED
+        raise RuntimeError(
+            _error_json(
+                "UNSUPPORTED_RESPONSE",
+                "Instagram 元数据结构已变化，当前版本暂时无法解析，请检查 PhotoBook 更新",
+            )
+        ) from error
 
 
 def _post_from_media_info(context: Any, shortcode: str) -> Any:
@@ -261,121 +241,90 @@ def _post_from_media_info(context: Any, shortcode: str) -> Any:
         path=f"api/v1/media/{media_id}/info/",
         params={},
     )
-    items = response.get("items") if isinstance(response, dict) else None
-    if not isinstance(items, list) or not items or not isinstance(items[0], dict):
-        raise instaloader_exceptions.QueryReturnedNotFoundException(
-            "Instagram authenticated media info did not return the post"
+    if not isinstance(response, dict) or not isinstance(response.get("items"), list):
+        raise RuntimeError(
+            _error_json(
+                "UNSUPPORTED_RESPONSE",
+                "Instagram 帖子详情结构已变化，当前版本暂时无法解析，请检查 PhotoBook 更新",
+            )
         )
-    return instaloader.Post.from_iphone_struct(context, items[0])
+    items = response["items"]
+    if not items:
+        raise RuntimeError(
+            _error_json(
+                "POST_INACCESSIBLE",
+                "Instagram 登录后仍无法访问该帖子；帖子可能已删除、当前账号无权访问，"
+                "或存在地区/年龄限制",
+            )
+        )
+    if not isinstance(items[0], dict):
+        raise RuntimeError(
+            _error_json(
+                "UNSUPPORTED_RESPONSE",
+                "Instagram 帖子详情结构已变化，当前版本暂时无法解析，请检查 PhotoBook 更新",
+            )
+        )
+    media = items[0]
+    user = media.get("user")
+    if not isinstance(user, dict) or not isinstance(user.get("is_private"), bool):
+        raise RuntimeError(
+            _error_json(
+                "UNSUPPORTED_RESPONSE",
+                "Instagram 未返回明确的账号隐私状态，请检查 PhotoBook 更新",
+            )
+        )
+    return instaloader.Post.from_iphone_struct(context, media)
 
 
-def _is_html_media_response(response: Any) -> bool:
+def _is_ambiguous_metadata_response(response: Any) -> bool:
     if not isinstance(response, dict):
         return False
-    errors = response.get("errors")
-    if not isinstance(errors, list):
-        return False
-    for error in errors:
-        if not isinstance(error, dict):
-            continue
-        if str(error.get("code")) != _HTML_MEDIA_ERROR_CODE:
-            continue
-        if _HTML_MEDIA_ERROR_DESCRIPTION in _error_descriptions(error):
-            return True
-    return False
-
-
-def _is_shortcode_web_info_execution_error(response: Any) -> bool:
-    if (
-        not isinstance(response, dict)
-        or response.get("status") != "ok"
-        or "data" not in response
-        or response["data"] is not None
-    ):
+    if "data" not in response or response["data"] is not None:
         return False
     errors = response.get("errors")
-    if not isinstance(errors, list):
-        return False
-    for error in errors:
-        if not isinstance(error, dict):
-            continue
-        path = error.get("path")
-        if (
-            error.get("message") == "execution error"
-            and error.get("severity") == "CRITICAL"
-            and isinstance(path, list)
-            and tuple(path) == _SHORTCODE_WEB_INFO_ERROR_PATH
-        ):
-            return True
-    return False
-
-
-def _anonymous_permalink_confirms_public_post(shortcode: str) -> bool:
-    try:
-        response = requests.get(
-            f"https://www.instagram.com/p/{shortcode}/",
-            timeout=30.0,
-        )
-    except requests_exceptions.RequestException as error:
-        raise RuntimeError(
-            _error_json("NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN")
-        ) from error
-    try:
-        if response.status_code == 429:
-            raise RuntimeError(
-                _error_json("RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试")
-            )
-        if response.status_code >= 500:
-            raise RuntimeError(
-                _error_json("NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN")
-            )
-        if response.status_code != 200:
-            return False
-        parser = _PublicPostPageParser()
-        parser.feed(response.text)
-    finally:
-        response.close()
     return (
-        _PUBLIC_POST_META_PROPERTIES <= parser.meta_properties
-        and any(
-            _canonical_matches_shortcode(url, shortcode)
-            for url in parser.canonical_urls
-        )
+        isinstance(errors, list)
+        and bool(errors)
+        and all(isinstance(error, dict) and bool(error) for error in errors)
     )
 
 
-def _canonical_matches_shortcode(url: str, shortcode: str) -> bool:
-    parsed = urlparse(url)
-    return (
-        parsed.scheme == "https"
-        and parsed.hostname == "www.instagram.com"
-        and parsed.port is None
-        and parsed.username is None
-        and parsed.password is None
-        and not parsed.query
-        and not parsed.fragment
-        and parsed.path
-        in {
-            f"/p/{shortcode}/",
-            f"/reel/{shortcode}/",
-            f"/tv/{shortcode}/",
-        }
-    )
-
-
-def _error_descriptions(error: dict[str, Any]) -> set[str]:
-    descriptions = {_optional_text(error.get("description"))}
-    extensions = error.get("extensions")
-    if isinstance(extensions, dict):
-        additional = extensions.get("additional_info_do_not_use_except_for_migration")
-        if isinstance(additional, str):
+def _metadata_explicit_failure(response: Any) -> tuple[str, str] | None:
+    if not isinstance(response, dict):
+        return None
+    errors = response.get("errors")
+    if not isinstance(errors, list) or not errors:
+        return None
+    codes: list[int] = []
+    errors_with_http_code = 0
+    for error in errors:
+        if not isinstance(error, dict):
+            continue
+        error_codes: list[int] = []
+        for field in ("code", "status", "status_code", "http_status"):
+            value = error.get(field)
+            if isinstance(value, bool):
+                continue
             try:
-                parsed = json.loads(additional)
+                code = int(str(value))
             except (TypeError, ValueError):
-                parsed = None
-            if isinstance(parsed, dict):
-                descriptions.add(_optional_text(parsed.get("message")))
-    return {item for item in descriptions if item is not None}
+                continue
+            if 100 <= code <= 599:
+                error_codes.append(code)
+        if error_codes:
+            errors_with_http_code += 1
+            codes.extend(error_codes)
+    if 429 in codes:
+        return "RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试"
+    if any(500 <= code <= 599 for code in codes):
+        return "NETWORK_ERROR", "Instagram 服务暂时不可用，请稍后重试"
+    if (
+        errors_with_http_code == len(errors)
+        and codes
+        and all(code == 404 for code in codes)
+    ):
+        return "POST_UNAVAILABLE", "帖子不存在、已失效或当前不可访问"
+    return None
 
 
 def _cookies_from_header(cookie_header: str) -> dict[str, str]:
@@ -517,7 +466,12 @@ def _optional_attribute(value: Any, name: str) -> Any:
 
 def _timestamp_ms(value: Any) -> int:
     if not isinstance(value, datetime):
-        raise RuntimeError(_error_json("INVALID_RESPONSE", "Instagram 未返回有效发布时间"))
+        raise RuntimeError(
+            _error_json(
+                "UNSUPPORTED_RESPONSE",
+                "Instagram 未返回有效发布时间，请检查 PhotoBook 更新",
+            )
+        )
     if value.tzinfo is None:
         value = value.replace(tzinfo=timezone.utc)
     return round(value.timestamp() * 1000)
@@ -532,7 +486,12 @@ def _positive_int(value: Any) -> int | None:
 def _required_text(value: Any, field: str) -> str:
     normalized = _optional_text(value)
     if normalized is None:
-        raise RuntimeError(_error_json("INVALID_RESPONSE", f"Instagram 未返回{field}"))
+        raise RuntimeError(
+            _error_json(
+                "UNSUPPORTED_RESPONSE",
+                f"Instagram 未返回{field}，请检查 PhotoBook 更新",
+            )
+        )
     return normalized
 
 
@@ -546,28 +505,11 @@ def _optional_text(value: Any) -> str | None:
 def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]:
     chain = _exception_chain(error)
     message = "\n".join(str(item).lower() for item in chain)
+    http_status = _http_status_from_exception_chain(chain)
 
-    if any(
-        isinstance(item, instaloader_exceptions.LoginRequiredException)
-        for item in chain
-    ):
-        return "LOGIN_REQUIRED", "Instagram 要求登录"
-    if any(
-        isinstance(item, instaloader_exceptions.TooManyRequestsException)
-        for item in chain
-    ) or "feedback_required" in message:
-        return "RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试"
-    if authenticated and any(
-        isinstance(
-            item,
-            (
-                instaloader_exceptions.AbortDownloadException,
-                instaloader_exceptions.ConnectionException,
-                instaloader_exceptions.QueryReturnedBadRequestException,
-            ),
-        )
-        for item in chain
-    ) and any(
+    has_login_error = any(
+        isinstance(item, instaloader_exceptions.LoginRequiredException) for item in chain
+    ) or any(
         marker in message
         for marker in (
             "redirected to login page",
@@ -577,30 +519,40 @@ def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]
             "checkpoint_required",
             "challenge_required",
         )
-    ):
-        return "LOGIN_REQUIRED", "Instagram 登录已失效，请重新登录"
+    )
+    if has_login_error:
+        if authenticated:
+            return "LOGIN_REQUIRED", "Instagram 登录已失效，请重新登录"
+        return "LOGIN_REQUIRED", "Instagram 要求登录"
+    if any(
+        isinstance(item, instaloader_exceptions.TooManyRequestsException)
+        for item in chain
+    ) or http_status == 429 or "feedback_required" in message:
+        return "RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试"
     if any(
         isinstance(item, instaloader_exceptions.PrivateProfileNotFollowedException)
         for item in chain
     ):
-        return "POST_UNAVAILABLE", "当前登录账号无权访问该帖子"
+        return "PRIVATE_POST", "发布账号为私密账号，PhotoBook 只归档公开帖子"
     if any(
-        isinstance(
-            item,
-            (
-                instaloader_exceptions.BadResponseException,
-                instaloader_exceptions.QueryReturnedNotFoundException,
-            ),
-        )
+        isinstance(item, instaloader_exceptions.QueryReturnedNotFoundException)
         for item in chain
-    ):
+    ) or http_status == 404:
         return "POST_UNAVAILABLE", "帖子不存在、已失效或当前不可访问"
+    if any(
+        isinstance(item, instaloader_exceptions.QueryReturnedForbiddenException)
+        for item in chain
+    ) or http_status in {401, 403}:
+        if authenticated:
+            return "POST_INACCESSIBLE", "Instagram 登录后仍无法访问该帖子"
+        return "LOGIN_REQUIRED", "Instagram 要求登录以确认帖子状态"
+    if http_status is not None and 500 <= http_status <= 599:
+        return "NETWORK_ERROR", "Instagram 服务暂时不可用，请稍后重试"
     if any(
         isinstance(
             item,
             (
                 instaloader_exceptions.ConnectionException,
-                instaloader_exceptions.QueryReturnedBadRequestException,
                 requests_exceptions.ConnectionError,
                 requests_exceptions.Timeout,
             ),
@@ -608,7 +560,10 @@ def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]
         for item in chain
     ):
         return "NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN"
-    return "INSTAGRAM_ERROR", "Instagram 帖子解析失败"
+    return (
+        "UNSUPPORTED_RESPONSE",
+        "Instagram 返回了当前版本无法识别的数据，请检查 PhotoBook 更新",
+    )
 
 
 def _classify_validation_error(error: Exception) -> tuple[str, str]:
@@ -650,6 +605,14 @@ def _exception_chain(error: BaseException) -> list[BaseException]:
         if current.__cause__ is not None:
             pending.append(current.__cause__)
     return chain
+
+
+def _http_status_from_exception_chain(chain: list[BaseException]) -> int | None:
+    for error in chain:
+        match = _HTTP_RESPONSE_STATUS_PATTERN.search(str(error))
+        if match is not None:
+            return int(match.group(1))
+    return None
 
 
 def _error_json(code: str, message: str) -> str:

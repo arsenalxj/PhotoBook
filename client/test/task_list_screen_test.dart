@@ -98,6 +98,27 @@ void main() {
     expect(find.byTooltip('登录 Instagram'), findsOneWidget);
     expect(find.byIcon(LucideIcons.logIn), findsOneWidget);
   });
+
+  testWidgets('等待自动重试时显示最近一次失败原因', (tester) async {
+    final controller = _TaskController()
+      ..tasks = const [
+        ArchiveJob(
+          id: 'retrying',
+          sourcePostId: 'RETRYING',
+          status: ArchiveJobStatus.queued,
+          nextAttemptAt: 1750000000000,
+          errorCode: 'NETWORK_ERROR',
+          errorMessage: '已使用 Instagram 登录状态请求帖子详情，但连接失败，请检查系统网络或 VPN',
+        ),
+      ];
+    await tester.pumpWidget(_app(controller));
+
+    expect(find.text('等待自动重试'), findsOneWidget);
+    expect(
+      find.text('已使用 Instagram 登录状态请求帖子详情，但连接失败，请检查系统网络或 VPN'),
+      findsOneWidget,
+    );
+  });
 }
 
 Widget _app(AppController controller) => ProviderScope(

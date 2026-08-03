@@ -78,7 +78,10 @@ class ArchiveJob {
   String get failureTitle => switch (errorCode) {
     'CANCELLED' => '任务已取消',
     'LOGIN_REQUIRED' => '需要 Instagram 登录',
-    'POST_UNAVAILABLE' => '帖子不可访问',
+    'PRIVATE_POST' => '私密账号帖子不支持',
+    'POST_INACCESSIBLE' => '登录后仍不可访问',
+    'POST_UNAVAILABLE' => '帖子不存在或不可访问',
+    'UNSUPPORTED_RESPONSE' => 'Instagram 接口暂不兼容',
     'INSTAGRAM_ERROR' ||
     'XIAOHONGSHU_ERROR' ||
     'INVALID_RESPONSE' ||
@@ -99,7 +102,10 @@ class ArchiveJob {
     return switch (errorCode) {
       'CANCELLED' => '任务已由用户取消，可以重新开始或删除这条记录。',
       'LOGIN_REQUIRED' => 'Instagram 要求登录，请在官方登录页完成验证后重试。',
-      'POST_UNAVAILABLE' => '帖子不存在、已删除、已设为私密或当前不可访问。',
+      'PRIVATE_POST' => '发布账号是私密账号；PhotoBook 只归档公开帖子。',
+      'POST_INACCESSIBLE' => 'Instagram 登录后仍未返回帖子，可能已删除、当前账号无权访问，或存在地区/年龄限制。',
+      'POST_UNAVAILABLE' => '平台没有返回可访问的帖子，可能已删除、链接失效或受到访问限制。',
+      'UNSUPPORTED_RESPONSE' => 'Instagram 返回了当前版本无法识别的数据，请检查 PhotoBook 更新后重试。',
       'INSTAGRAM_ERROR' ||
       'XIAOHONGSHU_ERROR' ||
       'INVALID_RESPONSE' ||

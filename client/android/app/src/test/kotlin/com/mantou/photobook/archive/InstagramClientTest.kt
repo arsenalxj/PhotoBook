@@ -58,50 +58,31 @@ class InstagramClientTest {
     }
 
     @Test
-    fun `non login anonymous error never reads or retries session`() {
-        val sessions = FakeSessions(session())
-        val gateway = FakeGateway { throw ArchiveException("NETWORK_ERROR", "网络失败") }
+    fun `retryable and unsupported anonymous errors never read session`() {
+        for (code in listOf("NETWORK_ERROR", "RATE_LIMITED", "UNSUPPORTED_RESPONSE")) {
+            val sessions = FakeSessions(session())
+            val gateway = FakeGateway { throw ArchiveException(code, "匿名解析失败") }
 
-        val error = assertThrows(ArchiveException::class.java) {
-            InstagramClient(gateway, sessions).fetchPost("Post123")
-        }
-
-        assertEquals("NETWORK_ERROR", error.code)
-        assertEquals(0, sessions.readCount)
-        assertEquals(1, gateway.calls.size)
-    }
-
-    @Test
-    fun `login required retries once and saves refreshed session`() {
-        val original = session(sessionId = "old-session", validatedAt = 100)
-        val refreshed = session(sessionId = "new-session", validatedAt = 100)
-        val sessions = FakeSessions(original)
-        val gateway =
-            FakeGateway { supplied ->
-                if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
-                InstagramFetchResult(post(), refreshed)
+            val error = assertThrows(ArchiveException::class.java) {
+                InstagramClient(gateway, sessions).fetchPost("Post123")
             }
 
-        val result = InstagramClient(gateway, sessions) { 200 }.fetchPost("Post123")
-
-        assertEquals("Post123", result.sourcePostId)
-        assertEquals(2, gateway.calls.size)
-        assertTrue(gateway.calls[1] === original)
-        assertEquals(1, sessions.saved.size)
-        assertEquals(200, sessions.saved.single().validatedAt)
-        assertEquals(InstagramSessionStatus.READY, sessions.saved.single().status)
+            assertEquals(code, error.code)
+            assertEquals(0, sessions.readCount)
+            assertEquals(1, gateway.calls.size)
+        }
     }
 
     @Test
-    fun `authenticated metadata stage continues with media info`() {
+    fun `login required uses ready session media info directly and saves refreshed session`() {
         val original = session(sessionId = "old-session", validatedAt = 100)
         val refreshed = session(sessionId = "new-session", validatedAt = 100)
         val sessions = FakeSessions(original)
         val gateway =
             FakeGateway(
                 fetch = { supplied ->
-                    if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
-                    InstagramMediaInfoRequired
+                    assertNull(supplied)
+                    throw ArchiveException("LOGIN_REQUIRED", "需要登录")
                 },
                 fetchMediaInfo = { InstagramFetchResult(post(), refreshed) },
             )
@@ -109,35 +90,125 @@ class InstagramClientTest {
         val result = InstagramClient(gateway, sessions) { 200 }.fetchPost("Post123")
 
         assertEquals("Post123", result.sourcePostId)
-        assertEquals(2, gateway.calls.size)
+        assertEquals(1, gateway.calls.size)
+        assertNull(gateway.calls.single())
         assertEquals(1, gateway.mediaInfoCalls.size)
         assertTrue(gateway.mediaInfoCalls.single() === original)
         assertEquals(1, sessions.saved.size)
-        assertTrue(sessions.saved.single().cookieHeader().contains("sessionid=new-session"))
+        assertEquals(200, sessions.saved.single().validatedAt)
+        assertEquals(InstagramSessionStatus.READY, sessions.saved.single().status)
     }
 
     @Test
-    fun `cancellation after authenticated metadata prevents media info request`() {
-        var active = true
+    fun `login required media info failure never performs authenticated metadata request`() {
         val sessions = FakeSessions(session())
         val gateway =
             FakeGateway(
                 fetch = { supplied ->
-                    if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
-                    active = false
-                    InstagramMediaInfoRequired
+                    assertNull(supplied)
+                    throw ArchiveException("LOGIN_REQUIRED", "需要登录")
                 },
-                fetchMediaInfo = { InstagramFetchResult(post(), null) },
+                fetchMediaInfo = {
+                    throw ArchiveException("POST_INACCESSIBLE", "登录后仍无法访问")
+                },
             )
+
+        val error = assertThrows(ArchiveException::class.java) {
+            InstagramClient(gateway, sessions).fetchPost("Post123")
+        }
+
+        assertEquals("POST_INACCESSIBLE", error.code)
+        assertEquals(1, gateway.calls.size)
+        assertNull(gateway.calls.single())
+        assertEquals(1, gateway.mediaInfoCalls.size)
+        assertEquals(0, sessions.markCount)
+    }
+
+    @Test
+    fun `ambiguous anonymous response uses ready session media info directly`() {
+        val original = session(sessionId = "old-session", validatedAt = 100)
+        val refreshed = session(sessionId = "new-session", validatedAt = 100)
+        val sessions = FakeSessions(original)
+        val gateway =
+            FakeGateway(
+                fetch = { supplied ->
+                    assertNull(supplied)
+                    InstagramSessionProbeRequired
+                },
+                fetchMediaInfo = { InstagramFetchResult(post(), refreshed) },
+            )
+
+        val result = InstagramClient(gateway, sessions) { 200 }.fetchPost("Post123")
+
+        assertEquals("Post123", result.sourcePostId)
+        assertEquals(1, gateway.calls.size)
+        assertNull(gateway.calls.single())
+        assertEquals(1, gateway.mediaInfoCalls.size)
+        assertTrue(gateway.mediaInfoCalls.single() === original)
+        assertEquals(1, sessions.saved.size)
+    }
+
+    @Test
+    fun `ambiguous session probe network failure identifies authenticated stage`() {
+        val sessions = FakeSessions(session())
+        val gateway =
+            FakeGateway(
+                fetch = { InstagramSessionProbeRequired },
+                fetchMediaInfo = {
+                    throw ArchiveException("NETWORK_ERROR", "连接 Instagram 失败")
+                },
+            )
+
+        val error = assertThrows(ArchiveException::class.java) {
+            InstagramClient(gateway, sessions).fetchPost("Post123")
+        }
+
+        assertEquals("NETWORK_ERROR", error.code)
+        assertTrue(error.message.contains("已使用 Instagram 登录状态请求帖子详情"))
+        assertEquals(1, gateway.mediaInfoCalls.size)
+        assertEquals(0, sessions.markCount)
+    }
+
+    @Test
+    fun `ambiguous anonymous response without ready session explains required login`() {
+        val noSessionGateway = FakeGateway { InstagramSessionProbeRequired }
+        val noSessionError = assertThrows(ArchiveException::class.java) {
+            InstagramClient(noSessionGateway, FakeSessions(null)).fetchPost("Post123")
+        }
+
+        assertEquals("LOGIN_REQUIRED", noSessionError.code)
+        assertTrue(noSessionError.message.contains("确认帖子状态"))
+        assertEquals(1, noSessionGateway.calls.size)
+        assertTrue(noSessionGateway.mediaInfoCalls.isEmpty())
+
+        val staleGateway = FakeGateway { InstagramSessionProbeRequired }
+        val staleError = assertThrows(ArchiveException::class.java) {
+            InstagramClient(staleGateway, FakeSessions(session().needsRefresh())).fetchPost("Post123")
+        }
+
+        assertEquals("LOGIN_REQUIRED", staleError.code)
+        assertTrue(staleError.message.contains("已失效"))
+        assertEquals(1, staleGateway.calls.size)
+        assertTrue(staleGateway.mediaInfoCalls.isEmpty())
+    }
+
+    @Test
+    fun `cancellation after ambiguous response prevents session probe`() {
+        var active = true
+        val sessions = FakeSessions(session())
+        val gateway =
+            FakeGateway {
+                active = false
+                InstagramSessionProbeRequired
+            }
 
         assertThrows(ArchiveAttemptStoppedException::class.java) {
             InstagramClient(gateway, sessions).fetchPost("Post123") { active }
         }
 
-        assertEquals(2, gateway.calls.size)
+        assertEquals(1, gateway.calls.size)
         assertTrue(gateway.mediaInfoCalls.isEmpty())
-        assertEquals(0, sessions.markCount)
-        assertEquals(InstagramSessionStatus.READY, sessions.current?.status)
+        assertEquals(0, sessions.readCount)
     }
 
     @Test
@@ -146,17 +217,20 @@ class InstagramClientTest {
         val sessions = FakeSessions(session())
         val refreshed = session(sessionId = "new-session")
         val gateway =
-            FakeGateway { supplied ->
-                if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
-                active = false
-                InstagramFetchResult(post(), refreshed)
-            }
+            FakeGateway(
+                fetch = { throw ArchiveException("LOGIN_REQUIRED", "需要登录") },
+                fetchMediaInfo = {
+                    active = false
+                    InstagramFetchResult(post(), refreshed)
+                },
+            )
 
         assertThrows(ArchiveAttemptStoppedException::class.java) {
             InstagramClient(gateway, sessions).fetchPost("Post123") { active }
         }
 
-        assertEquals(2, gateway.calls.size)
+        assertEquals(1, gateway.calls.size)
+        assertEquals(1, gateway.mediaInfoCalls.size)
         assertTrue(sessions.saved.isEmpty())
         assertEquals(0, sessions.markCount)
     }
@@ -166,11 +240,13 @@ class InstagramClientTest {
         var active = true
         val sessions = FakeSessions(session())
         val gateway =
-            FakeGateway { supplied ->
-                if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
-                active = false
-                throw ArchiveException("LOGIN_REQUIRED", "Session 失效")
-            }
+            FakeGateway(
+                fetch = { throw ArchiveException("LOGIN_REQUIRED", "需要登录") },
+                fetchMediaInfo = {
+                    active = false
+                    throw ArchiveException("LOGIN_REQUIRED", "Session 失效")
+                },
+            )
 
         assertThrows(ArchiveAttemptStoppedException::class.java) {
             InstagramClient(gateway, sessions).fetchPost("Post123") { active }
@@ -203,10 +279,12 @@ class InstagramClientTest {
     fun `authenticated login error marks session stale`() {
         val sessions = FakeSessions(session())
         val gateway =
-            FakeGateway { supplied ->
-                if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
-                throw ArchiveException("LOGIN_REQUIRED", "Session 失效")
-            }
+            FakeGateway(
+                fetch = { throw ArchiveException("LOGIN_REQUIRED", "需要登录") },
+                fetchMediaInfo = {
+                    throw ArchiveException("LOGIN_REQUIRED", "Session 失效")
+                },
+            )
 
         val error = assertThrows(ArchiveException::class.java) {
             InstagramClient(gateway, sessions).fetchPost("Post123")
@@ -221,10 +299,12 @@ class InstagramClientTest {
     fun `authenticated non login error preserves session`() {
         val sessions = FakeSessions(session())
         val gateway =
-            FakeGateway { supplied ->
-                if (supplied == null) throw ArchiveException("LOGIN_REQUIRED", "需要登录")
-                throw ArchiveException("RATE_LIMITED", "请求受限")
-            }
+            FakeGateway(
+                fetch = { throw ArchiveException("LOGIN_REQUIRED", "需要登录") },
+                fetchMediaInfo = {
+                    throw ArchiveException("RATE_LIMITED", "请求受限")
+                },
+            )
 
         val error = assertThrows(ArchiveException::class.java) {
             InstagramClient(gateway, sessions).fetchPost("Post123")

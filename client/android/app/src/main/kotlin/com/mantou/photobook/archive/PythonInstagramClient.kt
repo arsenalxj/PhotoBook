@@ -28,9 +28,21 @@ internal class PythonInstagramClient(context: Context) : InstagramGateway {
             val raw =
                 module().callAttr("fetch_post", shortcode, session?.toPythonJson() ?: "").toString()
             val envelope = JSONObject(raw)
+            if (envelope.optBoolean("sessionProbeRequired", false)) {
+                if (session != null) {
+                    throw ArchiveException(
+                        "UNSUPPORTED_RESPONSE",
+                        "Instagram 认证解析返回了匿名探测状态",
+                    )
+                }
+                return InstagramSessionProbeRequired
+            }
             if (envelope.optBoolean("mediaInfoRequired", false)) {
                 if (session == null) {
-                    throw ArchiveException("INVALID_RESPONSE", "Instagram 匿名解析返回了认证阶段")
+                    throw ArchiveException(
+                        "UNSUPPORTED_RESPONSE",
+                        "Instagram 匿名解析返回了认证阶段",
+                    )
                 }
                 return InstagramMediaInfoRequired
             }
@@ -40,7 +52,11 @@ internal class PythonInstagramClient(context: Context) : InstagramGateway {
         } catch (error: ArchiveException) {
             throw error
         } catch (error: Exception) {
-            throw ArchiveException("INVALID_RESPONSE", "Instagram 返回的数据无法解析", error)
+            throw ArchiveException(
+                "UNSUPPORTED_RESPONSE",
+                "Instagram 返回了当前版本无法识别的数据，请检查 PhotoBook 更新",
+                error,
+            )
         }
     }
 
@@ -57,7 +73,11 @@ internal class PythonInstagramClient(context: Context) : InstagramGateway {
         } catch (error: ArchiveException) {
             throw error
         } catch (error: Exception) {
-            throw ArchiveException("INVALID_RESPONSE", "Instagram 返回的数据无法解析", error)
+            throw ArchiveException(
+                "UNSUPPORTED_RESPONSE",
+                "Instagram 返回了当前版本无法识别的数据，请检查 PhotoBook 更新",
+                error,
+            )
         }
     }
 
@@ -98,6 +118,10 @@ internal class PythonInstagramClient(context: Context) : InstagramGateway {
                 }
             }
         }
-        return ArchiveException("INSTAGRAM_ERROR", "Instagram 帖子解析失败", error)
+        return ArchiveException(
+            "UNSUPPORTED_RESPONSE",
+            "Instagram 返回了当前版本无法识别的错误，请检查 PhotoBook 更新",
+            error,
+        )
     }
 }

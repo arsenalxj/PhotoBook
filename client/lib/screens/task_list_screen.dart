@@ -323,7 +323,8 @@ class _TaskRow extends StatelessWidget {
                         ),
                       ),
                     ],
-                    if (!job.isActive && !job.isCancelled) ...[
+                    if ((job.isActive && job.nextAttemptAt != null) ||
+                        (!job.isActive && !job.isCancelled)) ...[
                       const SizedBox(height: 4),
                       Text(
                         job.failureDetail,

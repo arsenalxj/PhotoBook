@@ -40,6 +40,46 @@ void main() {
     }
   });
 
+  test('Instagram 访问限制显示可区分的失败原因', () {
+    final cases = {
+      'PRIVATE_POST': ('私密账号帖子不支持', '只归档公开帖子'),
+      'POST_INACCESSIBLE': ('登录后仍不可访问', '可能已删除'),
+      'POST_UNAVAILABLE': ('帖子不存在或不可访问', '平台没有返回可访问的帖子'),
+    };
+
+    for (final entry in cases.entries) {
+      final job = ArchiveJob.fromDatabase({
+        'id': 'job-${entry.key}',
+        'source_post_id': 'ABC123',
+        'status': 'failed',
+        'progress_current': 0,
+        'progress_total': 0,
+        'next_attempt_at': null,
+        'error_code': entry.key,
+        'error_message': null,
+      });
+
+      expect(job.failureTitle, entry.value.$1);
+      expect(job.failureDetail, contains(entry.value.$2));
+    }
+  });
+
+  test('Instagram 未知响应提示检查客户端更新', () {
+    final job = ArchiveJob.fromDatabase({
+      'id': 'job-unsupported-response',
+      'source_post_id': 'ABC123',
+      'status': 'failed',
+      'progress_current': 0,
+      'progress_total': 0,
+      'next_attempt_at': null,
+      'error_code': 'UNSUPPORTED_RESPONSE',
+      'error_message': null,
+    });
+
+    expect(job.failureTitle, 'Instagram 接口暂不兼容');
+    expect(job.failureDetail, contains('检查 PhotoBook 更新'));
+  });
+
   test('全部活动阶段映射为稳定中文文案', () {
     final cases = {
       'queued': '等待处理',

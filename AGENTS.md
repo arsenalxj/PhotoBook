@@ -40,7 +40,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - R2 Access Key ID 和 Secret 由用户在设置中填写，通过 Android Keystore 加密后保存。
 - 日志、SQLite、通知、异常文本和同步操作中禁止出现 Secret 或 Instagram Cookie。
 - R2 token 应只允许目标 bucket 的对象读写，不要求账户管理权限。
-- Instagram 请求必须匿名优先；只有匿名请求明确返回 `LOGIN_REQUIRED` 时，才允许使用已验证的本机会话重试一次。Instagram GraphQL 返回 `4630001 + Media should not be an HtmlResponse` 时视为公开帖登录兼容错误。GraphQL 返回 `status=ok + data=null + execution error + CRITICAL + xdt_api__v1__media__shortcode__web_info` 时不能单独判定为登录错误，因为不存在帖也会返回相同指纹；Python 必须再匿名请求 permalink，并通过匹配 shortcode 的 canonical 及完整 `og:title / og:image / og:description` 确认公开帖子存在后，才能映射为 `LOGIN_REQUIRED`。登录重试仍收到同类错误时，Python 只返回结构化的 `mediaInfoRequired` 阶段，Kotlin 重新检查任务未取消后才允许调用独立 authenticated media-info 端点补齐。不能把其他 `execution error` 或 `POST_UNAVAILABLE` 扩大为登录重试。
+- Instagram 请求必须匿名优先；匿名成功时禁止读取 Session。抓取决策固定分为五类：`SUCCESS` 直接返回；断网、超时、429 和 5xx 为 `RETRYABLE_FAILURE`；匿名元数据响应结构有效但只返回 `data=null + 非空 errors`、明确登录墙或匿名 401/403 时为 `AUTH_PROBE_REQUIRED`；链接无效、明确 404、私密账号、登录失效或 authenticated media-info 空结果为 `DEFINITIVE_FAILURE`；GraphQL envelope、帖子字段、media-info 结构或 Instaloader 解析结果无法理解时为 `UNSUPPORTED_RESPONSE`。任务取消是独立控制状态，不属于抓取决策。`AUTH_PROBE_REQUIRED` 不依赖特定 GraphQL 错误码、message、severity 或 path，也不额外请求匿名 permalink；固定 Instaloader wheel 将部分 HTTP 状态包装进 `ConnectionException` 时，Python 必须从其标准异常链恢复状态，不能把 401/403 当网络失败。Python 返回结构化 `sessionProbeRequired`，Kotlin 重新检查任务未取消后，有 `ready` Session 时最多调用一次独立 authenticated media-info，没有可用 Session 时返回说明“需要登录以确认帖子状态”的 `LOGIN_REQUIRED`。authenticated media-info 必须要求 shortcode 一致且 `user.is_private` 为明确布尔值：私密账号返回 `PRIVATE_POST`，没有帖子数据或无登录失效指纹的 401/403 返回 `POST_INACCESSIBLE`，只有确认公开时才允许归档。未知结构必须返回 `UNSUPPORTED_RESPONSE`，不得误报帖子不存在、不得循环探测 Session。
 - Instagram 账号密码只填写在官方 WebView 页面，业务代码不得读取或保存；WebView Cookie 验证并加密保存后必须清理 WebView Cookie、缓存和本地存储。设置页另允许用户主动粘贴完整 Cookie Header；该文本只能在隐藏输入框与单次 Flutter -> Kotlin 调用中短暂存在，提交后必须立即清空输入框。
 - Instagram Session 使用独立 Android Keystore 密钥加密，只属于本机，不得进入 Flutter 状态、SQLite、R2、备份、日志、通知、异常文本或崩溃上报。手动 Cookie 必须通过 Instaloader `test_login()` 在线验证并取得真实用户名，失败不得覆盖旧 Session。只有用户在已登录页主动点击“复制Cookie”时，Android 原生层才允许把已验证 Session 转为 Cookie Header 写入系统剪贴板；剪贴板必须标记为敏感内容，Flutter 只能收到成功或失败，App 进程存活时在 60 秒后仅清理未被用户替换的该份 Cookie。
 - App 不读取 Instagram App 或其他浏览器的数据，不提供 Instaloader session 文件或账号密码导入。
@@ -56,7 +56,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - 前台服务必须立即显示通知；所有任务结束后移除通知并停止自身。
 - Instaloader 同步调用只能在串行后台队列运行，禁止阻塞主线程。
 - Instaloader 单次网络请求超时固定为 30 秒；运行中任务取消后进入 `cancelling`，解析或下载返回并完成文件回滚、临时目录清理后才进入 `failed + CANCELLED`。取消期间不得读取 Session、发起认证重试、从 authenticated GraphQL 继续发起 media-info 请求或保存刷新后的 Session。
-- 匿名抓取成功时禁止读取或解密 Instagram Session；限流、断网、帖子不存在等非登录错误不得触发认证重试或改变 Session 状态。
+- 匿名抓取成功时禁止读取或解密 Instagram Session；限流、断网、已明确判定不存在和 `UNSUPPORTED_RESPONSE` 不得触发认证重试或改变 Session 状态。只有上一条约定的 `AUTH_PROBE_REQUIRED` 允许通过 authenticated media-info 使用 Session 判定，且每个 attempt 最多一次。
 - 登录态只提高公开帖抓取成功率。即使当前账号有权查看，私密账号帖子也必须返回不可访问，不得归档或同步。
 - Chaquopy 只负责把 shortcode 解析成 JSON；媒体流式下载、哈希、缩略图和视频元数据使用 Android 原生 API。
 - 本地归档和云同步是两条独立状态机。R2 失败不得回滚已经完成的本地归档。
@@ -116,6 +116,6 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - `client/`：`flutter analyze`、`flutter test`、Android debug APK 构建。
 - Python 桥：脱敏 fixture 单元测试，并验证固定 Instaloader wheel 可导入。
 - Android：覆盖先持久化后启动、后台继续、进程恢复、任务结束自动停服和通知权限。
-- 抓取：覆盖图片帖、多图帖、Reel、重复分享、失效链接、匿名优先、登录墙后 Session 重试、`4630001` 与 shortcode web-info 指纹加公开 permalink 确认后的 authenticated media-info 兜底、相同指纹的不存在帖不触发 Session、Session 失效、私密帖拒绝和系统 VPN。
+- 抓取：覆盖图片帖、多图帖、Reel、重复分享、失效链接、匿名优先、五类抓取决策、已知及未知 `data=null + 非空 errors` 的受控 authenticated media-info 探测、明确 404 不触发 Session、未知或畸形结构返回 `UNSUPPORTED_RESPONSE`、无 Session、Session 失效、media-info 空结果、私密帖拒绝、取消期间不读取 Session 以及系统 VPN。
 - 登录：覆盖普通登录、2FA、取消、重新登录、手动 Cookie 在线验证与用户名回显、新 Cookie 失败不覆盖旧 Session、复制Cookie、剪贴板敏感标记与定时清理、WebView 数据清理、Keystore 持久化以及 Cookie 全链路脱敏。
 - 同步：覆盖无 R2、本地成功但上传失败、首次 seed、多设备独立高水位、离线设备晚上传、序号缺口、重复操作、换 Key 和换资料库。

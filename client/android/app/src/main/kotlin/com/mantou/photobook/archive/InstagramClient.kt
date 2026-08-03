@@ -12,6 +12,8 @@ internal sealed interface InstagramFetchOutcome
 
 internal data object InstagramMediaInfoRequired : InstagramFetchOutcome
 
+internal data object InstagramSessionProbeRequired : InstagramFetchOutcome
+
 internal interface InstagramGateway {
     fun validateSession(cookieHeader: String, validatedAt: Long): InstagramSession
 
@@ -61,10 +63,20 @@ internal class InstagramClient internal constructor(
             try {
                 val outcome = gateway.fetchPost(shortcode, null)
                 ensureAttemptActive(isAttemptActive)
-                if (outcome !is InstagramFetchResult) {
-                    throw ArchiveException("INVALID_RESPONSE", "Instagram 匿名解析阶段无效")
+                when (outcome) {
+                    is InstagramFetchResult -> return outcome.post
+                    InstagramSessionProbeRequired -> {
+                        ArchiveException(
+                            "LOGIN_REQUIRED",
+                            "Instagram 匿名访问无法确认帖子状态，请登录后重试",
+                        )
+                    }
+                    InstagramMediaInfoRequired ->
+                        throw ArchiveException(
+                            "UNSUPPORTED_RESPONSE",
+                            "Instagram 匿名解析阶段返回了无法识别的状态",
+                        )
                 }
-                return outcome.post
             } catch (error: ArchiveException) {
                 ensureAttemptActive(isAttemptActive)
                 if (error.code != "LOGIN_REQUIRED") throw error
@@ -81,20 +93,18 @@ internal class InstagramClient internal constructor(
         ensureAttemptActive(isAttemptActive)
         val authenticated =
             try {
-                val outcome = gateway.fetchPost(shortcode, session).also {
+                gateway.fetchPostMediaInfo(shortcode, session).also {
                     ensureAttemptActive(isAttemptActive)
-                }
-                when (outcome) {
-                    is InstagramFetchResult -> outcome
-                    InstagramMediaInfoRequired -> {
-                        ensureAttemptActive(isAttemptActive)
-                        gateway.fetchPostMediaInfo(shortcode, session).also {
-                            ensureAttemptActive(isAttemptActive)
-                        }
-                    }
                 }
             } catch (error: ArchiveException) {
                 ensureAttemptActive(isAttemptActive)
+                if (error.code == "NETWORK_ERROR") {
+                    throw ArchiveException(
+                        "NETWORK_ERROR",
+                        "已使用 Instagram 登录状态请求帖子详情，但连接失败，请检查系统网络或 VPN",
+                        error,
+                    )
+                }
                 if (error.code == "LOGIN_REQUIRED") {
                     sessions.markNeedsRefresh()
                     throw ArchiveException("LOGIN_REQUIRED", "Instagram 登录已失效，请重新登录", error)

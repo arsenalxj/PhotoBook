@@ -31,7 +31,7 @@ flowchart LR
 首版包含：
 
 - 接收 Instagram 和小红书 `text/plain` 分享。
-- 匿名优先抓取 Instagram 公开图片帖、多图帖和 Reel；登录墙出现时可使用已验证的本机会话重试一次。GraphQL 明确返回 `4630001 + Media should not be an HtmlResponse` 时按登录兼容错误处理。`status=ok + data=null + execution error + CRITICAL + xdt_api__v1__media__shortcode__web_info` 指纹也可能表示帖子不存在，必须再由匿名 permalink 的 canonical 与完整 Open Graph 帖子元数据确认公开内容存在，才能触发 Session；登录重试仍失败时，Python 返回结构化阶段，Kotlin 在确认任务未取消后才使用独立 authenticated media-info 调用补齐。相同指纹但无公开元数据的失效帖、相似但不完整的执行错误及其他不可访问错误不得触发 Session。
+- 匿名优先抓取 Instagram 公开图片帖、多图帖和 Reel。抓取结果按成功、可重试失败、需要认证探测、确定失败和不支持的新响应五类决策处理；任务取消独立于抓取决策。匿名元数据返回结构有效的 GraphQL envelope，但只有 `data=null + 非空对象 errors` 时视为访问状态不确定，不依赖具体错误码或字段组合，也不再额外请求匿名 permalink。Kotlin 在确认任务未取消后，有 `ready` Session 时最多调用一次 authenticated media-info：公开账号帖子继续归档，私密账号帖子明确拒绝，空结果记为登录后仍不可访问；没有 Session 时提示登录以确认帖子状态。断网、超时、429 和 5xx 自动重试；明确 404 直接失败；畸形 envelope、未知帖子字段或 media-info 结构返回 `UNSUPPORTED_RESPONSE`，不得误判帖子不存在或触发 Session。
 - 匿名抓取小红书公开图片、视频、原生 GIF 和 Live Photo；不提供小红书登录或验证码绕过。
 - 设置页提供 Instagram 官方 WebView 登录、手动 Cookie 登录、登录状态、重新登录、复制Cookie 和清除会话。复制只允许在会话可用时由用户主动触发。
 - App 退到后台或锁屏后继续下载，完成后自动停止前台服务。
@@ -48,7 +48,7 @@ flowchart LR
 - Worker、D1、服务端下载器和 Mihomo 控制。
 - 物理删除 R2 共享媒体。
 
-匿名访问仍会受到平台登录墙、验证、限流和页面结构变化影响。Instagram 认证重试只处理明确的登录要求；小红书不做认证重试。两者都不能绕过限流或访问控制，也不能宣称可以下载私密或所有公开内容。
+匿名访问仍会受到平台登录墙、验证、限流和页面结构变化影响。Instagram 认证探测只处理结构有效但访问状态不确定的响应，最多使用 Session 一次；无法理解的新结构明确要求更新客户端。小红书不做认证重试。两者都不能绕过限流或访问控制，也不能宣称可以下载私密或所有公开内容。
 
 ## 3. 端到端流程
 
@@ -68,8 +68,8 @@ sequenceDiagram
     S->>S: 立即发布通知
     S->>D: 领取最早任务并标记 fetching
     S->>P: 匿名链接/帖子编号 -> 统一帖子 JSON
-    opt Instagram 明确要求登录且本机会话可用
-        S->>P: Session 重试一次
+    opt Instagram 需要认证探测且本机会话可用
+        S->>P: authenticated media-info 判定公开性并补齐
     end
     S->>F: 流式下载 .part、校验、原子发布
     S->>D: 帖子/媒体/completed/outbox 同事务提交
