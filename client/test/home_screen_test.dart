@@ -101,6 +101,70 @@ void main() {
     );
   });
 
+  testWidgets('首页仅为已备份帖子显示指定尺寸和位置的云朵勾选图标', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _post(
+          id: 'post-backed-up',
+          username: 'alice',
+          displayName: 'Alice',
+          mediaCount: 3,
+          isBackedUp: true,
+        ),
+        _post(id: 'post-local', username: 'bob', displayName: 'Bob'),
+      ];
+    await _pumpHome(tester, controller);
+
+    final backupBadge = find.byKey(
+      const ValueKey('post-backup-success-post-backed-up'),
+    );
+    final countBadge = find.byKey(
+      const ValueKey('post-media-count-post-backed-up'),
+    );
+    final cover = find.byKey(const ValueKey('post-cover-post-backed-up'));
+    expect(backupBadge, findsOneWidget);
+    expect(
+      find.byKey(const ValueKey('post-backup-success-post-local')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: backupBadge,
+        matching: find.byIcon(LucideIcons.cloudCheck),
+      ),
+      findsOneWidget,
+    );
+    expect(tester.getSize(backupBadge), const Size.square(26));
+    expect(tester.getSize(countBadge).height, 26);
+
+    final backupDecoration =
+        tester.widget<DecoratedBox>(backupBadge).decoration as BoxDecoration;
+    final countDecoration =
+        tester.widget<DecoratedBox>(countBadge).decoration as BoxDecoration;
+    final expectedBackground = AppTheme.accent.withValues(alpha: 0.78);
+    expect(backupDecoration.color, expectedBackground);
+    expect(countDecoration.color, expectedBackground);
+    expect(backupDecoration.borderRadius, BorderRadius.circular(999));
+    expect(countDecoration.borderRadius, BorderRadius.circular(999));
+
+    final icon = tester.widget<Icon>(
+      find.descendant(
+        of: backupBadge,
+        matching: find.byIcon(LucideIcons.cloudCheck),
+      ),
+    );
+    expect(icon.size, 15);
+    expect(icon.color, AppTheme.accentOn);
+
+    final backupRect = tester.getRect(backupBadge);
+    final countRect = tester.getRect(countBadge);
+    final coverRect = tester.getRect(cover);
+    expect(backupRect.left - countRect.right, 6);
+    expect(backupRect.top - coverRect.top, 8);
+    expect(coverRect.right - backupRect.right, 8);
+  });
+
   testWidgets('只有进行中任务时角标使用非错误色', (tester) async {
     final controller = AppController()
       ..phase = AppPhase.ready
@@ -219,6 +283,8 @@ ArchivedPost _post({
   required String username,
   required String displayName,
   PostSourcePlatform sourcePlatform = PostSourcePlatform.instagram,
+  int mediaCount = 1,
+  bool isBackedUp = false,
 }) => ArchivedPost(
   id: id,
   sourcePlatform: sourcePlatform,
@@ -229,15 +295,17 @@ ArchivedPost _post({
   authorDisplayName: displayName,
   caption: id,
   publishedAt: 1,
-  coverMediaId: '$id-media',
-  mediaCount: 1,
+  coverMediaId: '$id-media-0',
+  mediaCount: mediaCount,
+  isBackedUp: isBackedUp,
   media: [
-    PostMedia(
-      id: '$id-media',
-      mediaType: PostMediaType.image,
-      width: 1080,
-      height: 1350,
-    ),
+    for (var index = 0; index < mediaCount; index += 1)
+      PostMedia(
+        id: '$id-media-$index',
+        mediaType: PostMediaType.image,
+        width: 1080,
+        height: 1350,
+      ),
   ],
 );
 

@@ -109,7 +109,7 @@ class ArchiveMediaActions(
         val descriptor =
             database.originalDescriptor(mediaId)
                 ?: throw ArchiveException("MEDIA_NOT_FOUND", "媒体不存在或已被删除")
-        val file = R2SyncEngine(applicationContext, database).ensureOriginal(mediaId)
+        val file = R2BackupEngine(applicationContext, database).ensureOriginal(mediaId)
         return ResolvedOriginal(descriptor, file)
     }
 
@@ -123,7 +123,7 @@ class ArchiveMediaActions(
         val motionDescriptor =
             database.liveMotionDescriptor(mediaId)
                 ?: throw ArchiveException("LIVE_MOTION_UNAVAILABLE", "该 Live Photo 只有静态图")
-        val motionFile = R2SyncEngine(applicationContext, database).ensureOriginal(motionDescriptor.mediaId)
+        val motionFile = R2BackupEngine(applicationContext, database).ensureOriginal(motionDescriptor.mediaId)
         return when (exportMode) {
             EXPORT_VIDEO -> ResolvedOriginal(motionDescriptor, motionFile)
             EXPORT_GIF -> {

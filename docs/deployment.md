@@ -3,7 +3,7 @@
 PhotoBook 纯客户端版本只交付 Android APK，不部署 Worker、D1、下载服务器或 Docker。
 
 Android 包名、applicationId 与 namespace 统一为 `com.mantou.photobook`。
-Android 会把旧包名与当前包名视为两个独立 App，旧包名沙盒中的 SQLite、媒体和 Keystore 配置不会自动迁入；需要跨安装恢复时应配置同一个 R2 资料库。
+Android 会把旧包名与当前包名视为两个独立 App，旧包名沙盒中的 SQLite、媒体和 Keystore 配置不会自动迁入。即使配置相同 R2，新安装也不会读取旧安装目录或恢复帖子。
 
 项目处于开发阶段，不提供旧 ArMedia 本机数据库或 R2 格式迁移。新安装默认使用 `photobook` prefix，不自动读取或删除旧 `armedia` prefix。
 
@@ -73,7 +73,7 @@ APK 构建通过不代表抓取可用。还必须在 arm64 真机验证：
 
 ## 4. 用户配置 R2
 
-R2 不是安装前提。用户需要多设备同步时，在 App 设置页填写：
+R2 不是安装前提。用户需要为当前安装启用单向云备份时，在 App 设置页填写：
 
 - S3 endpoint，例如 `https://<account-id>.r2.cloudflarestorage.com`。
 - bucket。

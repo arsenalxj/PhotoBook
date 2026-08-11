@@ -4,8 +4,8 @@ import 'package:sqflite/sqflite.dart';
 import '../../models/archive_job.dart';
 import '../../models/post.dart';
 
-class SyncStatus {
-  const SyncStatus({this.lastError});
+class BackupStatus {
+  const BackupStatus({this.lastError});
 
   final String? lastError;
 }
@@ -15,7 +15,7 @@ class AppDatabase {
     : _databaseFactory = databaseFactory ?? databaseFactorySqflitePlugin,
       _databasePath = databasePath;
 
-  static const version = 2;
+  static const version = 4;
 
   final DatabaseFactory _databaseFactory;
   final String? _databasePath;
@@ -80,8 +80,7 @@ class AppDatabase {
         saved_at INTEGER NOT NULL,
         updated_at INTEGER NOT NULL,
         local_avatar_path TEXT,
-        sync_device_id TEXT NOT NULL DEFAULT '',
-        sync_seq INTEGER NOT NULL DEFAULT 0,
+        backup_generation INTEGER NOT NULL,
         UNIQUE(source_platform, source_post_id)
       )
     ''');
@@ -105,7 +104,7 @@ class AppDatabase {
         thumbnail_sha256 TEXT NOT NULL,
         local_thumbnail_path TEXT,
         local_original_path TEXT,
-        original_download_status TEXT NOT NULL DEFAULT 'remote',
+        original_download_status TEXT NOT NULL DEFAULT 'cached',
         original_download_error TEXT,
         UNIQUE(post_id, sort_index)
       )
@@ -113,6 +112,12 @@ class AppDatabase {
     await database.execute(
       'CREATE INDEX post_media_post_id ON post_media(post_id, sort_index)',
     );
+    await database.execute('''
+      CREATE TABLE post_backup_generations (
+        post_id TEXT PRIMARY KEY,
+        generation INTEGER NOT NULL
+      )
+    ''');
     await _createRuntimeSchema(database);
   }
 
@@ -141,68 +146,32 @@ class AppDatabase {
       'ON capture_jobs(status, created_at)',
     );
     await database.execute('''
-      CREATE TABLE IF NOT EXISTS sync_ops (
+      CREATE TABLE r2_backup_jobs (
+        backup_seq INTEGER PRIMARY KEY,
+        backup_target_id TEXT NOT NULL,
         device_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        operation TEXT NOT NULL,
-        entity_id TEXT NOT NULL,
-        payload_json TEXT NOT NULL,
-        created_at INTEGER NOT NULL,
-        PRIMARY KEY(device_id, seq)
-      )
-    ''');
-    await _createSyncUploadsSchema(database);
-    await _createEntityStateSchema(database);
-    await database.execute('''
-      CREATE TABLE IF NOT EXISTS sync_peers (
-        repository_id TEXT NOT NULL,
-        peer_device_id TEXT NOT NULL,
-        high_water_seq INTEGER NOT NULL DEFAULT 0,
-        updated_at INTEGER NOT NULL,
-        PRIMARY KEY(repository_id, peer_device_id)
-      )
-    ''');
-  }
-
-  Future<void> _createSyncUploadsSchema(Database database) async {
-    await database.execute('''
-      CREATE TABLE IF NOT EXISTS sync_uploads (
-        repository_id TEXT NOT NULL,
-        device_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        uploaded_at INTEGER,
+        post_id TEXT NOT NULL,
+        source_platform TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        snapshot_json TEXT NOT NULL,
+        status TEXT NOT NULL,
         last_error TEXT,
-        PRIMARY KEY(repository_id, device_id, seq),
-        FOREIGN KEY(device_id, seq)
-          REFERENCES sync_ops(device_id, seq) ON DELETE CASCADE
+        created_at INTEGER NOT NULL,
+        completed_at INTEGER,
+        UNIQUE(backup_target_id, device_id, post_id, generation)
       )
     ''');
     await database.execute(
-      'CREATE INDEX IF NOT EXISTS sync_uploads_pending '
-      'ON sync_uploads(repository_id, uploaded_at, seq)',
+      'CREATE INDEX r2_backup_jobs_pending '
+      'ON r2_backup_jobs(backup_target_id, device_id, status, backup_seq)',
     );
-  }
-
-  Future<void> _createEntityStateSchema(Database database) async {
-    await database.execute('''
-      CREATE TABLE IF NOT EXISTS sync_entity_states (
-        entity_type TEXT NOT NULL,
-        entity_id TEXT NOT NULL,
-        state TEXT NOT NULL,
-        version INTEGER NOT NULL,
-        device_id TEXT NOT NULL,
-        seq INTEGER NOT NULL,
-        changed_at INTEGER NOT NULL,
-        PRIMARY KEY(entity_type, entity_id)
-      )
-    ''');
     await database.execute(
-      'CREATE INDEX IF NOT EXISTS sync_entity_states_state '
-      'ON sync_entity_states(entity_type, state, entity_id)',
+      'CREATE INDEX r2_backup_jobs_post_generation '
+      'ON r2_backup_jobs(backup_target_id, post_id, generation, status)',
     );
   }
 
-  Future<List<ArchivedPost>> listPosts() async {
+  Future<List<ArchivedPost>> listPosts({String? backupTargetId}) async {
     final postRows = await _db.query(
       'posts',
       columns: const [
@@ -217,6 +186,7 @@ class AppDatabase {
         'cover_media_id',
         'media_count',
         'local_avatar_path',
+        'backup_generation',
       ],
       orderBy: 'saved_at DESC, id DESC',
     );
@@ -238,6 +208,7 @@ class AppDatabase {
       ],
       orderBy: 'post_id, sort_index ASC',
     );
+    final backedUpPostIds = await _backedUpPostIds(backupTargetId);
     final groupedMedia = <String, List<PostMedia>>{};
     for (final row in mediaRows) {
       final postId = row['post_id']! as String;
@@ -248,6 +219,7 @@ class AppDatabase {
           (row) => _postFromRow(
             row,
             _logicalMedia(groupedMedia[row['id']] ?? const []),
+            isBackedUp: backedUpPostIds.contains(row['id']),
           ),
         )
         .where((post) => post.media.isNotEmpty)
@@ -301,34 +273,57 @@ class AppDatabase {
       ) ??
       0;
 
-  Future<SyncStatus> readSyncStatus() async {
+  Future<BackupStatus> readBackupStatus() async {
     final rows = await _db.query(
       'app_meta',
       columns: const ['value'],
       where: 'key = ?',
-      whereArgs: const ['last_sync_error'],
+      whereArgs: const ['last_backup_error'],
       limit: 1,
     );
-    return SyncStatus(
+    return BackupStatus(
       lastError: rows.isEmpty ? null : rows.first['value'] as String?,
     );
   }
 
-  ArchivedPost _postFromRow(Map<String, Object?> row, List<PostMedia> media) =>
-      ArchivedPost(
-        id: row['id']! as String,
-        sourcePlatform: PostSourcePlatform.parse(row['source_platform']),
-        sourceUrl: row['source_url']! as String,
-        authorUsername: row['author_username']! as String,
-        authorDisplayName: row['author_display_name']! as String,
-        caption: row['caption']! as String,
-        publishedAt: row['published_at']! as int,
-        locationName: row['location_name'] as String?,
-        coverMediaId: row['cover_media_id']! as String,
-        mediaCount: media.length,
-        localAvatarPath: row['local_avatar_path'] as String?,
-        media: media,
-      );
+  Future<Set<String>> _backedUpPostIds(String? backupTargetId) async {
+    final normalizedBackupTargetId = backupTargetId?.trim();
+    if (normalizedBackupTargetId == null || normalizedBackupTargetId.isEmpty) {
+      return const <String>{};
+    }
+    final rows = await _db.rawQuery(
+      '''
+      SELECT DISTINCT j.post_id
+      FROM r2_backup_jobs j
+      JOIN posts p
+        ON p.id = j.post_id
+       AND p.backup_generation = j.generation
+      WHERE j.backup_target_id = ? AND j.status = 'completed'
+      ''',
+      [normalizedBackupTargetId],
+    );
+    return rows.map((row) => row['post_id']! as String).toSet();
+  }
+
+  ArchivedPost _postFromRow(
+    Map<String, Object?> row,
+    List<PostMedia> media, {
+    required bool isBackedUp,
+  }) => ArchivedPost(
+    id: row['id']! as String,
+    sourcePlatform: PostSourcePlatform.parse(row['source_platform']),
+    sourceUrl: row['source_url']! as String,
+    authorUsername: row['author_username']! as String,
+    authorDisplayName: row['author_display_name']! as String,
+    caption: row['caption']! as String,
+    publishedAt: row['published_at']! as int,
+    locationName: row['location_name'] as String?,
+    coverMediaId: row['cover_media_id']! as String,
+    mediaCount: media.length,
+    localAvatarPath: row['local_avatar_path'] as String?,
+    media: media,
+    isBackedUp: isBackedUp,
+  );
 
   PostMedia _mediaFromRow(Map<String, Object?> row) => PostMedia(
     id: row['id']! as String,

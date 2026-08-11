@@ -14,14 +14,9 @@ class R2ConfigStore(context: Context) {
     private val preferences =
         context.applicationContext.getSharedPreferences(PREFERENCES_NAME, Context.MODE_PRIVATE)
 
-    fun read(): R2Config? = readEncrypted(KEY_IV, KEY_CIPHERTEXT)
-
-    fun readMigrationSource(): R2Config? =
-        readEncrypted(KEY_MIGRATION_IV, KEY_MIGRATION_CIPHERTEXT)
-
-    private fun readEncrypted(ivKey: String, ciphertextKey: String): R2Config? {
-        val encodedIv = preferences.getString(ivKey, null) ?: return null
-        val encodedCiphertext = preferences.getString(ciphertextKey, null) ?: return null
+    fun read(): R2Config? {
+        val encodedIv = preferences.getString(KEY_IV, null) ?: return null
+        val encodedCiphertext = preferences.getString(KEY_CIPHERTEXT, null) ?: return null
         return try {
             val cipher = Cipher.getInstance(TRANSFORMATION)
             cipher.init(
@@ -37,19 +32,13 @@ class R2ConfigStore(context: Context) {
     }
 
     fun save(config: R2Config) {
-        val previous = read()
         val encrypted = encrypt(config)
-        val editor =
+        check(
             preferences.edit()
                 .putString(KEY_IV, encrypted.iv)
                 .putString(KEY_CIPHERTEXT, encrypted.ciphertext)
-        if (previous != null && previous.repositoryId != config.repositoryId) {
-            val migrationSource = encrypt(previous)
-            editor
-                .putString(KEY_MIGRATION_IV, migrationSource.iv)
-                .putString(KEY_MIGRATION_CIPHERTEXT, migrationSource.ciphertext)
-        }
-        check(editor.commit()) { "R2 配置保存失败" }
+                .commit(),
+        ) { "R2 配置保存失败" }
     }
 
     private fun encrypt(config: R2Config): EncryptedConfig {
@@ -63,19 +52,12 @@ class R2ConfigStore(context: Context) {
     }
 
     fun clear() {
-        preferences.edit()
-            .remove(KEY_IV)
-            .remove(KEY_CIPHERTEXT)
-            .remove(KEY_MIGRATION_IV)
-            .remove(KEY_MIGRATION_CIPHERTEXT)
-            .apply()
-    }
-
-    fun clearMigrationSource() {
-        preferences.edit()
-            .remove(KEY_MIGRATION_IV)
-            .remove(KEY_MIGRATION_CIPHERTEXT)
-            .apply()
+        check(
+            preferences.edit()
+                .remove(KEY_IV)
+                .remove(KEY_CIPHERTEXT)
+                .commit(),
+        ) { "R2 配置清除失败" }
     }
 
     private fun secretKey(): SecretKey {
@@ -101,8 +83,6 @@ class R2ConfigStore(context: Context) {
         private const val PREFERENCES_NAME = "photobook_secure"
         private const val KEY_IV = "r2_config_iv"
         private const val KEY_CIPHERTEXT = "r2_config_ciphertext"
-        private const val KEY_MIGRATION_IV = "r2_migration_config_iv"
-        private const val KEY_MIGRATION_CIPHERTEXT = "r2_migration_config_ciphertext"
         private const val KEY_ALIAS = "photobook_r2_config"
         private const val TRANSFORMATION = "AES/GCM/NoPadding"
     }

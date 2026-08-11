@@ -11,7 +11,7 @@ class R2ConfigTest {
         val first = config(accessKey = "first", secret = "secret-a")
         val second = config(accessKey = "second", secret = "secret-b")
 
-        assertEquals(first.repositoryId, second.repositoryId)
+        assertEquals(first.backupTargetId, second.backupTargetId)
         assertEquals("photobook", first.basePrefix)
     }
 
@@ -20,7 +20,16 @@ class R2ConfigTest {
         val first = config(prefix = "photobook")
         val second = config(prefix = "another")
 
-        assertNotEquals(first.repositoryId, second.repositoryId)
+        assertNotEquals(first.backupTargetId, second.backupTargetId)
+    }
+
+    @Test
+    fun `summary exposes repository identity without credentials`() {
+        val config = config(accessKey = "access-key", secret = "secret-key")
+
+        assertEquals(config.backupTargetId, config.summary()["backupTargetId"])
+        assertEquals(false, config.summary().containsKey("secretAccessKey"))
+        assertEquals(false, config.summary().containsKey("accessKeyId"))
     }
 
     @Test

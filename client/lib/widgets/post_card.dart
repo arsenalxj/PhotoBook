@@ -55,6 +55,7 @@ class PostCard extends StatelessWidget {
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   AspectRatio(
+                    key: ValueKey('post-cover-${post.id}'),
                     aspectRatio: cover.aspectRatio.clamp(0.58, 1.65),
                     child: Stack(
                       fit: StackFit.expand,
@@ -77,41 +78,20 @@ class PostCard extends StatelessWidget {
                               ),
                             ),
                           ),
-                        if (post.mediaCount > 1)
+                        if (post.mediaCount > 1 || post.isBackedUp)
                           Positioned(
                             right: 8,
                             top: 8,
-                            child: DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: AppTheme.accent.withValues(alpha: 0.78),
-                                borderRadius: BorderRadius.circular(999),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 8,
-                                  vertical: 3,
-                                ),
-                                child: Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    const Icon(
-                                      LucideIcons.copy,
-                                      size: 11,
-                                      color: AppTheme.accentOn,
-                                    ),
-                                    const SizedBox(width: 4),
-                                    Text(
-                                      '${post.mediaCount}',
-                                      style: const TextStyle(
-                                        color: AppTheme.accentOn,
-                                        fontFamily: 'monospace',
-                                        fontSize: 11,
-                                        height: 1.2,
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                if (post.mediaCount > 1)
+                                  _MediaCountBadge(post: post),
+                                if (post.mediaCount > 1 && post.isBackedUp)
+                                  const SizedBox(width: 6),
+                                if (post.isBackedUp)
+                                  _PostBackupBadge(postId: post.id),
+                              ],
                             ),
                           ),
                       ],
@@ -204,6 +184,65 @@ class PostCard extends StatelessWidget {
         : displayName;
     return source.isEmpty ? '?' : source.characters.first;
   }
+}
+
+class _MediaCountBadge extends StatelessWidget {
+  const _MediaCountBadge({required this.post});
+
+  final ArchivedPost post;
+
+  @override
+  Widget build(BuildContext context) => DecoratedBox(
+    key: ValueKey('post-media-count-${post.id}'),
+    decoration: BoxDecoration(
+      color: AppTheme.accent.withValues(alpha: 0.78),
+      borderRadius: BorderRadius.circular(999),
+    ),
+    child: SizedBox(
+      height: 26,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(LucideIcons.copy, size: 11, color: AppTheme.accentOn),
+            const SizedBox(width: 4),
+            Text(
+              '${post.mediaCount}',
+              style: const TextStyle(
+                color: AppTheme.accentOn,
+                fontFamily: 'monospace',
+                fontSize: 11,
+                height: 1.2,
+              ),
+            ),
+          ],
+        ),
+      ),
+    ),
+  );
+}
+
+class _PostBackupBadge extends StatelessWidget {
+  const _PostBackupBadge({required this.postId});
+
+  final String postId;
+
+  @override
+  Widget build(BuildContext context) => Tooltip(
+    message: '已备份到 R2',
+    child: DecoratedBox(
+      key: ValueKey('post-backup-success-$postId'),
+      decoration: BoxDecoration(
+        color: AppTheme.accent.withValues(alpha: 0.78),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: const SizedBox.square(
+        dimension: 26,
+        child: Icon(LucideIcons.cloudCheck, size: 15, color: AppTheme.accentOn),
+      ),
+    ),
+  );
 }
 
 class _PostActionsOverlay extends StatelessWidget {

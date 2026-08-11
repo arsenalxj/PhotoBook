@@ -5,7 +5,6 @@ import android.content.Context
 import android.database.Cursor
 import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
-import java.io.File
 import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
@@ -100,21 +99,17 @@ class ArchiveDatabase(context: Context) :
             val alreadyArchived = sourcePostId != null &&
                 db.rawQuery(
                     """
-                    SELECT 1 FROM posts p
-                    WHERE p.source_platform = ? AND p.source_post_id = ?
-                      AND NOT EXISTS (
-                        SELECT 1 FROM sync_entity_states s
-                        WHERE s.entity_type = 'media'
-                          AND s.state = 'deleted'
-                          AND s.entity_id LIKE p.id || ':%'
-                      )
+                    SELECT 1 FROM posts
+                    WHERE source_platform = ? AND source_post_id = ?
                     LIMIT 1
                     """.trimIndent(),
                     arrayOf(sourcePlatform, sourcePostId),
-                ).use { it.moveToFirst() }
+                ).use(Cursor::moveToFirst)
             val id = UUID.randomUUID().toString()
             val status = if (alreadyArchived) "completed" else "queued"
-            val values =
+            db.insertOrThrow(
+                "capture_jobs",
+                null,
                 ContentValues().apply {
                     put("id", id)
                     put("source_url", sourceUrl)
@@ -128,8 +123,8 @@ class ArchiveDatabase(context: Context) :
                     putNull("next_attempt_at")
                     put("created_at", now)
                     put("updated_at", now)
-                }
-            db.insertOrThrow("capture_jobs", null, values)
+                },
+            )
             db.setTransactionSuccessful()
             return CaptureJob(id, sourcePostId, status, 0, sourcePlatform, requestKey)
         } finally {
@@ -153,14 +148,13 @@ class ArchiveDatabase(context: Context) :
                     arrayOf(System.currentTimeMillis().toString()),
                 ).use { cursor -> if (cursor.moveToFirst()) cursor.toCaptureJob() else null }
                     ?: return null
-            val now = System.currentTimeMillis()
             val values =
                 ContentValues().apply {
                     put("status", "fetching")
                     put("attempt_count", job.attemptCount + 1)
                     putNull("error_code")
                     putNull("error_message")
-                    put("updated_at", now)
+                    put("updated_at", System.currentTimeMillis())
                 }
             val updated =
                 db.update(
@@ -171,10 +165,7 @@ class ArchiveDatabase(context: Context) :
                 )
             if (updated != 1) return null
             db.setTransactionSuccessful()
-            return job.copy(
-                status = "fetching",
-                attemptCount = job.attemptCount + 1,
-            )
+            return job.copy(status = "fetching", attemptCount = job.attemptCount + 1)
         } finally {
             db.endTransaction()
         }
@@ -198,28 +189,26 @@ class ArchiveDatabase(context: Context) :
         status: String,
         current: Int,
         total: Int,
-    ): Boolean {
-        val values =
+    ): Boolean =
+        writableDatabase.update(
+            "capture_jobs",
             ContentValues().apply {
                 put("status", status)
                 put("progress_current", current)
                 put("progress_total", total)
                 put("updated_at", System.currentTimeMillis())
-            }
-        return writableDatabase.update(
-            "capture_jobs",
-            values,
+            },
             "id = ? AND attempt_count = ? AND status = ?",
             arrayOf(jobId, attemptCount.toString(), expectedStatus),
         ) == 1
-    }
 
     fun recordJobError(jobId: String, attemptCount: Int, error: ArchiveException): Boolean {
         val retryable = error.code == "NETWORK_ERROR" || error.code == "RATE_LIMITED"
         val now = System.currentTimeMillis()
         val retryDelay =
             if (error.code == "RATE_LIMITED") RATE_LIMIT_MS else retryDelayMs(attemptCount)
-        val values =
+        return writableDatabase.update(
+            "capture_jobs",
             ContentValues().apply {
                 put("status", if (retryable) "queued" else "failed")
                 put("error_code", error.code)
@@ -227,10 +216,7 @@ class ArchiveDatabase(context: Context) :
                 if (retryable) put("next_attempt_at", now + retryDelay)
                 else putNull("next_attempt_at")
                 put("updated_at", now)
-            }
-        return writableDatabase.update(
-            "capture_jobs",
-            values,
+            },
             """
             id = ? AND attempt_count = ?
             AND status IN ('fetching', 'downloading', 'committing')
@@ -273,7 +259,6 @@ class ArchiveDatabase(context: Context) :
                 db.setTransactionSuccessful()
                 return JobCancellationResult.QUEUED
             }
-
             val running =
                 db.update(
                     "capture_jobs",
@@ -307,8 +292,9 @@ class ArchiveDatabase(context: Context) :
             arrayOf(jobId),
         ) == 1
 
-    fun retryJob(jobId: String): Boolean {
-        val values =
+    fun retryJob(jobId: String): Boolean =
+        writableDatabase.update(
+            "capture_jobs",
             ContentValues().apply {
                 put("status", "queued")
                 put("progress_current", 0)
@@ -317,14 +303,10 @@ class ArchiveDatabase(context: Context) :
                 putNull("error_message")
                 putNull("next_attempt_at")
                 put("updated_at", System.currentTimeMillis())
-            }
-        return writableDatabase.update(
-            "capture_jobs",
-            values,
+            },
             "id = ? AND status = 'failed'",
             arrayOf(jobId),
         ) == 1
-    }
 
     fun activeJobCount(): Int =
         readableDatabase.rawQuery(
@@ -368,7 +350,7 @@ class ArchiveDatabase(context: Context) :
         jobId: String,
         attemptCount: Int,
         post: PreparedPost,
-        deviceId: String,
+        backupDestination: BackupDestination?,
     ): Boolean {
         val db = writableDatabase
         val now = System.currentTimeMillis()
@@ -392,10 +374,16 @@ class ArchiveDatabase(context: Context) :
             }
             require(SOURCE_POST_ID_PATTERN.matches(post.sourcePostId)) { "帖子来源编号无效" }
             requireCanonicalSourceUrl(post.sourcePlatform, post.sourcePostId, post.sourceUrl)
-            val seq = nextLocalSeq(db)
-            val version = nextLogicalVersion(db)
-            val previousMediaIds = mediaIdsForPost(db, post.id).toSet()
-            val postValues =
+
+            val previousGeneration =
+                db.rawQuery(
+                    "SELECT generation FROM post_backup_generations WHERE post_id = ?",
+                    arrayOf(post.id),
+                ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0L }
+            val generation = nextPositiveSequence(previousGeneration, "BACKUP_GENERATION_EXHAUSTED")
+            db.insertWithOnConflict(
+                "posts",
+                null,
                 ContentValues().apply {
                     put("id", post.id)
                     put("source_platform", post.sourcePlatform)
@@ -414,29 +402,16 @@ class ArchiveDatabase(context: Context) :
                     put("saved_at", now)
                     put("updated_at", now)
                     put("local_avatar_path", post.localAvatarPath)
-                    put("sync_device_id", deviceId)
-                    put("sync_seq", seq)
-                }
-            db.insertWithOnConflict("posts", null, postValues, SQLiteDatabase.CONFLICT_REPLACE)
-
-            writeEntityState(
-                db = db,
-                entityType = ENTITY_POST,
-                entityId = post.id,
-                state = STATE_ACTIVE,
-                version = version,
-                deviceId = deviceId,
-                seq = seq,
-                changedAt = now,
+                    put("backup_generation", generation)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
             )
-
-            val currentMediaIds = mutableSetOf<String>()
             post.media.forEach { media ->
-                val mediaId = media.id(post.id)
-                currentMediaIds += mediaId
-                val mediaValues =
+                db.insertOrThrow(
+                    "post_media",
+                    null,
                     ContentValues().apply {
-                        put("id", mediaId)
+                        put("id", media.id(post.id))
                         put("post_id", post.id)
                         put("sort_index", media.sortIndex)
                         put("logical_index", media.logicalIndex)
@@ -453,44 +428,40 @@ class ArchiveDatabase(context: Context) :
                         put("local_original_path", media.localOriginalPath)
                         put("original_download_status", "cached")
                         putNull("original_download_error")
-                    }
-                db.insertOrThrow("post_media", null, mediaValues)
-                writeEntityState(
-                    db = db,
-                    entityType = ENTITY_MEDIA,
-                    entityId = mediaId,
-                    state = STATE_ACTIVE,
-                    version = version,
-                    deviceId = deviceId,
-                    seq = seq,
-                    changedAt = now,
+                    },
                 )
             }
-            (previousMediaIds - currentMediaIds).forEach { mediaId ->
-                writeEntityState(
-                    db = db,
-                    entityType = ENTITY_MEDIA,
-                    entityId = mediaId,
-                    state = STATE_DELETED,
-                    version = version,
-                    deviceId = deviceId,
-                    seq = seq,
-                    changedAt = now,
-                )
-            }
-
-            val operation =
+            db.insertWithOnConflict(
+                "post_backup_generations",
+                null,
                 ContentValues().apply {
-                    put("device_id", deviceId)
-                    put("seq", seq)
-                    put("operation", "upsert_post")
-                    put("entity_id", post.id)
-                    put("payload_json", post.operationJson(deviceId, seq, now, version))
-                    put("created_at", now)
-                }
-            db.insertOrThrow("sync_ops", null, operation)
-
-            val jobValues =
+                    put("post_id", post.id)
+                    put("generation", generation)
+                },
+                SQLiteDatabase.CONFLICT_REPLACE,
+            )
+            backupDestination?.let { destination ->
+                val backupSeq = nextBackupSeq(db)
+                insertBackupJob(
+                    db = db,
+                    backupSeq = backupSeq,
+                    backupTargetId = destination.backupTargetId,
+                    deviceId = destination.deviceId,
+                    postId = post.id,
+                    sourcePlatform = post.sourcePlatform,
+                    generation = generation,
+                    snapshotJson = post.backupSnapshotJson(
+                        destination.deviceId,
+                        backupSeq,
+                        generation,
+                        now,
+                    ),
+                    createdAt = now,
+                )
+                writeMeta(db, "local_backup_seq", backupSeq.toString())
+            }
+            db.update(
+                "capture_jobs",
                 ContentValues().apply {
                     put("source_post_id", post.sourcePostId)
                     put("status", "completed")
@@ -499,9 +470,10 @@ class ArchiveDatabase(context: Context) :
                     putNull("error_code")
                     putNull("error_message")
                     put("updated_at", now)
-                }
-            db.update("capture_jobs", jobValues, "id = ?", arrayOf(jobId))
-            writeMeta(db, "local_sync_seq", seq.toString())
+                },
+                "id = ?",
+                arrayOf(jobId),
+            )
             db.setTransactionSuccessful()
             return true
         } finally {
@@ -509,21 +481,13 @@ class ArchiveDatabase(context: Context) :
         }
     }
 
-    fun deletePost(postId: String, deviceId: String) {
+    fun deletePost(postId: String) {
         val db = writableDatabase
-        val now = System.currentTimeMillis()
         db.beginTransaction()
         try {
             val sourceIdentity = sourceIdentity(db, postId)
                 ?: throw ArchiveException("POST_NOT_FOUND", "帖子不存在或已被删除")
-            deletePostInTransaction(
-                db,
-                postId,
-                sourceIdentity.first,
-                sourceIdentity.second,
-                deviceId,
-                now,
-            )
+            deletePostInTransaction(db, postId, sourceIdentity.first, sourceIdentity.second)
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
@@ -533,7 +497,6 @@ class ArchiveDatabase(context: Context) :
     fun deleteMediaSelection(
         postId: String,
         mediaIds: List<String>,
-        deviceId: String,
     ): DeleteMediaSelectionResult {
         val db = writableDatabase
         val now = System.currentTimeMillis()
@@ -558,13 +521,7 @@ class ArchiveDatabase(context: Context) :
                 ).use { cursor ->
                     buildList {
                         while (cursor.moveToNext()) {
-                            add(
-                                LogicalMediaRow(
-                                    mediaId = cursor.getString(0),
-                                    logicalIndex = cursor.getInt(1),
-                                    mediaRole = cursor.getString(2),
-                                ),
-                            )
+                            add(LogicalMediaRow(cursor.getString(0), cursor.getInt(1), cursor.getString(2)))
                         }
                     }
                 }
@@ -581,69 +538,27 @@ class ArchiveDatabase(context: Context) :
             ) {
                 throw ArchiveException("MEDIA_NOT_FOUND", "帖子媒体结构无效")
             }
-            val selectedLogicalIndexes = mediaIds.map { mediaId ->
-                representativeIndexes[mediaId]
-                    ?: throw ArchiveException("MEDIA_NOT_FOUND", "选择包含无效媒体")
-            }.toSet()
-
+            val selectedLogicalIndexes =
+                mediaIds.map { mediaId ->
+                    representativeIndexes[mediaId]
+                        ?: throw ArchiveException("MEDIA_NOT_FOUND", "选择包含无效媒体")
+                }.toSet()
             if (selectedLogicalIndexes == logicalIndexes) {
-                deletePostInTransaction(
-                    db,
-                    postId,
-                    sourceIdentity.first,
-                    sourceIdentity.second,
-                    deviceId,
-                    now,
-                )
+                deletePostInTransaction(db, postId, sourceIdentity.first, sourceIdentity.second)
                 db.setTransactionSuccessful()
-                return DeleteMediaSelectionResult(postId = postId, postDeleted = true)
+                return DeleteMediaSelectionResult(postId, postDeleted = true)
             }
-
-            var lastSeq = 0L
             physicalMedia
-                .filter { selectedLogicalIndexes.contains(it.logicalIndex) }
-                .forEach { selectedMedia ->
-                    val seq = nextLocalSeq(db)
-                    val version = nextLogicalVersion(db)
-                    writeEntityState(
-                        db,
-                        ENTITY_MEDIA,
-                        selectedMedia.mediaId,
-                        STATE_DELETED,
-                        version,
-                        deviceId,
-                        seq,
-                        now,
-                    )
-                    db.delete("post_media", "id = ?", arrayOf(selectedMedia.mediaId))
-                    insertSyncOperation(
-                        db = db,
-                        deviceId = deviceId,
-                        seq = seq,
-                        operation = "delete_media",
-                        entityId = selectedMedia.mediaId,
-                        payloadJson = deleteMediaOperationJson(
-                            deviceId,
-                            seq,
-                            EntityVersion(version, deviceId, seq),
-                            now,
-                            now,
-                            postId,
-                            selectedMedia.mediaId,
-                        ),
-                        createdAt = now,
-                    )
-                    writeMeta(db, "local_sync_seq", seq.toString())
-                    lastSeq = seq
-                }
-            updatePostMediaSummary(db, postId, deviceId, lastSeq, now)
+                .filter { it.logicalIndex in selectedLogicalIndexes }
+                .forEach { db.delete("post_media", "id = ?", arrayOf(it.mediaId)) }
+            updatePostMediaSummary(db, postId, now)
             db.delete(
                 "capture_jobs",
                 "source_platform = ? AND source_post_id = ? AND status = 'completed'",
                 arrayOf(sourceIdentity.first, sourceIdentity.second),
             )
             db.setTransactionSuccessful()
-            return DeleteMediaSelectionResult(postId = postId, postDeleted = false)
+            return DeleteMediaSelectionResult(postId, postDeleted = false)
         } finally {
             db.endTransaction()
         }
@@ -654,207 +569,107 @@ class ArchiveDatabase(context: Context) :
         postId: String,
         sourcePlatform: String,
         sourcePostId: String,
-        deviceId: String,
-        now: Long,
     ) {
-        val seq = nextLocalSeq(db)
-        val version = nextLogicalVersion(db)
-        writeEntityState(
-            db,
-            ENTITY_POST,
-            postId,
-            STATE_DELETED,
-            version,
-            deviceId,
-            seq,
-            now,
-        )
-        db.delete("posts", "id = ?", arrayOf(postId))
+        check(db.delete("posts", "id = ?", arrayOf(postId)) == 1) { "帖子删除失败" }
         db.delete(
             "capture_jobs",
             "source_platform = ? AND source_post_id = ? AND status = 'completed'",
             arrayOf(sourcePlatform, sourcePostId),
         )
-        insertSyncOperation(
-            db = db,
-            deviceId = deviceId,
-            seq = seq,
-            operation = "delete_post",
-            entityId = postId,
-            payloadJson = deletePostOperationJson(
-                deviceId,
-                seq,
-                EntityVersion(version, deviceId, seq),
-                now,
-                now,
-                postId,
-            ),
-            createdAt = now,
-        )
-        writeMeta(db, "local_sync_seq", seq.toString())
     }
 
-    fun seedRepositoryIfNeeded(repositoryId: String, deviceId: String) {
+    fun activateBackupTarget(backupTargetId: String, deviceId: String) {
+        require(backupTargetId.isNotBlank()) { "R2 备份目标标识无效" }
+        require(DEVICE_ID_PATTERN.matches(deviceId)) { "R2 设备标识无效" }
         val db = writableDatabase
         db.beginTransaction()
         try {
-            val seedKey = "repository_seed:$repositoryId"
-            val alreadySeeded =
-                db.rawQuery("SELECT 1 FROM app_meta WHERE key = ? LIMIT 1", arrayOf(seedKey))
-                    .use { it.moveToFirst() }
-            if (alreadySeeded) {
-                db.setTransactionSuccessful()
-                return
-            }
-            val activePosts =
+            db.delete(
+                "r2_backup_jobs",
+                "status = 'pending' AND backup_target_id != ?",
+                arrayOf(backupTargetId),
+            )
+            val posts =
                 db.rawQuery(
                     """
-                    SELECT p.id, s.version, s.device_id, s.seq, s.changed_at
-                    FROM posts p
-                    JOIN sync_entity_states s
-                      ON s.entity_type = 'post'
-                     AND s.entity_id = p.id
-                     AND s.state = 'active'
-                    ORDER BY p.saved_at, p.id
+                    SELECT id, source_platform, backup_generation
+                    FROM posts
+                    ORDER BY saved_at, id
                     """.trimIndent(),
                     null,
                 ).use { cursor ->
                     buildList {
                         while (cursor.moveToNext()) {
-                            add(
-                                EntityStateSnapshot(
-                                    entityType = ENTITY_POST,
-                                    entityId = cursor.getString(0),
-                                    state = STATE_ACTIVE,
-                                    entityVersion = EntityVersion(
-                                        cursor.getLong(1),
-                                        cursor.getString(2),
-                                        cursor.getLong(3),
-                                    ),
-                                    changedAt = cursor.getLong(4),
-                                ),
-                            )
+                            add(Triple(cursor.getString(0), cursor.getString(1), cursor.getLong(2)))
                         }
                     }
                 }
-            val tombstones =
-                db.rawQuery(
-                    """
-                    SELECT entity_type, entity_id, version, device_id, seq, changed_at
-                    FROM sync_entity_states
-                    WHERE state = 'deleted'
-                    ORDER BY CASE entity_type WHEN 'post' THEN 0 ELSE 1 END, entity_id
-                    """.trimIndent(),
-                    null,
-                ).use { cursor ->
-                    buildList {
-                        while (cursor.moveToNext()) {
-                            add(
-                                EntityStateSnapshot(
-                                    entityType = cursor.getString(0),
-                                    entityId = cursor.getString(1),
-                                    state = STATE_DELETED,
-                                    entityVersion = EntityVersion(
-                                        cursor.getLong(2),
-                                        cursor.getString(3),
-                                        cursor.getLong(4),
-                                    ),
-                                    changedAt = cursor.getLong(5),
-                                ),
-                            )
-                        }
-                    }
-                }
-            var seq = readMetaLong(db, "local_sync_seq")
-            for (snapshot in activePosts + tombstones) {
-                seq = nextSequence(seq)
+            var lastSeq = readMetaLong(db, "local_backup_seq")
+            for ((postId, sourcePlatform, generation) in posts) {
+                val exists =
+                    db.rawQuery(
+                        """
+                        SELECT 1 FROM r2_backup_jobs
+                        WHERE backup_target_id = ? AND device_id = ?
+                          AND post_id = ? AND generation = ?
+                        LIMIT 1
+                        """.trimIndent(),
+                        arrayOf(backupTargetId, deviceId, postId, generation.toString()),
+                    ).use(Cursor::moveToFirst)
+                if (exists) continue
+                lastSeq = nextPositiveSequence(lastSeq, "BACKUP_SEQUENCE_EXHAUSTED")
                 val now = System.currentTimeMillis()
-                val operation =
-                    when {
-                        snapshot.state == STATE_ACTIVE -> "upsert_post"
-                        snapshot.entityType == ENTITY_POST -> "delete_post"
-                        snapshot.entityType == ENTITY_MEDIA -> "delete_media"
-                        else -> error("未知同步实体类型")
-                    }
-                val operationJson =
-                    when (operation) {
-                        "upsert_post" -> buildOperationJson(
-                            db,
-                            snapshot.entityId,
-                            deviceId,
-                            seq,
-                            now,
-                            snapshot.entityVersion,
-                        )
-                        "delete_post" -> deletePostOperationJson(
-                            deviceId,
-                            seq,
-                            snapshot.entityVersion,
-                            now,
-                            snapshot.changedAt,
-                            snapshot.entityId,
-                        )
-                        else -> {
-                            val postId = snapshot.entityId.substringBeforeLast(':')
-                            require(postId != snapshot.entityId) { "媒体墓碑 ID 无效" }
-                            deleteMediaOperationJson(
-                                deviceId,
-                                seq,
-                                snapshot.entityVersion,
-                                now,
-                                snapshot.changedAt,
-                                postId,
-                                snapshot.entityId,
-                            )
-                        }
-                    }
-                insertSyncOperation(
-                    db,
-                    deviceId,
-                    seq,
-                    operation,
-                    snapshot.entityId,
-                    operationJson,
-                    now,
+                insertBackupJob(
+                    db = db,
+                    backupSeq = lastSeq,
+                    backupTargetId = backupTargetId,
+                    deviceId = deviceId,
+                    postId = postId,
+                    sourcePlatform = sourcePlatform,
+                    generation = generation,
+                    snapshotJson = buildBackupSnapshot(db, postId, deviceId, lastSeq, generation, now),
+                    createdAt = now,
                 )
             }
-            if (activePosts.isNotEmpty() || tombstones.isNotEmpty()) {
-                writeMeta(db, "local_sync_seq", seq.toString())
-            }
-            writeMeta(db, seedKey, System.currentTimeMillis().toString())
+            writeMeta(db, "local_backup_seq", lastSeq.toString())
             db.setTransactionSuccessful()
         } finally {
             db.endTransaction()
         }
     }
 
-    fun listPendingSyncOperations(
-        repositoryId: String,
+    fun discardPendingBackupJobs() {
+        writableDatabase.delete("r2_backup_jobs", "status = 'pending'", null)
+    }
+
+    fun listPendingBackupJobs(
+        backupTargetId: String,
         deviceId: String,
         limit: Int = Int.MAX_VALUE,
-    ): List<PendingSyncOperation> {
-        require(limit > 0) { "同步操作批次必须大于 0" }
+    ): List<PendingR2BackupJob> {
+        require(limit > 0) { "R2 备份批次必须大于 0" }
         return readableDatabase.rawQuery(
             """
-            SELECT o.seq, o.operation, o.payload_json
-            FROM sync_ops o
-            LEFT JOIN sync_uploads u
-              ON u.repository_id = ?
-             AND u.device_id = o.device_id
-             AND u.seq = o.seq
-            WHERE o.device_id = ? AND u.uploaded_at IS NULL
-            ORDER BY o.seq
+            SELECT backup_seq, backup_target_id, device_id, post_id,
+                   source_platform, generation, snapshot_json
+            FROM r2_backup_jobs
+            WHERE backup_target_id = ? AND device_id = ? AND status = 'pending'
+            ORDER BY backup_seq
             LIMIT ?
             """.trimIndent(),
-            arrayOf(repositoryId, deviceId, limit.toString()),
+            arrayOf(backupTargetId, deviceId, limit.toString()),
         ).use { cursor ->
             buildList {
                 while (cursor.moveToNext()) {
                     add(
-                        PendingSyncOperation(
-                            seq = cursor.getLong(0),
-                            operation = cursor.getString(1),
-                            payloadJson = cursor.getString(2),
+                        PendingR2BackupJob(
+                            backupSeq = cursor.getLong(0),
+                            backupTargetId = cursor.getString(1),
+                            deviceId = cursor.getString(2),
+                            postId = cursor.getString(3),
+                            sourcePlatform = cursor.getString(4),
+                            generation = cursor.getLong(5),
+                            snapshotJson = cursor.getString(6),
                         ),
                     )
                 }
@@ -862,187 +677,45 @@ class ArchiveDatabase(context: Context) :
         }
     }
 
-    fun markSyncOperationUploaded(repositoryId: String, deviceId: String, seq: Long) {
-        val values =
-            ContentValues().apply {
-                put("repository_id", repositoryId)
-                put("device_id", deviceId)
-                put("seq", seq)
-                put("uploaded_at", System.currentTimeMillis())
-                putNull("last_error")
-            }
-        writableDatabase.insertWithOnConflict(
-            "sync_uploads",
-            null,
-            values,
-            SQLiteDatabase.CONFLICT_REPLACE,
+    fun markBackupCompleted(backupSeq: Long) {
+        val updated =
+            writableDatabase.update(
+                "r2_backup_jobs",
+                ContentValues().apply {
+                    put("status", "completed")
+                    put("completed_at", System.currentTimeMillis())
+                    putNull("last_error")
+                },
+                "backup_seq = ? AND status = 'pending'",
+                arrayOf(backupSeq.toString()),
+            )
+        check(updated == 1) { "待确认 R2 备份任务不存在" }
+    }
+
+    fun markBackupError(backupSeq: Long, message: String) {
+        writableDatabase.update(
+            "r2_backup_jobs",
+            ContentValues().apply { put("last_error", message.take(300)) },
+            "backup_seq = ? AND status = 'pending'",
+            arrayOf(backupSeq.toString()),
         )
     }
 
-    fun markSyncOperationError(
-        repositoryId: String,
-        deviceId: String,
-        seq: Long,
-        message: String,
-    ) {
-        val values =
-            ContentValues().apply {
-                put("repository_id", repositoryId)
-                put("device_id", deviceId)
-                put("seq", seq)
-                put("last_error", message.take(300))
-            }
-        writableDatabase.insertWithOnConflict(
-            "sync_uploads",
-            null,
-            values,
-            SQLiteDatabase.CONFLICT_REPLACE,
-        )
-    }
-
-    fun hasPendingSyncOperations(repositoryId: String, deviceId: String): Boolean =
+    fun hasPendingBackupJobs(backupTargetId: String, deviceId: String): Boolean =
         readableDatabase.rawQuery(
             """
-            SELECT 1
-            FROM sync_ops o
-            LEFT JOIN sync_uploads u
-              ON u.repository_id = ?
-             AND u.device_id = o.device_id
-             AND u.seq = o.seq
-            WHERE o.device_id = ? AND u.uploaded_at IS NULL
+            SELECT 1 FROM r2_backup_jobs
+            WHERE backup_target_id = ? AND device_id = ? AND status = 'pending'
             LIMIT 1
             """.trimIndent(),
-            arrayOf(repositoryId, deviceId),
-        ).use { it.moveToFirst() }
-
-    fun peerHighWater(repositoryId: String, peerDeviceId: String): Long =
-        readableDatabase.rawQuery(
-            """
-            SELECT high_water_seq FROM sync_peers
-            WHERE repository_id = ? AND peer_device_id = ?
-            """.trimIndent(),
-            arrayOf(repositoryId, peerDeviceId),
-        ).use { cursor -> if (cursor.moveToFirst()) cursor.getLong(0) else 0 }
-
-    fun applyRemoteOperation(
-        repositoryId: String,
-        peerDeviceId: String,
-        expectedSeq: Long,
-        rawJson: String,
-    ) {
-        val operation = JSONObject(rawJson)
-        require(operation.getString("deviceId") == peerDeviceId) { "同步设备标识不匹配" }
-        require(operation.getLong("seq") == expectedSeq) { "同步序号与路径不匹配" }
-        require(operation.getLong("createdAt") > 0) { "同步操作时间无效" }
-        val entityVersion = EntityVersion.fromJson(operation.getJSONObject("entityVersion"))
-        val entityId = operation.getString("entityId")
-        val db = writableDatabase
-        db.beginTransaction()
-        try {
-            when (operation.getString("operation")) {
-                "upsert_post" ->
-                    applyRemotePost(
-                        db,
-                        operation,
-                        entityId,
-                        entityVersion,
-                    )
-                "delete_post" ->
-                    applyRemoteDeletePost(
-                        db,
-                        operation,
-                        entityId,
-                        entityVersion,
-                    )
-                "delete_media" ->
-                    applyRemoteDeleteMedia(
-                        db,
-                        operation,
-                        entityId,
-                        entityVersion,
-                    )
-                else -> throw IllegalArgumentException("未知 R2 同步操作")
-            }
-            observeLogicalVersion(db, entityVersion.version)
-            updatePeerHighWater(db, repositoryId, peerDeviceId, expectedSeq)
-            db.setTransactionSuccessful()
-        } finally {
-            db.endTransaction()
-        }
-    }
-
-    fun listMissingPreviews(limit: Int = 100): List<MissingPreview> {
-        val db = readableDatabase
-        val avatars =
-            db.rawQuery(
-                """
-                SELECT id, author_avatar_sha256
-                FROM posts
-                WHERE has_author_avatar = 1
-                  AND author_avatar_sha256 IS NOT NULL
-                  AND local_avatar_path IS NULL
-                ORDER BY saved_at DESC
-                LIMIT ?
-                """.trimIndent(),
-                arrayOf(limit.toString()),
-            ).use { cursor ->
-                buildList {
-                    while (cursor.moveToNext()) {
-                        add(MissingPreview(cursor.getString(0), null, "avatar", cursor.getString(1)))
-                    }
-                }
-            }
-        if (avatars.size >= limit) return avatars
-        val media =
-            db.rawQuery(
-                """
-                SELECT post_id, id, thumbnail_sha256
-                FROM post_media
-                WHERE local_thumbnail_path IS NULL
-                ORDER BY post_id, sort_index
-                LIMIT ?
-                """.trimIndent(),
-                arrayOf((limit - avatars.size).toString()),
-            ).use { cursor ->
-                buildList {
-                    while (cursor.moveToNext()) {
-                        add(
-                            MissingPreview(
-                                cursor.getString(0),
-                                cursor.getString(1),
-                                "thumbnail",
-                                cursor.getString(2),
-                            ),
-                        )
-                    }
-                }
-            }
-        return avatars + media
-    }
-
-    fun updatePreviewPath(preview: MissingPreview, localPath: String) {
-        if (preview.kind == "avatar") {
-            writableDatabase.update(
-                "posts",
-                ContentValues().apply { put("local_avatar_path", localPath) },
-                "id = ? AND author_avatar_sha256 = ?",
-                arrayOf(preview.postId, preview.sha256),
-            )
-        } else {
-            writableDatabase.update(
-                "post_media",
-                ContentValues().apply { put("local_thumbnail_path", localPath) },
-                "id = ? AND thumbnail_sha256 = ?",
-                arrayOf(preview.mediaId, preview.sha256),
-            )
-        }
-    }
+            arrayOf(backupTargetId, deviceId),
+        ).use(Cursor::moveToFirst)
 
     fun originalDescriptor(mediaId: String): OriginalMediaDescriptor? =
         readableDatabase.rawQuery(
             """
-            SELECT m.id, m.post_id, p.source_platform, p.source_post_id,
-                   m.sort_index, m.logical_index, m.media_role, m.media_type,
+            SELECT m.id, m.post_id, p.source_post_id,
+                   m.logical_index, m.media_role, m.media_type,
                    m.mime_type, m.original_sha256, m.original_size, m.local_original_path
             FROM post_media m
             JOIN posts p ON p.id = m.post_id
@@ -1054,16 +727,14 @@ class ArchiveDatabase(context: Context) :
             OriginalMediaDescriptor(
                 mediaId = cursor.getString(0),
                 postId = cursor.getString(1),
-                sourcePlatform = cursor.getString(2),
-                sourcePostId = cursor.getString(3),
-                sortIndex = cursor.getInt(4),
-                logicalIndex = cursor.getInt(5),
-                mediaRole = cursor.getString(6),
-                mediaType = cursor.getString(7),
-                mimeType = cursor.getString(8),
-                sha256 = cursor.getString(9),
-                expectedSize = cursor.getLong(10),
-                localPath = cursor.getNullableString(11),
+                sourcePostId = cursor.getString(2),
+                logicalIndex = cursor.getInt(3),
+                mediaRole = cursor.getString(4),
+                mediaType = cursor.getString(5),
+                mimeType = cursor.getString(6),
+                sha256 = cursor.getString(7),
+                expectedSize = cursor.getLong(8),
+                localPath = cursor.getNullableString(9),
             )
         }
 
@@ -1072,43 +743,45 @@ class ArchiveDatabase(context: Context) :
         if (still.mediaRole != MEDIA_ROLE_LIVE_STILL) return null
         val motionId =
             readableDatabase.rawQuery(
-                "SELECT id FROM post_media WHERE post_id = ? AND logical_index = ? AND media_role = ? LIMIT 1",
+                """
+                SELECT id FROM post_media
+                WHERE post_id = ? AND logical_index = ? AND media_role = ?
+                LIMIT 1
+                """.trimIndent(),
                 arrayOf(still.postId, still.logicalIndex.toString(), MEDIA_ROLE_LIVE_MOTION),
             ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
         return motionId?.let(::originalDescriptor)
     }
 
     fun updateOriginalPath(mediaId: String, sha256: String, localPath: String) {
-        val values =
+        writableDatabase.update(
+            "post_media",
             ContentValues().apply {
                 put("local_original_path", localPath)
                 put("original_download_status", "cached")
                 putNull("original_download_error")
-            }
-        writableDatabase.update(
-            "post_media",
-            values,
+            },
             "id = ? AND original_sha256 = ?",
             arrayOf(mediaId, sha256),
         )
     }
 
-    fun writeSyncResult(error: String?) {
+    fun writeBackupResult(error: String?) {
         val db = writableDatabase
         if (error == null) {
-            db.delete("app_meta", "key = 'last_sync_error'", null)
+            db.delete("app_meta", "key = 'last_backup_error'", null)
         } else {
-            writeMeta(db, "last_sync_error", error.take(300))
+            writeMeta(db, "last_backup_error", error.take(300))
         }
     }
 
-    fun clearSyncResult() {
-        writableDatabase.delete("app_meta", "key = 'last_sync_error'", null)
+    fun clearBackupResult() {
+        writableDatabase.delete("app_meta", "key = 'last_backup_error'", null)
     }
 
     fun isMediaShaReferenced(sha256: String): Boolean {
         val db = readableDatabase
-        val referencedByCurrentState =
+        val current =
             db.rawQuery(
                 """
                 SELECT 1 FROM posts WHERE author_avatar_sha256 = ?
@@ -1118,351 +791,19 @@ class ArchiveDatabase(context: Context) :
                 LIMIT 1
                 """.trimIndent(),
                 arrayOf(sha256, sha256, sha256),
-            ).use { it.moveToFirst() }
-        if (referencedByCurrentState) return true
-
+            ).use(Cursor::moveToFirst)
+        if (current) return true
         return db.rawQuery(
-            "SELECT payload_json FROM sync_ops WHERE payload_json LIKE ?",
+            """
+            SELECT snapshot_json FROM r2_backup_jobs
+            WHERE status = 'pending' AND snapshot_json LIKE ?
+            """.trimIndent(),
             arrayOf("%$sha256%"),
         ).use { cursor ->
             while (cursor.moveToNext()) {
-                if (operationReferencesSha(cursor.getString(0), sha256)) return@use true
+                if (snapshotReferencesSha(cursor.getString(0), sha256)) return@use true
             }
             false
-        }
-    }
-
-    private fun applyRemotePost(
-        db: SQLiteDatabase,
-        operation: JSONObject,
-        entityId: String,
-        entityVersion: EntityVersion,
-    ) {
-        val payload = operation.getJSONObject("payload")
-        val post = payload.getJSONObject("post")
-        require(post.getString("id") == entityId) { "同步帖子 ID 不匹配" }
-        val sourcePlatform = post.getString("sourcePlatform")
-        require(sourcePlatform in SUPPORTED_SOURCE_PLATFORMS) { "同步帖子来源平台无效" }
-        val sourcePostId = post.getString("sourcePostId")
-        require(SHORTCODE_PATTERN.matches(sourcePostId)) { "同步帖子来源编号无效" }
-        require(entityId == "$sourcePlatform:$sourcePostId") {
-            "同步帖子来源编号与 ID 不匹配"
-        }
-        requireCanonicalSourceUrl(sourcePlatform, sourcePostId, post.getString("sourceUrl"))
-        val avatarSha = post.optionalString("authorAvatarSha256")
-        require(avatarSha == null || SHA256_PATTERN.matches(avatarSha)) {
-            "同步头像校验值无效"
-        }
-        require(post.getBoolean("hasAuthorAvatar") == (avatarSha != null)) {
-            "同步头像状态与校验值不匹配"
-        }
-        val mediaArray = payload.getJSONArray("media")
-        require(mediaArray.length() > 0) { "同步帖子没有媒体" }
-        require(post.getInt("mediaCount") == mediaArray.length()) {
-            "同步帖子媒体数量不匹配"
-        }
-        val mediaIds = linkedSetOf<String>()
-        val sortIndexes = mutableSetOf<Int>()
-        val logicalRoles = mutableMapOf<Int, MutableSet<String>>()
-        for (index in 0 until mediaArray.length()) {
-            val media = mediaArray.getJSONObject(index)
-            require(media.getString("postId") == entityId) { "同步媒体所属帖子不匹配" }
-            val sortIndex = media.getInt("sortIndex")
-            require(sortIndex >= 0 && sortIndexes.add(sortIndex)) { "同步媒体索引无效或重复" }
-            val logicalIndex = media.getInt("logicalIndex")
-            require(logicalIndex >= 0) { "同步逻辑媒体索引无效" }
-            val mediaId = media.getString("id")
-            require(mediaId == "$entityId:$sortIndex" && mediaIds.add(mediaId)) {
-                "同步媒体 ID 无效或重复"
-            }
-            val mediaType = media.getString("mediaType")
-            require(mediaType in SUPPORTED_MEDIA_TYPES) {
-                "同步媒体类型无效"
-            }
-            val mediaRole = media.getString("mediaRole")
-            require(mediaRole in SUPPORTED_MEDIA_ROLES) { "同步媒体角色无效" }
-            require(logicalRoles.getOrPut(logicalIndex, ::mutableSetOf).add(mediaRole)) {
-                "同步逻辑媒体角色重复"
-            }
-            require(mediaRole != MEDIA_ROLE_LIVE_STILL || mediaType == "image") {
-                "Live Photo 静态媒体类型无效"
-            }
-            require(mediaRole != MEDIA_ROLE_LIVE_MOTION || mediaType == "video") {
-                "Live Photo 动态媒体类型无效"
-            }
-            require(media.getString("mimeType").lowercase().startsWith("$mediaType/")) {
-                "同步媒体 MIME 类型无效"
-            }
-            require(media.getInt("width") > 0 && media.getInt("height") > 0) {
-                "同步媒体尺寸无效"
-            }
-            if (!media.isNull("durationMs")) {
-                require(media.getLong("durationMs") > 0) { "同步媒体时长无效" }
-            }
-            require(media.getLong("originalSize") > 0) { "同步媒体大小无效" }
-            require(SHA256_PATTERN.matches(media.getString("originalSha256"))) {
-                "同步原媒体校验值无效"
-            }
-            require(SHA256_PATTERN.matches(media.getString("thumbnailSha256"))) {
-                "同步缩略图校验值无效"
-            }
-        }
-        logicalRoles.values.forEach { roles ->
-            require(
-                roles == setOf(MEDIA_ROLE_PRIMARY) ||
-                    roles == setOf(MEDIA_ROLE_LIVE_STILL) ||
-                    roles == setOf(MEDIA_ROLE_LIVE_STILL, MEDIA_ROLE_LIVE_MOTION),
-            ) { "同步逻辑媒体分组无效" }
-        }
-        require(post.getString("coverMediaId") in mediaIds) { "同步封面媒体不存在" }
-        val incomingUpdatedAt = post.getLong("updatedAt")
-        require(
-            post.getLong("publishedAt") > 0 &&
-                post.getLong("savedAt") > 0 &&
-                incomingUpdatedAt > 0,
-        ) {
-            "同步帖子时间无效"
-        }
-        if (!shouldApplyEntity(db, ENTITY_POST, entityId, entityVersion)) {
-            return
-        }
-        val previousMediaIds = mediaIdsForPost(db, entityId).toSet()
-        val existing =
-            db.rawQuery(
-                "SELECT updated_at, sync_device_id, sync_seq, author_avatar_sha256, local_avatar_path " +
-                    "FROM posts WHERE id = ?",
-                arrayOf(entityId),
-            ).use { cursor ->
-                if (!cursor.moveToFirst()) null
-                else ExistingPost(
-                    cursor.getLong(0),
-                    cursor.getString(1),
-                    cursor.getLong(2),
-                    cursor.getNullableString(3),
-                    cursor.getNullableString(4),
-                )
-            }
-        val avatarPath =
-            existing?.avatarPath?.takeIf {
-                existing.avatarSha256 == avatarSha && File(it).isFile
-            }
-        val values =
-            ContentValues().apply {
-                put("id", entityId)
-                put("source_platform", sourcePlatform)
-                put("source_post_id", post.getString("sourcePostId"))
-                put("source_url", post.getString("sourceUrl"))
-                put("author_username", post.getString("authorUsername"))
-                put("author_display_name", post.getString("authorDisplayName"))
-                put("author_profile_url", post.getString("authorProfileUrl"))
-                put("has_author_avatar", if (post.optBoolean("hasAuthorAvatar")) 1 else 0)
-                put("author_avatar_sha256", avatarSha)
-                put("caption", post.optString("caption"))
-                put("published_at", post.getLong("publishedAt"))
-                put("location_name", post.optionalString("locationName"))
-                put("cover_media_id", post.getString("coverMediaId"))
-                put("media_count", post.getInt("mediaCount"))
-                put("saved_at", post.getLong("savedAt"))
-                put("updated_at", incomingUpdatedAt)
-                put("local_avatar_path", avatarPath)
-                put("sync_device_id", entityVersion.deviceId)
-                put("sync_seq", entityVersion.seq)
-            }
-        if (existing == null) db.insertOrThrow("posts", null, values)
-        else db.update("posts", values.apply { remove("id") }, "id = ?", arrayOf(entityId))
-
-        writeEntityState(
-            db,
-            ENTITY_POST,
-            entityId,
-            STATE_ACTIVE,
-            entityVersion.version,
-            entityVersion.deviceId,
-            entityVersion.seq,
-            incomingUpdatedAt,
-        )
-
-        for (index in 0 until mediaArray.length()) {
-            val media = mediaArray.getJSONObject(index)
-            val mediaId = media.getString("id")
-            if (shouldApplyEntity(db, ENTITY_MEDIA, mediaId, entityVersion)) {
-                upsertRemoteMedia(db, entityId, media)
-                writeEntityState(
-                    db,
-                    ENTITY_MEDIA,
-                    mediaId,
-                    STATE_ACTIVE,
-                    entityVersion.version,
-                    entityVersion.deviceId,
-                    entityVersion.seq,
-                    incomingUpdatedAt,
-                )
-            }
-        }
-        (previousMediaIds - mediaIds).forEach { mediaId ->
-            if (shouldApplyEntity(db, ENTITY_MEDIA, mediaId, entityVersion)) {
-                db.delete("post_media", "id = ?", arrayOf(mediaId))
-                writeEntityState(
-                    db,
-                    ENTITY_MEDIA,
-                    mediaId,
-                    STATE_DELETED,
-                    entityVersion.version,
-                    entityVersion.deviceId,
-                    entityVersion.seq,
-                    incomingUpdatedAt,
-                )
-            }
-        }
-        updatePostMediaSummary(
-            db,
-            entityId,
-            entityVersion.deviceId,
-            entityVersion.seq,
-            incomingUpdatedAt,
-        )
-    }
-
-    private fun applyRemoteDeletePost(
-        db: SQLiteDatabase,
-        operation: JSONObject,
-        entityId: String,
-        entityVersion: EntityVersion,
-    ) {
-        val sourceIdentity = sourceIdentityFromEntityId(entityId)
-        val payload = operation.getJSONObject("payload")
-        val deletedAt = payload.getLong("deletedAt")
-        require(deletedAt > 0) { "同步帖子删除时间无效" }
-        if (!shouldApplyEntity(db, ENTITY_POST, entityId, entityVersion)) return
-
-        writeEntityState(
-            db,
-            ENTITY_POST,
-            entityId,
-            STATE_DELETED,
-            entityVersion.version,
-            entityVersion.deviceId,
-            entityVersion.seq,
-            deletedAt,
-        )
-        db.delete("posts", "id = ?", arrayOf(entityId))
-        db.delete(
-            "capture_jobs",
-            "source_platform = ? AND source_post_id = ? AND status = 'completed'",
-            arrayOf(sourceIdentity.first, sourceIdentity.second),
-        )
-    }
-
-    private fun applyRemoteDeleteMedia(
-        db: SQLiteDatabase,
-        operation: JSONObject,
-        entityId: String,
-        entityVersion: EntityVersion,
-    ) {
-        require(MEDIA_ID_PATTERN.matches(entityId)) { "同步媒体删除 ID 无效" }
-        val payload = operation.getJSONObject("payload")
-        val postId = payload.getString("postId")
-        require(payload.getString("mediaId") == entityId) { "同步媒体删除 ID 不匹配" }
-        require(entityId.startsWith("$postId:")) { "同步媒体删除所属帖子不匹配" }
-        val deletedAt = payload.getLong("deletedAt")
-        require(deletedAt > 0) { "同步媒体删除时间无效" }
-        val sourceIdentity = sourceIdentityFromEntityId(postId)
-        if (!shouldApplyEntity(db, ENTITY_MEDIA, entityId, entityVersion)) return
-
-        writeEntityState(
-            db,
-            ENTITY_MEDIA,
-            entityId,
-            STATE_DELETED,
-            entityVersion.version,
-            entityVersion.deviceId,
-            entityVersion.seq,
-            deletedAt,
-        )
-        db.delete("post_media", "id = ?", arrayOf(entityId))
-        updatePostMediaSummary(
-            db,
-            postId,
-            entityVersion.deviceId,
-            entityVersion.seq,
-            deletedAt,
-        )
-        db.delete(
-            "capture_jobs",
-            "source_platform = ? AND source_post_id = ? AND status = 'completed'",
-            arrayOf(sourceIdentity.first, sourceIdentity.second),
-        )
-    }
-
-    private fun upsertRemoteMedia(db: SQLiteDatabase, postId: String, media: JSONObject) {
-        val mediaId = media.getString("id")
-        val old =
-            db.rawQuery(
-                """
-                SELECT original_sha256, local_original_path,
-                       thumbnail_sha256, local_thumbnail_path
-                FROM post_media WHERE id = ?
-                """.trimIndent(),
-                arrayOf(mediaId),
-            ).use { cursor ->
-                if (!cursor.moveToFirst()) null
-                else ExistingMedia(
-                    cursor.getString(0),
-                    cursor.getNullableString(1),
-                    cursor.getString(2),
-                    cursor.getNullableString(3),
-                )
-            }
-        val originalSha = media.getString("originalSha256")
-        val thumbnailSha = media.getString("thumbnailSha256")
-        val originalPath = old?.originalPath?.takeIf { old.originalSha256 == originalSha && File(it).isFile }
-        val thumbnailPath = old?.thumbnailPath?.takeIf { old.thumbnailSha256 == thumbnailSha && File(it).isFile }
-        val values =
-            ContentValues().apply {
-                put("post_id", postId)
-                put("sort_index", media.getInt("sortIndex"))
-                put("logical_index", media.getInt("logicalIndex"))
-                put("media_role", media.getString("mediaRole"))
-                put("media_type", media.getString("mediaType"))
-                put("mime_type", media.getString("mimeType"))
-                put("width", media.getInt("width"))
-                put("height", media.getInt("height"))
-                if (media.isNull("durationMs")) putNull("duration_ms")
-                else put("duration_ms", media.getLong("durationMs"))
-                put("original_size", media.getLong("originalSize"))
-                put("original_sha256", originalSha)
-                put("thumbnail_sha256", thumbnailSha)
-                put("local_original_path", originalPath)
-                put("local_thumbnail_path", thumbnailPath)
-                put("original_download_status", if (originalPath == null) "remote" else "cached")
-                putNull("original_download_error")
-            }
-        if (old == null) db.insertOrThrow("post_media", null, ContentValues(values).apply { put("id", mediaId) })
-        else db.update("post_media", values, "id = ?", arrayOf(mediaId))
-    }
-
-    private fun updatePeerHighWater(
-        db: SQLiteDatabase,
-        repositoryId: String,
-        peerDeviceId: String,
-        seq: Long,
-    ) {
-        val values =
-            ContentValues().apply {
-                put("high_water_seq", seq)
-                put("updated_at", System.currentTimeMillis())
-            }
-        val updated =
-            db.update(
-                "sync_peers",
-                values,
-                "repository_id = ? AND peer_device_id = ?",
-                arrayOf(repositoryId, peerDeviceId),
-            )
-        if (updated == 0) {
-            values.put("repository_id", repositoryId)
-            values.put("peer_device_id", peerDeviceId)
-            db.insertOrThrow("sync_peers", null, values)
         }
     }
 
@@ -1474,346 +815,173 @@ class ArchiveDatabase(context: Context) :
             if (cursor.moveToFirst()) cursor.getString(0) to cursor.getString(1) else null
         }
 
-    private fun sourceIdentityFromEntityId(postId: String): Pair<String, String> {
-        val separator = postId.indexOf(':')
-        require(separator > 0 && separator < postId.lastIndex) { "同步帖子 ID 无效" }
-        val sourcePlatform = postId.substring(0, separator)
-        require(sourcePlatform in SUPPORTED_SOURCE_PLATFORMS) { "同步帖子来源平台无效" }
-        val sourcePostId = postId.substring(separator + 1)
-        require(SHORTCODE_PATTERN.matches(sourcePostId)) { "同步帖子来源编号无效" }
-        return sourcePlatform to sourcePostId
-    }
-
-    private fun mediaIdsForPost(db: SQLiteDatabase, postId: String): List<String> =
-        db.rawQuery(
-            "SELECT id FROM post_media WHERE post_id = ? ORDER BY sort_index",
-            arrayOf(postId),
-        ).use { cursor ->
-            buildList {
-                while (cursor.moveToNext()) add(cursor.getString(0))
-            }
-        }
-
-    private fun updatePostMediaSummary(
-        db: SQLiteDatabase,
-        postId: String,
-        deviceId: String,
-        seq: Long,
-        updatedAt: Long,
-    ) {
-        val mediaIds = mediaIdsForPost(db, postId)
-        if (mediaIds.isEmpty()) {
-            db.delete("posts", "id = ?", arrayOf(postId))
-            return
-        }
-        val currentCover =
+    private fun updatePostMediaSummary(db: SQLiteDatabase, postId: String, now: Long) {
+        val mediaIds =
             db.rawQuery(
-                "SELECT cover_media_id FROM posts WHERE id = ?",
+                "SELECT id FROM post_media WHERE post_id = ? ORDER BY sort_index",
                 arrayOf(postId),
-            ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
-        val values =
+            ).use { cursor ->
+                buildList { while (cursor.moveToNext()) add(cursor.getString(0)) }
+            }
+        check(mediaIds.isNotEmpty()) { "帖子删除后没有剩余媒体" }
+        db.update(
+            "posts",
             ContentValues().apply {
-                put("cover_media_id", currentCover?.takeIf(mediaIds::contains) ?: mediaIds.first())
+                put("cover_media_id", mediaIds.first())
                 put("media_count", mediaIds.size)
-                put("updated_at", updatedAt)
-                put("sync_device_id", deviceId)
-                put("sync_seq", seq)
-            }
-        db.update("posts", values, "id = ?", arrayOf(postId))
-    }
-
-    private fun insertSyncOperation(
-        db: SQLiteDatabase,
-        deviceId: String,
-        seq: Long,
-        operation: String,
-        entityId: String,
-        payloadJson: String,
-        createdAt: Long,
-    ) {
-        val values =
-            ContentValues().apply {
-                put("device_id", deviceId)
-                put("seq", seq)
-                put("operation", operation)
-                put("entity_id", entityId)
-                put("payload_json", payloadJson)
-                put("created_at", createdAt)
-            }
-        db.insertOrThrow("sync_ops", null, values)
-    }
-
-    private fun deletePostOperationJson(
-        deviceId: String,
-        seq: Long,
-        entityVersion: EntityVersion,
-        createdAt: Long,
-        deletedAt: Long,
-        postId: String,
-    ): String =
-        JSONObject()
-            .put("deviceId", deviceId)
-            .put("seq", seq)
-            .put("entityVersion", entityVersion.toJson())
-            .put("operation", "delete_post")
-            .put("entityId", postId)
-            .put("createdAt", createdAt)
-            .put("payload", JSONObject().put("deletedAt", deletedAt))
-            .toString()
-
-    private fun deleteMediaOperationJson(
-        deviceId: String,
-        seq: Long,
-        entityVersion: EntityVersion,
-        createdAt: Long,
-        deletedAt: Long,
-        postId: String,
-        mediaId: String,
-    ): String =
-        JSONObject()
-            .put("deviceId", deviceId)
-            .put("seq", seq)
-            .put("entityVersion", entityVersion.toJson())
-            .put("operation", "delete_media")
-            .put("entityId", mediaId)
-            .put("createdAt", createdAt)
-            .put(
-                "payload",
-                JSONObject()
-                    .put("postId", postId)
-                    .put("mediaId", mediaId)
-                    .put("deletedAt", deletedAt),
-            )
-            .toString()
-
-    private fun shouldApplyEntity(
-        db: SQLiteDatabase,
-        entityType: String,
-        entityId: String,
-        entityVersion: EntityVersion,
-    ): Boolean =
-        db.rawQuery(
-            """
-            SELECT version, device_id, seq FROM sync_entity_states
-            WHERE entity_type = ? AND entity_id = ?
-            """.trimIndent(),
-            arrayOf(entityType, entityId),
-        ).use { cursor ->
-            if (!cursor.moveToFirst()) return@use true
-            compareVersion(
-                entityVersion.version,
-                entityVersion.deviceId,
-                entityVersion.seq,
-                cursor.getLong(0),
-                cursor.getString(1),
-                cursor.getLong(2),
-            ) > 0
-        }
-
-    private fun writeEntityState(
-        db: SQLiteDatabase,
-        entityType: String,
-        entityId: String,
-        state: String,
-        version: Long,
-        deviceId: String,
-        seq: Long,
-        changedAt: Long,
-    ) {
-        val values =
-            ContentValues().apply {
-                put("entity_type", entityType)
-                put("entity_id", entityId)
-                put("state", state)
-                put("version", version)
-                put("device_id", deviceId)
-                put("seq", seq)
-                put("changed_at", changedAt)
-            }
-        db.insertWithOnConflict(
-            "sync_entity_states",
-            null,
-            values,
-            SQLiteDatabase.CONFLICT_REPLACE,
+                put("updated_at", now)
+            },
+            "id = ?",
+            arrayOf(postId),
         )
     }
 
-    private fun nextLogicalVersion(db: SQLiteDatabase): Long {
-        val current = readMetaLong(db, "local_sync_version")
-        if (current >= MAX_LOGICAL_VERSION) {
-            throw ArchiveException("SYNC_VERSION_EXHAUSTED", "同步逻辑版本已耗尽，请清空数据后重试")
-        }
-        val next = current + 1
-        writeMeta(db, "local_sync_version", next.toString())
-        return next
+    private fun insertBackupJob(
+        db: SQLiteDatabase,
+        backupSeq: Long,
+        backupTargetId: String,
+        deviceId: String,
+        postId: String,
+        sourcePlatform: String,
+        generation: Long,
+        snapshotJson: String,
+        createdAt: Long,
+    ) {
+        db.insertOrThrow(
+            "r2_backup_jobs",
+            null,
+            ContentValues().apply {
+                put("backup_seq", backupSeq)
+                put("backup_target_id", backupTargetId)
+                put("device_id", deviceId)
+                put("post_id", postId)
+                put("source_platform", sourcePlatform)
+                put("generation", generation)
+                put("snapshot_json", snapshotJson)
+                put("status", "pending")
+                put("created_at", createdAt)
+            },
+        )
     }
 
-    private fun observeLogicalVersion(db: SQLiteDatabase, version: Long) {
-        if (version > readMetaLong(db, "local_sync_version")) {
-            writeMeta(db, "local_sync_version", version.toString())
-        }
-    }
-
-    private fun readMetaLong(db: SQLiteDatabase, key: String): Long =
-        db.rawQuery("SELECT value FROM app_meta WHERE key = ?", arrayOf(key)).use { cursor ->
-            if (cursor.moveToFirst()) cursor.getString(0).toLongOrNull() ?: 0 else 0
-        }
-
-    private fun buildOperationJson(
+    private fun buildBackupSnapshot(
         db: SQLiteDatabase,
         postId: String,
         deviceId: String,
-        seq: Long,
+        backupSeq: Long,
+        generation: Long,
         createdAt: Long,
-        entityVersion: EntityVersion,
     ): String {
         val post =
-            db.rawQuery("SELECT * FROM posts WHERE id = ?", arrayOf(postId)).use { cursor ->
-                require(cursor.moveToFirst()) { "待同步帖子不存在" }
+            db.rawQuery(
+                """
+                SELECT id, source_platform, source_post_id, source_url,
+                       author_username, author_display_name, author_profile_url,
+                       has_author_avatar, author_avatar_sha256, caption, published_at,
+                       location_name, cover_media_id, media_count, saved_at, updated_at
+                FROM posts WHERE id = ?
+                """.trimIndent(),
+                arrayOf(postId),
+            ).use { cursor ->
+                check(cursor.moveToFirst()) { "待备份帖子不存在" }
                 JSONObject()
-                    .put("id", postId)
-                    .put("sourcePlatform", cursor.getString(cursor.getColumnIndexOrThrow("source_platform")))
-                    .put("sourcePostId", cursor.getString(cursor.getColumnIndexOrThrow("source_post_id")))
-                    .put("sourceUrl", cursor.getString(cursor.getColumnIndexOrThrow("source_url")))
-                    .put("authorUsername", cursor.getString(cursor.getColumnIndexOrThrow("author_username")))
-                    .put("authorDisplayName", cursor.getString(cursor.getColumnIndexOrThrow("author_display_name")))
-                    .put("authorProfileUrl", cursor.getString(cursor.getColumnIndexOrThrow("author_profile_url")))
-                    .put("hasAuthorAvatar", cursor.getInt(cursor.getColumnIndexOrThrow("has_author_avatar")) == 1)
-                    .put("authorAvatarSha256", cursor.getNullableString("author_avatar_sha256"))
-                    .put("caption", cursor.getString(cursor.getColumnIndexOrThrow("caption")))
-                    .put("publishedAt", cursor.getLong(cursor.getColumnIndexOrThrow("published_at")))
-                    .put("locationName", cursor.getNullableString("location_name"))
-                    .put("coverMediaId", cursor.getString(cursor.getColumnIndexOrThrow("cover_media_id")))
-                    .put("mediaCount", cursor.getInt(cursor.getColumnIndexOrThrow("media_count")))
-                    .put("savedAt", cursor.getLong(cursor.getColumnIndexOrThrow("saved_at")))
-                    .put("updatedAt", cursor.getLong(cursor.getColumnIndexOrThrow("updated_at")))
+                    .put("id", cursor.getString(0))
+                    .put("sourcePlatform", cursor.getString(1))
+                    .put("sourcePostId", cursor.getString(2))
+                    .put("sourceUrl", cursor.getString(3))
+                    .put("authorUsername", cursor.getString(4))
+                    .put("authorDisplayName", cursor.getString(5))
+                    .put("authorProfileUrl", cursor.getString(6))
+                    .put("hasAuthorAvatar", cursor.getInt(7) == 1)
+                    .put("authorAvatarSha256", cursor.getNullableString(8))
+                    .put("caption", cursor.getString(9))
+                    .put("publishedAt", cursor.getLong(10))
+                    .put("locationName", cursor.getNullableString(11))
+                    .put("coverMediaId", cursor.getString(12))
+                    .put("mediaCount", cursor.getInt(13))
+                    .put("savedAt", cursor.getLong(14))
+                    .put("updatedAt", cursor.getLong(15))
             }
-        val mediaArray = JSONArray()
-        db.rawQuery("SELECT * FROM post_media WHERE post_id = ? ORDER BY sort_index", arrayOf(postId)).use { cursor ->
+        val media = JSONArray()
+        db.rawQuery(
+            """
+            SELECT id, post_id, sort_index, logical_index, media_role, media_type,
+                   mime_type, width, height, duration_ms, original_size,
+                   original_sha256, thumbnail_sha256
+            FROM post_media WHERE post_id = ? ORDER BY sort_index
+            """.trimIndent(),
+            arrayOf(postId),
+        ).use { cursor ->
             while (cursor.moveToNext()) {
-                mediaArray.put(
+                media.put(
                     JSONObject()
-                        .put("id", cursor.getString(cursor.getColumnIndexOrThrow("id")))
-                        .put("postId", postId)
-                        .put("sortIndex", cursor.getInt(cursor.getColumnIndexOrThrow("sort_index")))
-                        .put("logicalIndex", cursor.getInt(cursor.getColumnIndexOrThrow("logical_index")))
-                        .put("mediaRole", cursor.getString(cursor.getColumnIndexOrThrow("media_role")))
-                        .put("mediaType", cursor.getString(cursor.getColumnIndexOrThrow("media_type")))
-                        .put("mimeType", cursor.getString(cursor.getColumnIndexOrThrow("mime_type")))
-                        .put("width", cursor.getInt(cursor.getColumnIndexOrThrow("width")))
-                        .put("height", cursor.getInt(cursor.getColumnIndexOrThrow("height")))
-                        .put("durationMs", cursor.getNullableLong("duration_ms"))
-                        .put("originalSize", cursor.getLong(cursor.getColumnIndexOrThrow("original_size")))
-                        .put("originalSha256", cursor.getString(cursor.getColumnIndexOrThrow("original_sha256")))
-                        .put("thumbnailSha256", cursor.getString(cursor.getColumnIndexOrThrow("thumbnail_sha256"))),
+                        .put("id", cursor.getString(0))
+                        .put("postId", cursor.getString(1))
+                        .put("sortIndex", cursor.getInt(2))
+                        .put("logicalIndex", cursor.getInt(3))
+                        .put("mediaRole", cursor.getString(4))
+                        .put("mediaType", cursor.getString(5))
+                        .put("mimeType", cursor.getString(6))
+                        .put("width", cursor.getInt(7))
+                        .put("height", cursor.getInt(8))
+                        .put("durationMs", cursor.getNullableLong(9))
+                        .put("originalSize", cursor.getLong(10))
+                        .put("originalSha256", cursor.getString(11))
+                        .put("thumbnailSha256", cursor.getString(12)),
                 )
             }
         }
-        require(mediaArray.length() > 0) { "待同步帖子没有媒体" }
+        check(media.length() == post.getInt("mediaCount") && media.length() > 0) {
+            "待备份帖子媒体清单无效"
+        }
         return JSONObject()
             .put("deviceId", deviceId)
-            .put("seq", seq)
-            .put("entityVersion", entityVersion.toJson())
-            .put("operation", "upsert_post")
-            .put("entityId", postId)
+            .put("backupSeq", backupSeq)
+            .put("generation", generation)
             .put("createdAt", createdAt)
-            .put("payload", JSONObject().put("post", post).put("media", mediaArray))
+            .put("post", post)
+            .put("media", media)
             .toString()
     }
 
-    private fun compareVersion(
-        leftTime: Long,
-        leftDevice: String,
-        leftSeq: Long,
-        rightTime: Long,
-        rightDevice: String,
-        rightSeq: Long,
-    ): Int {
-        if (leftTime != rightTime) return leftTime.compareTo(rightTime)
-        val deviceComparison = leftDevice.compareTo(rightDevice)
-        return if (deviceComparison != 0) deviceComparison else leftSeq.compareTo(rightSeq)
-    }
+    private fun nextBackupSeq(db: SQLiteDatabase): Long =
+        nextPositiveSequence(readMetaLong(db, "local_backup_seq"), "BACKUP_SEQUENCE_EXHAUSTED")
 
-    private fun Cursor.getNullableString(index: Int): String? =
-        if (isNull(index)) null else getString(index)
-
-    private fun Cursor.getNullableLong(column: String): Long? {
-        val index = getColumnIndexOrThrow(column)
-        return if (isNull(index)) null else getLong(index)
-    }
-
-    private fun JSONObject.optionalString(key: String): String? =
-        if (isNull(key)) null else optString(key).takeIf { it.isNotBlank() }
-
-    private fun operationReferencesSha(rawJson: String, sha256: String): Boolean =
-        runCatching {
-            val payload = JSONObject(rawJson).optJSONObject("payload") ?: return@runCatching false
-            val post = payload.optJSONObject("post")
-            if (post != null &&
-                !post.isNull("authorAvatarSha256") &&
-                post.optString("authorAvatarSha256").equals(sha256, ignoreCase = true)
-            ) {
-                return@runCatching true
-            }
-            val media = payload.optJSONArray("media") ?: return@runCatching false
-            for (index in 0 until media.length()) {
-                val item = media.optJSONObject(index) ?: continue
-                if (item.optString("originalSha256").equals(sha256, ignoreCase = true) ||
-                    item.optString("thumbnailSha256").equals(sha256, ignoreCase = true)
-                ) {
-                    return@runCatching true
-                }
-            }
-            false
-        }.getOrDefault(false)
-
-    private data class ExistingPost(
-        val updatedAt: Long,
-        val deviceId: String,
-        val seq: Long,
-        val avatarSha256: String?,
-        val avatarPath: String?,
-    )
-
-    private data class ExistingMedia(
-        val originalSha256: String,
-        val originalPath: String?,
-        val thumbnailSha256: String,
-        val thumbnailPath: String?,
-    )
-
-    private data class LogicalMediaRow(
-        val mediaId: String,
-        val logicalIndex: Int,
-        val mediaRole: String,
-    )
-
-    private data class EntityStateSnapshot(
-        val entityType: String,
-        val entityId: String,
-        val state: String,
-        val entityVersion: EntityVersion,
-        val changedAt: Long,
-    )
-
-    private fun nextLocalSeq(db: SQLiteDatabase): Long {
-        val current =
-            db.rawQuery("SELECT value FROM app_meta WHERE key = 'local_sync_seq'", null).use {
-                if (it.moveToFirst()) it.getString(0).toLongOrNull() ?: 0 else 0
-            }
-        return nextSequence(current)
-    }
-
-    private fun nextSequence(current: Long): Long {
-        if (current >= Long.MAX_VALUE) {
-            throw ArchiveException("SYNC_SEQUENCE_EXHAUSTED", "同步操作序号已耗尽，请清空数据后重试")
+    private fun nextPositiveSequence(current: Long, errorCode: String): Long {
+        if (current >= Long.MAX_VALUE - 1) {
+            throw ArchiveException(errorCode, "R2 备份序号已耗尽，请清空数据后重试")
         }
         return current + 1
     }
 
+    private fun readMetaLong(db: SQLiteDatabase, key: String): Long =
+        db.rawQuery("SELECT value FROM app_meta WHERE key = ?", arrayOf(key)).use { cursor ->
+            if (cursor.moveToFirst()) cursor.getString(0).toLongOrNull() ?: 0L else 0L
+        }
+
+    private fun snapshotReferencesSha(rawJson: String, sha256: String): Boolean =
+        runCatching {
+            val snapshot = JSONObject(rawJson)
+            val post = snapshot.getJSONObject("post")
+            if (post.optString("authorAvatarSha256") == sha256) return@runCatching true
+            val media = snapshot.getJSONArray("media")
+            (0 until media.length()).any { index ->
+                val item = media.getJSONObject(index)
+                item.getString("originalSha256") == sha256 ||
+                    item.getString("thumbnailSha256") == sha256
+            }
+        }.getOrDefault(false)
+
     private fun writeMeta(db: SQLiteDatabase, key: String, value: String) {
-        val values = ContentValues().apply { put("key", key); put("value", value) }
-        db.insertWithOnConflict("app_meta", null, values, SQLiteDatabase.CONFLICT_REPLACE)
+        db.insertWithOnConflict(
+            "app_meta",
+            null,
+            ContentValues().apply {
+                put("key", key)
+                put("value", value)
+            },
+            SQLiteDatabase.CONFLICT_REPLACE,
+        )
     }
 
     private fun findJobByRequest(
@@ -1848,8 +1016,7 @@ class ArchiveDatabase(context: Context) :
                 saved_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL,
                 local_avatar_path TEXT,
-                sync_device_id TEXT NOT NULL DEFAULT '',
-                sync_seq INTEGER NOT NULL DEFAULT 0,
+                backup_generation INTEGER NOT NULL,
                 UNIQUE(source_platform, source_post_id)
             )
             """.trimIndent(),
@@ -1873,19 +1040,27 @@ class ArchiveDatabase(context: Context) :
                 thumbnail_sha256 TEXT NOT NULL,
                 local_thumbnail_path TEXT,
                 local_original_path TEXT,
-                original_download_status TEXT NOT NULL DEFAULT 'remote',
+                original_download_status TEXT NOT NULL DEFAULT 'cached',
                 original_download_error TEXT,
                 UNIQUE(post_id, sort_index)
             )
             """.trimIndent(),
         )
         db.execSQL("CREATE INDEX post_media_post_id ON post_media(post_id, sort_index)")
+        db.execSQL(
+            """
+            CREATE TABLE post_backup_generations (
+                post_id TEXT PRIMARY KEY,
+                generation INTEGER NOT NULL
+            )
+            """.trimIndent(),
+        )
     }
 
     private fun createRuntimeSchema(db: SQLiteDatabase) {
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS capture_jobs (
+            CREATE TABLE capture_jobs (
                 id TEXT PRIMARY KEY,
                 source_url TEXT NOT NULL,
                 source_platform TEXT NOT NULL,
@@ -1904,73 +1079,36 @@ class ArchiveDatabase(context: Context) :
             )
             """.trimIndent(),
         )
-        db.execSQL("CREATE INDEX IF NOT EXISTS capture_jobs_status ON capture_jobs(status, created_at)")
+        db.execSQL("CREATE INDEX capture_jobs_status ON capture_jobs(status, created_at)")
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS sync_ops (
+            CREATE TABLE r2_backup_jobs (
+                backup_seq INTEGER PRIMARY KEY,
+                backup_target_id TEXT NOT NULL,
                 device_id TEXT NOT NULL,
-                seq INTEGER NOT NULL,
-                operation TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                payload_json TEXT NOT NULL,
-                created_at INTEGER NOT NULL,
-                PRIMARY KEY(device_id, seq)
-            )
-            """.trimIndent(),
-        )
-        createSyncUploadsSchema(db)
-        createEntityStateSchema(db)
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS sync_peers (
-                repository_id TEXT NOT NULL,
-                peer_device_id TEXT NOT NULL,
-                high_water_seq INTEGER NOT NULL DEFAULT 0,
-                updated_at INTEGER NOT NULL,
-                PRIMARY KEY(repository_id, peer_device_id)
-            )
-            """.trimIndent(),
-        )
-    }
-
-    private fun createSyncUploadsSchema(db: SQLiteDatabase) {
-        db.execSQL(
-            """
-            CREATE TABLE IF NOT EXISTS sync_uploads (
-                repository_id TEXT NOT NULL,
-                device_id TEXT NOT NULL,
-                seq INTEGER NOT NULL,
-                uploaded_at INTEGER,
+                post_id TEXT NOT NULL,
+                source_platform TEXT NOT NULL,
+                generation INTEGER NOT NULL,
+                snapshot_json TEXT NOT NULL,
+                status TEXT NOT NULL,
                 last_error TEXT,
-                PRIMARY KEY(repository_id, device_id, seq),
-                FOREIGN KEY(device_id, seq) REFERENCES sync_ops(device_id, seq) ON DELETE CASCADE
+                created_at INTEGER NOT NULL,
+                completed_at INTEGER,
+                UNIQUE(backup_target_id, device_id, post_id, generation)
             )
             """.trimIndent(),
         )
-        db.execSQL(
-            "CREATE INDEX IF NOT EXISTS sync_uploads_pending " +
-                "ON sync_uploads(repository_id, uploaded_at, seq)",
-        )
-    }
-
-    private fun createEntityStateSchema(db: SQLiteDatabase) {
         db.execSQL(
             """
-            CREATE TABLE IF NOT EXISTS sync_entity_states (
-                entity_type TEXT NOT NULL,
-                entity_id TEXT NOT NULL,
-                state TEXT NOT NULL,
-                version INTEGER NOT NULL,
-                device_id TEXT NOT NULL,
-                seq INTEGER NOT NULL,
-                changed_at INTEGER NOT NULL,
-                PRIMARY KEY(entity_type, entity_id)
-            )
+            CREATE INDEX r2_backup_jobs_pending
+            ON r2_backup_jobs(backup_target_id, device_id, status, backup_seq)
             """.trimIndent(),
         )
         db.execSQL(
-            "CREATE INDEX IF NOT EXISTS sync_entity_states_state " +
-                "ON sync_entity_states(entity_type, state, entity_id)",
+            """
+            CREATE INDEX r2_backup_jobs_post_generation
+            ON r2_backup_jobs(backup_target_id, post_id, generation, status)
+            """.trimIndent(),
         )
     }
 
@@ -1984,10 +1122,14 @@ class ArchiveDatabase(context: Context) :
             requestKey = getString(getColumnIndexOrThrow("request_key")),
         )
 
-    private fun Cursor.getNullableString(column: String): String? {
-        val index = getColumnIndexOrThrow(column)
-        return if (isNull(index)) null else getString(index)
-    }
+    private fun Cursor.getNullableString(column: String): String? =
+        getNullableString(getColumnIndexOrThrow(column))
+
+    private fun Cursor.getNullableString(index: Int): String? =
+        if (isNull(index)) null else getString(index)
+
+    private fun Cursor.getNullableLong(index: Int): Long? =
+        if (isNull(index)) null else getLong(index)
 
     private fun cancelledJobValues(now: Long): ContentValues =
         ContentValues().apply {
@@ -1998,23 +1140,17 @@ class ArchiveDatabase(context: Context) :
             put("updated_at", now)
         }
 
+    private data class LogicalMediaRow(
+        val mediaId: String,
+        val logicalIndex: Int,
+        val mediaRole: String,
+    )
+
     companion object {
         const val DATABASE_NAME = "photobook.db"
-        const val DATABASE_VERSION = 2
+        const val DATABASE_VERSION = 4
         private const val RATE_LIMIT_MS = 30L * 60L * 1000L
-        private const val ENTITY_POST = "post"
-        private const val ENTITY_MEDIA = "media"
-        private const val STATE_ACTIVE = "active"
-        private const val STATE_DELETED = "deleted"
-        private const val MAX_LOGICAL_VERSION = Long.MAX_VALUE - 1
-        private val SHA256_PATTERN = Regex("^[0-9a-f]{64}$")
-        private val SHORTCODE_PATTERN = Regex("^[A-Za-z0-9_-]+$")
-        private val MEDIA_ID_PATTERN = Regex("^(instagram|xiaohongshu):[A-Za-z0-9_-]+:[0-9]+$")
-        private val SUPPORTED_SOURCE_PLATFORMS =
-            setOf(SOURCE_PLATFORM_INSTAGRAM, SOURCE_PLATFORM_XIAOHONGSHU)
-        private val SUPPORTED_MEDIA_TYPES = setOf("image", "video")
-        private val SUPPORTED_MEDIA_ROLES =
-            setOf(MEDIA_ROLE_PRIMARY, MEDIA_ROLE_LIVE_STILL, MEDIA_ROLE_LIVE_MOTION)
+        private val DEVICE_ID_PATTERN = Regex("^[A-Za-z0-9_-]{8,64}$")
 
         private fun retryDelayMs(attemptCount: Int): Long {
             val exponent = (attemptCount - 1).coerceIn(0, 5)

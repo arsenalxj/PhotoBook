@@ -14,23 +14,18 @@ import java.io.FileOutputStream
 import java.util.UUID
 
 interface R2Store {
-    fun testConnection()
-
     fun putJson(objectKey: String, json: String)
 
     fun putImmutableJson(objectKey: String, json: String)
 
-    fun readJson(objectKey: String): String
-
-    fun uploadFileIfMissing(objectKey: String, file: File, contentType: String)
+    fun uploadFileIfMissing(
+        objectKey: String,
+        file: File,
+        contentType: String,
+        expectedSha256: String,
+    )
 
     fun downloadTo(objectKey: String, target: File)
-
-    fun exists(objectKey: String): Boolean
-
-    fun listDeviceIds(): List<String>
-
-    fun remove(objectKey: String)
 
     fun key(relative: String): String
 }
@@ -43,7 +38,7 @@ class R2ObjectStore(private val config: R2Config) : R2Store {
             .credentials(config.accessKeyId, config.secretAccessKey)
             .build()
 
-    override fun testConnection() {
+    fun testConnection() {
         client.listObjects(
             ListObjectsArgs.builder()
                 .bucket(config.bucket)
@@ -61,7 +56,7 @@ class R2ObjectStore(private val config: R2Config) : R2Store {
             val downloaded = readBytes(key)
             check(body.contentEquals(downloaded)) { "R2 测试对象内容不一致" }
         } finally {
-            if (uploaded) remove(key)
+            if (uploaded) removeObject(key)
         }
     }
 
@@ -72,25 +67,47 @@ class R2ObjectStore(private val config: R2Config) : R2Store {
     override fun putImmutableJson(objectKey: String, json: String) {
         if (exists(objectKey)) {
             if (readJson(objectKey) != json) {
-                throw ArchiveException("SYNC_CONFLICT", "R2 中存在内容不同的同序号操作")
+                throw ArchiveException("BACKUP_CONFLICT", "R2 中存在内容不同的同序号备份")
             }
             return
         }
         putJson(objectKey, json)
     }
 
-    override fun readJson(objectKey: String): String = readBytes(objectKey).toString(Charsets.UTF_8)
-
-    override fun uploadFileIfMissing(objectKey: String, file: File, contentType: String) {
-        if (exists(objectKey)) return
+    override fun uploadFileIfMissing(
+        objectKey: String,
+        file: File,
+        contentType: String,
+        expectedSha256: String,
+    ) {
         require(file.isFile) { "待上传媒体不存在" }
+        val validatedKey = validateKey(objectKey)
+        objectMetadata(validatedKey)?.let { existing ->
+            validateExistingBackupMediaObject(
+                existingSize = existing.size,
+                existingSha256 = existing.sha256,
+                expectedSize = file.length(),
+                expectedSha256 = expectedSha256,
+            )
+            return
+        }
         client.uploadObject(
             UploadObjectArgs.builder()
                 .bucket(config.bucket)
-                .`object`(validateKey(objectKey))
+                .`object`(validatedKey)
                 .filename(file.absolutePath)
                 .contentType(contentType)
+                .userMetadata(mapOf(MEDIA_SHA256_METADATA_KEY to expectedSha256))
                 .build(),
+        )
+        val uploaded =
+            objectMetadata(validatedKey)
+                ?: throw ArchiveException("BACKUP_UPLOAD_INCOMPLETE", "R2 媒体上传后无法确认")
+        validateExistingBackupMediaObject(
+            existingSize = uploaded.size,
+            existingSha256 = uploaded.sha256,
+            expectedSize = file.length(),
+            expectedSha256 = expectedSha256,
         )
     }
 
@@ -109,36 +126,25 @@ class R2ObjectStore(private val config: R2Config) : R2Store {
         }
     }
 
-    override fun exists(objectKey: String): Boolean =
+    private fun exists(objectKey: String): Boolean = objectMetadata(objectKey) != null
+
+    private fun objectMetadata(objectKey: String): R2ObjectMetadata? =
         try {
-            client.statObject(
+            val response = client.statObject(
                 StatObjectArgs.builder()
                     .bucket(config.bucket)
                     .`object`(validateKey(objectKey))
                     .build(),
             )
-            true
+            R2ObjectMetadata(
+                size = response.size(),
+                sha256 = response.userMetadata().getFirst(MEDIA_SHA256_METADATA_KEY),
+            )
         } catch (error: ErrorResponseException) {
-            if (error.errorResponse().code() in NOT_FOUND_CODES) false else throw error
+            if (error.errorResponse().code() in NOT_FOUND_CODES) null else throw error
         }
 
-    override fun listDeviceIds(): List<String> {
-        val prefix = key("devices/index/")
-        return client.listObjects(
-            ListObjectsArgs.builder()
-                .bucket(config.bucket)
-                .prefix(prefix)
-                .recursive(true)
-                .build(),
-        ).mapNotNull { result ->
-            val objectName = result.get().objectName()
-            if (!objectName.startsWith(prefix) || !objectName.endsWith(".json")) return@mapNotNull null
-            objectName.removePrefix(prefix).removeSuffix(".json")
-                .takeIf { DEVICE_ID_PATTERN.matches(it) }
-        }.distinct().sorted()
-    }
-
-    override fun remove(objectKey: String) {
+    private fun removeObject(objectKey: String) {
         client.removeObject(
             RemoveObjectArgs.builder()
                 .bucket(config.bucket)
@@ -176,6 +182,8 @@ class R2ObjectStore(private val config: R2Config) : R2Store {
                 .build(),
         ).use { it.readBytes() }
 
+    private fun readJson(objectKey: String): String = readBytes(objectKey).toString(Charsets.UTF_8)
+
     private fun validateKey(objectKey: String): String {
         require(
             objectKey.startsWith("${config.basePrefix}/") &&
@@ -188,7 +196,23 @@ class R2ObjectStore(private val config: R2Config) : R2Store {
     }
 
     companion object {
+        private const val MEDIA_SHA256_METADATA_KEY = "photobook-sha256"
         private val NOT_FOUND_CODES = setOf("NoSuchKey", "NoSuchObject", "NotFound", "404")
-        private val DEVICE_ID_PATTERN = Regex("^[A-Za-z0-9_-]{8,64}$")
+    }
+}
+
+private data class R2ObjectMetadata(
+    val size: Long,
+    val sha256: String?,
+)
+
+internal fun validateExistingBackupMediaObject(
+    existingSize: Long,
+    existingSha256: String?,
+    expectedSize: Long,
+    expectedSha256: String,
+) {
+    if (existingSize != expectedSize || existingSha256 != expectedSha256) {
+        throw ArchiveException("BACKUP_CONFLICT", "R2 中存在内容或校验信息不一致的同哈希媒体")
     }
 }

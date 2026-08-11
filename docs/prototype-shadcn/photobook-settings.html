@@ -252,7 +252,7 @@
       <button class="state-btn" data-state="ig-logged-out">IG 未登录</button>
       <button class="state-btn" data-state="ig-expired">IG 登录已失效</button>
       <button class="state-btn" data-state="r2-unconfigured">R2 未配置</button>
-      <button class="state-btn" data-state="r2-failed">R2 同步失败</button>
+      <button class="state-btn" data-state="r2-failed">R2 备份失败</button>
       <button class="state-btn" data-state="checking">检查更新中</button>
       <button class="state-btn" data-state="upd-available">更新-新版本</button>
       <button class="state-btn" data-state="upd-downloading">更新-下载中</button>
@@ -317,9 +317,9 @@
         </a>
       </section>
 
-      <!-- 云同步 -->
-      <section class="section-card" data-od-id="section-sync">
-        <h3 class="section-title">云同步</h3>
+      <!-- 云备份 -->
+      <section class="section-card" data-od-id="section-backup">
+        <h3 class="section-title">云备份</h3>
         <a class="row" href="photobook-r2-settings.html" data-od-id="r2-row">
           <span class="r2-variant r2-empty" data-od-id="r2-state-empty">
             <span class="row-icon">
@@ -345,7 +345,7 @@
             </span>
             <span class="row-text">
               <span class="row-main">Cloudflare R2</span>
-              <span class="row-sub danger">同步失败</span>
+              <span class="row-sub danger">备份失败</span>
             </span>
           </span>
           <svg class="chev" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m9 5 7 7-7 7"/></svg>
@@ -381,7 +381,7 @@
           <p class="ver">1.4.0 (140)</p>
           <ul data-od-id="release-notes">
             <li>支持 Instagram 合集批量归档</li>
-            <li>R2 同步新增断点续传</li>
+            <li>R2 备份新增断点续传</li>
             <li>修复下载中断后的进度显示问题</li>
           </ul>
           <div class="dlg-actions">

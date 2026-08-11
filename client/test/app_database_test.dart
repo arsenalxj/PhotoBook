@@ -1,6 +1,6 @@
+import 'package:flutter_test/flutter_test.dart';
 import 'package:photobook/core/database/app_database.dart';
 import 'package:photobook/models/post.dart';
-import 'package:flutter_test/flutter_test.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 void main() {
@@ -24,13 +24,14 @@ void main() {
     expect(await database.listVisibleJobs(), isEmpty);
   });
 
-  test('读取持久化的同步错误', () async {
+  test('读取持久化的备份错误', () async {
     final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
     await raw.insert('app_meta', {
-      'key': 'last_sync_error',
+      'key': 'last_backup_error',
       'value': 'R2 暂时不可用',
     });
-    final status = await database.readSyncStatus();
+
+    final status = await database.readBackupStatus();
 
     expect(status.lastError, 'R2 暂时不可用');
   });
@@ -142,26 +143,10 @@ void main() {
 
   test('Live Photo 物理文件在界面聚合为一个逻辑媒体', () async {
     final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
-    await raw.insert('posts', {
-      'id': 'xiaohongshu:live1',
-      'source_platform': 'xiaohongshu',
-      'source_post_id': 'live1',
-      'source_url': 'https://www.xiaohongshu.com/explore/live1',
-      'author_username': 'author',
-      'author_display_name': '作者',
-      'author_profile_url': 'https://www.xiaohongshu.com/user/profile/author',
-      'has_author_avatar': 0,
-      'caption': '',
-      'published_at': 1,
-      'cover_media_id': 'xiaohongshu:live1:0',
-      'media_count': 2,
-      'saved_at': 1,
-      'updated_at': 1,
-      'sync_device_id': 'device',
-      'sync_seq': 1,
-    });
+    await _insertPost(raw, postId: 'xiaohongshu:live1');
     await _insertMedia(
       raw,
+      postId: 'xiaohongshu:live1',
       id: 'xiaohongshu:live1:0',
       sortIndex: 0,
       role: 'live_still',
@@ -170,6 +155,7 @@ void main() {
     );
     await _insertMedia(
       raw,
+      postId: 'xiaohongshu:live1',
       id: 'xiaohongshu:live1:1',
       sortIndex: 1,
       role: 'live_motion',
@@ -183,20 +169,167 @@ void main() {
     expect(post.media.single.mediaRole, PostMediaRole.liveStill);
     expect(post.media.single.liveMotion?.id, 'xiaohongshu:live1:1');
   });
+
+  test('当前 generation 完成后才显示已备份且只属于当前目标', () async {
+    final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    const postId = 'instagram:post1';
+    await _insertPost(raw, postId: postId);
+    await _insertMedia(raw, postId: postId, id: '$postId:0');
+
+    expect((await database.listPosts()).single.isBackedUp, isFalse);
+    expect(
+      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
+      isFalse,
+    );
+    await _insertBackupJob(
+      raw,
+      backupSeq: 1,
+      backupTargetId: 'target-a',
+      postId: postId,
+      generation: 1,
+      status: 'pending',
+    );
+    expect(
+      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
+      isFalse,
+    );
+    await raw.update('r2_backup_jobs', {
+      'status': 'completed',
+      'completed_at': 10,
+    }, where: 'backup_seq = 1');
+    expect(
+      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
+      isTrue,
+    );
+    expect(
+      (await database.listPosts(backupTargetId: 'target-b')).single.isBackedUp,
+      isFalse,
+    );
+  });
+
+  test('重新归档后的新 generation 在完成前不显示已备份', () async {
+    final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    const postId = 'instagram:post2';
+    await _insertPost(raw, postId: postId);
+    await _insertMedia(raw, postId: postId, id: '$postId:0');
+    await _insertBackupJob(
+      raw,
+      backupSeq: 1,
+      backupTargetId: 'target-a',
+      postId: postId,
+      generation: 1,
+      status: 'completed',
+    );
+    await raw.update(
+      'posts',
+      {'backup_generation': 2},
+      where: 'id = ?',
+      whereArgs: [postId],
+    );
+
+    expect(
+      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
+      isFalse,
+    );
+    await _insertBackupJob(
+      raw,
+      backupSeq: 2,
+      backupTargetId: 'target-a',
+      postId: postId,
+      generation: 2,
+      status: 'completed',
+    );
+    expect(
+      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
+      isTrue,
+    );
+  });
+
+  test('部分删除不改变 generation 因而保留已备份标记', () async {
+    final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    const postId = 'instagram:post3';
+    await _insertPost(raw, postId: postId, mediaCount: 2);
+    await _insertMedia(raw, postId: postId, id: '$postId:0', sortIndex: 0);
+    await _insertMedia(raw, postId: postId, id: '$postId:1', sortIndex: 1);
+    await _insertBackupJob(
+      raw,
+      backupSeq: 1,
+      backupTargetId: 'target-a',
+      postId: postId,
+      generation: 1,
+      status: 'completed',
+    );
+
+    await raw.delete('post_media', where: 'id = ?', whereArgs: ['$postId:1']);
+
+    final post = (await database.listPosts(backupTargetId: 'target-a')).single;
+    expect(post.mediaCount, 1);
+    expect(post.isBackedUp, isTrue);
+  });
 }
+
+Future<void> _insertPost(
+  Database raw, {
+  required String postId,
+  int mediaCount = 1,
+}) async {
+  final separator = postId.indexOf(':');
+  final platform = postId.substring(0, separator);
+  final sourcePostId = postId.substring(separator + 1);
+  await raw.insert('posts', {
+    'id': postId,
+    'source_platform': platform,
+    'source_post_id': sourcePostId,
+    'source_url': platform == 'xiaohongshu'
+        ? 'https://www.xiaohongshu.com/explore/$sourcePostId'
+        : 'https://www.instagram.com/p/$sourcePostId/',
+    'author_username': 'author',
+    'author_display_name': 'Author',
+    'author_profile_url': 'https://www.instagram.com/author/',
+    'has_author_avatar': 0,
+    'caption': '',
+    'published_at': 1,
+    'cover_media_id': '$postId:0',
+    'media_count': mediaCount,
+    'saved_at': 1,
+    'updated_at': 1,
+    'backup_generation': 1,
+  });
+}
+
+Future<void> _insertBackupJob(
+  Database raw, {
+  required int backupSeq,
+  required String backupTargetId,
+  required String postId,
+  required int generation,
+  required String status,
+}) => raw.insert('r2_backup_jobs', {
+  'backup_seq': backupSeq,
+  'backup_target_id': backupTargetId,
+  'device_id': 'device-local',
+  'post_id': postId,
+  'source_platform': postId.substring(0, postId.indexOf(':')),
+  'generation': generation,
+  'snapshot_json': '{}',
+  'status': status,
+  'created_at': 1,
+  if (status == 'completed') 'completed_at': 1,
+});
 
 Future<void> _insertMedia(
   Database raw, {
+  required String postId,
   required String id,
-  required int sortIndex,
-  required String role,
-  required String type,
-  required String mimeType,
+  int sortIndex = 0,
+  String role = 'primary',
+  String type = 'image',
+  String mimeType = 'image/jpeg',
 }) => raw.insert('post_media', {
   'id': id,
-  'post_id': 'xiaohongshu:live1',
+  'post_id': postId,
   'sort_index': sortIndex,
-  'logical_index': 0,
+  'logical_index': role.startsWith('live_') ? 0 : sortIndex,
   'media_role': role,
   'media_type': type,
   'mime_type': mimeType,

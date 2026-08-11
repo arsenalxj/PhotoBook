@@ -8,7 +8,7 @@
 
 ## 硬约束
 
-1. **只改 UI 层**：widget 树和样式。不改状态管理、原生桥接（MethodChannel）、数据模型、SQLite、同步逻辑。
+1. **只改 UI 层**：widget 树和样式。不改状态管理、原生桥接（MethodChannel）、数据模型、SQLite、备份逻辑。
 2. **颜色只允许来自下表令牌**。Flutter 侧禁止出现表外的 `Color(0xFF...)` 字面量；先在主题里定义令牌常量，组件全部引用常量。
 3. **状态全覆盖**：每屏必须实现该屏 HTML 中状态切换演示的全部状态，不能只实现默认态。
 4. 一屏改完后跑 `flutter analyze` 和 `flutter test`，通过后再改下一屏。
@@ -45,8 +45,8 @@
 
 ### 1. 图库主页 — `client/lib/screens/home_screen.dart` + `client/lib/widgets/post_card.dart`
 原型：`photobook-home.html`
-状态：默认网格 / 同步中 / 保存中 / 博主筛选 / 空图库 / 筛选无结果。
-要点：帖子卡片（封面、多图角标、视频角标、平台标识含小红书）、博主筛选条、同步状态指示。
+状态：默认网格 / 备份中 / 保存中 / 博主筛选 / 空图库 / 筛选无结果。
+要点：帖子卡片（封面、多图角标、视频角标、平台标识含小红书）、博主筛选条、备份状态指示；已备份帖子在卡片封面右上角显示备份成功图标。
 
 ### 2. 任务列表 — `client/lib/screens/task_list_screen.dart`
 原型：`photobook-tasks.html`
@@ -60,8 +60,8 @@
 
 ### 4. R2 存储设置 — `client/lib/screens/settings_screen.dart`（R2 子页）
 原型：`photobook-r2-settings.html`
-状态：未配置表单 / 已配置摘要 / 同步失败提示 / 验证中 / 校验错误。
-要点：表单字段（endpoint / bucket / prefix / access key / secret）、验证按钮的加载与错误态、同步状态展示。
+状态：未配置表单 / 已配置摘要 / 备份失败提示 / 验证中 / 校验错误。
+要点：表单字段（endpoint / bucket / prefix / access key / secret）、验证按钮的加载与错误态、备份状态展示。
 
 ### 5. Instagram 账号 — `client/lib/screens/instagram_login_screen.dart`
 原型：`photobook-instagram.html`
@@ -72,7 +72,7 @@
 原型：`photobook-detail.html`
 状态：多图 / 视频 / Live Photo / 原图下载中 / 下载失败 / 帖子不存在。
 弹层：分享、保存、删除（含确认）、更多。
-要点：媒体浏览区（黑底反白控件）、缩略图条、媒体信息、四个底部弹层的选择逻辑与按钮。状态最多，排最后做。
+要点：媒体浏览区（黑底反白控件）、缩略图条、媒体信息、四个底部弹层的选择逻辑与按钮；已备份帖子在作者信息右侧显示备份成功图标。状态最多，排最后做。
 
 ## 验收
 

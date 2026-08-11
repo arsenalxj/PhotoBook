@@ -61,7 +61,7 @@ Future<bool> showDeletePostSheet({
                   ),
                   const SizedBox(height: 8),
                   const Text(
-                    '帖子会从本机和同一 R2 资料库的其他设备移除，已保存到系统相册的副本不受影响。',
+                    '帖子只会从本机移除，R2 中已经备份的内容和系统相册副本不受影响。',
                     style: TextStyle(height: 1.45),
                   ),
                   if (errorMessage != null) ...[
@@ -394,8 +394,8 @@ Future<MediaDeleteSelectionOutcome?> showDeleteMediaSelectionSheet({
                   const SizedBox(height: 12),
                   Text(
                     allSelected && selectedIds.isNotEmpty
-                        ? '将删除整条帖子，并同步到同一 R2 资料库的其他设备。'
-                        : '将删除选中的 ${selectedIds.length} 项媒体，并同步到同一 R2 资料库的其他设备。',
+                        ? '将只从本机删除整条帖子，R2 备份不会删除。'
+                        : '将只从本机删除选中的 ${selectedIds.length} 项媒体，R2 备份不会删除。',
                     style: const TextStyle(color: AppTheme.muted, height: 1.4),
                   ),
                   if (errorMessage != null) ...[

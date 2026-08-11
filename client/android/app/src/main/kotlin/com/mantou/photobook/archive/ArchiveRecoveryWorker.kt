@@ -39,7 +39,7 @@ class ArchiveCaptureRecoveryWorker(
                 ArchiveRecoveryScheduler.appendCapture(applicationContext, delay)
             }
             if (runCatching { R2ConfigStore(applicationContext).read() != null }.getOrDefault(false)) {
-                ArchiveRecoveryScheduler.scheduleSyncNow(applicationContext)
+                ArchiveRecoveryScheduler.scheduleBackupNow(applicationContext)
             }
             Result.success()
         } catch (error: Exception) {
@@ -57,7 +57,7 @@ class ArchiveCaptureRecoveryWorker(
     }
 }
 
-class R2SyncRecoveryWorker(
+class R2BackupRecoveryWorker(
     appContext: Context,
     workerParams: WorkerParameters,
 ) : CoroutineWorker(appContext, workerParams) {
@@ -67,11 +67,11 @@ class R2SyncRecoveryWorker(
         var runError: String? = null
         ArchiveEventBus.emitRunStarted()
         return try {
-            setForeground(recoveryForegroundInfo(applicationContext, "正在恢复 R2 同步"))
-            val syncResult = R2SyncEngine(applicationContext, database).syncIfConfigured()
-            runError = syncResult.error
-            ArchiveRecoveryScheduler.syncDelay(syncResult)?.let { delay ->
-                ArchiveRecoveryScheduler.appendSync(applicationContext, delay)
+            setForeground(recoveryForegroundInfo(applicationContext, "正在恢复 R2 备份"))
+            val backupResult = R2BackupEngine(applicationContext, database).backupIfConfigured()
+            runError = backupResult.error
+            ArchiveRecoveryScheduler.backupDelay(backupResult)?.let { delay ->
+                ArchiveRecoveryScheduler.appendBackup(applicationContext, delay)
             }
             Result.success()
         } catch (error: Exception) {
@@ -88,7 +88,7 @@ class R2SyncRecoveryWorker(
 
 internal enum class RecoveryWorkKind {
     CAPTURE,
-    SYNC,
+    BACKUP,
 }
 
 internal data class RecoveryWorkUpdate(
@@ -98,7 +98,7 @@ internal data class RecoveryWorkUpdate(
 
 object ArchiveRecoveryScheduler {
     internal const val CAPTURE_WORK_NAME = "archive_capture_recovery"
-    internal const val SYNC_WORK_NAME = "r2_sync_recovery"
+    internal const val BACKUP_WORK_NAME = "r2_backup_recovery"
 
     fun scheduleCaptureIfNeeded(context: Context, database: ArchiveDatabase) {
         val update =
@@ -109,20 +109,20 @@ object ArchiveRecoveryScheduler {
         replace(context, update)
     }
 
-    fun scheduleSyncIfNeeded(context: Context, syncResult: R2SyncResult?) {
-        replace(context, syncUpdate(syncResult))
+    fun scheduleBackupIfNeeded(context: Context, backupResult: R2BackupResult?) {
+        replace(context, backupUpdate(backupResult))
     }
 
-    fun scheduleSyncNow(context: Context) {
-        replace(context, RecoveryWorkUpdate(RecoveryWorkKind.SYNC, 0))
+    fun scheduleBackupNow(context: Context) {
+        replace(context, RecoveryWorkUpdate(RecoveryWorkKind.BACKUP, 0))
     }
 
     internal fun appendCapture(context: Context, delayMs: Long) {
         append(context, RecoveryWorkUpdate(RecoveryWorkKind.CAPTURE, delayMs))
     }
 
-    internal fun appendSync(context: Context, delayMs: Long) {
-        append(context, RecoveryWorkUpdate(RecoveryWorkKind.SYNC, delayMs))
+    internal fun appendBackup(context: Context, delayMs: Long) {
+        append(context, RecoveryWorkUpdate(RecoveryWorkKind.BACKUP, delayMs))
     }
 
     internal fun captureUpdate(
@@ -135,12 +135,12 @@ object ArchiveRecoveryScheduler {
             RecoveryWorkUpdate(RecoveryWorkKind.CAPTURE, captureDelayMs)
         }
 
-    internal fun syncUpdate(syncResult: R2SyncResult?): RecoveryWorkUpdate =
-        RecoveryWorkUpdate(RecoveryWorkKind.SYNC, syncDelay(syncResult))
+    internal fun backupUpdate(backupResult: R2BackupResult?): RecoveryWorkUpdate =
+        RecoveryWorkUpdate(RecoveryWorkKind.BACKUP, backupDelay(backupResult))
 
-    internal fun syncDelay(syncResult: R2SyncResult?): Long? =
-        syncResult?.takeIf { it.shouldRetry }?.retryDelay
-            ?: syncResult?.takeIf { it.shouldRetry }?.let { SYNC_RETRY_DELAY_MS }
+    internal fun backupDelay(backupResult: R2BackupResult?): Long? =
+        backupResult?.takeIf { it.shouldRetry }?.retryDelay
+            ?: backupResult?.takeIf { it.shouldRetry }?.let { BACKUP_RETRY_DELAY_MS }
 
     private fun replace(context: Context, update: RecoveryWorkUpdate) {
         val workManager = WorkManager.getInstance(context.applicationContext)
@@ -171,7 +171,7 @@ object ArchiveRecoveryScheduler {
             when (kind) {
                 RecoveryWorkKind.CAPTURE ->
                     OneTimeWorkRequestBuilder<ArchiveCaptureRecoveryWorker>()
-                RecoveryWorkKind.SYNC -> OneTimeWorkRequestBuilder<R2SyncRecoveryWorker>()
+                RecoveryWorkKind.BACKUP -> OneTimeWorkRequestBuilder<R2BackupRecoveryWorker>()
             }
         return builder
             .setConstraints(
@@ -184,10 +184,10 @@ object ArchiveRecoveryScheduler {
     private fun workName(kind: RecoveryWorkKind): String =
         when (kind) {
             RecoveryWorkKind.CAPTURE -> CAPTURE_WORK_NAME
-            RecoveryWorkKind.SYNC -> SYNC_WORK_NAME
+            RecoveryWorkKind.BACKUP -> BACKUP_WORK_NAME
         }
 
-    private const val SYNC_RETRY_DELAY_MS = 15L * 60L * 1000L
+    private const val BACKUP_RETRY_DELAY_MS = 15L * 60L * 1000L
 }
 
 private fun recoveryForegroundInfo(context: Context, text: String): ForegroundInfo {

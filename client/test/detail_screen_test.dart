@@ -112,6 +112,49 @@ void main() {
     );
   });
 
+  testWidgets('详情页仅在已备份时于作者行最右显示云朵勾选图标', (tester) async {
+    final controller = AppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _postWithMedia(const [(width: 1080, height: 1350)], isBackedUp: true),
+      ];
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const DetailScreen(postId: 'post-1'),
+        ),
+      ),
+    );
+
+    final backupBadge = find.byKey(const ValueKey('detail-backup-success'));
+    expect(backupBadge, findsOneWidget);
+    expect(tester.getSize(backupBadge), const Size.square(28));
+    final decoration =
+        tester.widget<DecoratedBox>(backupBadge).decoration as BoxDecoration;
+    expect(decoration.color, AppTheme.foreground);
+    expect(decoration.borderRadius, BorderRadius.circular(999));
+
+    final iconFinder = find.descendant(
+      of: backupBadge,
+      matching: find.byIcon(LucideIcons.cloudCheck),
+    );
+    final icon = tester.widget<Icon>(iconFinder);
+    expect(icon.size, 16);
+    expect(icon.color, AppTheme.background);
+    final logicalScreenWidth =
+        tester.view.physicalSize.width / tester.view.devicePixelRatio;
+    expect(logicalScreenWidth - tester.getRect(backupBadge).right, 16);
+
+    controller.posts = [
+      _postWithMedia(const [(width: 1080, height: 1350)]),
+    ];
+    controller.notifyListeners();
+    await tester.pump();
+    expect(backupBadge, findsNothing);
+  });
+
   testWidgets('本地原图解码期间保留缩略图占位', (tester) async {
     final imageBytes = base64Decode(
       'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk'
@@ -462,6 +505,8 @@ void main() {
 
     expect(controller.deletedMediaIds, ['media-0', 'media-1']);
     expect(find.text('帖子不存在'), findsOneWidget);
+    expect(find.text('该帖子可能已从本机删除。'), findsOneWidget);
+    expect(find.text('本机媒体文件不存在，且无法从当前 R2 备份恢复。'), findsNothing);
   });
 
   testWidgets('Live Photo 保存支持 GIF 且进度持续显示到保存完成', (tester) async {
@@ -790,6 +835,7 @@ ArchivedPost _postWithMedia(
   PostMediaType mediaType = PostMediaType.image,
   List<PostMediaType>? mediaTypes,
   List<String?>? localOriginalPaths,
+  bool isBackedUp = false,
 }) {
   final media = [
     for (var index = 0; index < sizes.length; index += 1)
@@ -810,6 +856,7 @@ ArchivedPost _postWithMedia(
     publishedAt: 1,
     coverMediaId: media.first.id,
     mediaCount: media.length,
+    isBackedUp: isBackedUp,
     media: media,
   );
 }

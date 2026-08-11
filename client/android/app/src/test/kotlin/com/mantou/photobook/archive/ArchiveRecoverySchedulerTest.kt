@@ -7,14 +7,14 @@ import org.junit.Test
 
 class ArchiveRecoverySchedulerTest {
     @Test
-    fun `queued cancellation replans capture without touching sync`() {
+    fun `queued cancellation replans capture without touching backup`() {
         val capture = ArchiveRecoveryScheduler.captureUpdate(null, hasRunningCapture = false)
 
         assertEquals(RecoveryWorkKind.CAPTURE, capture?.kind)
         assertNull(capture?.delayMs)
         assertNotEquals(
             ArchiveRecoveryScheduler.CAPTURE_WORK_NAME,
-            ArchiveRecoveryScheduler.SYNC_WORK_NAME,
+            ArchiveRecoveryScheduler.BACKUP_WORK_NAME,
         )
     }
 
@@ -29,13 +29,13 @@ class ArchiveRecoverySchedulerTest {
     }
 
     @Test
-    fun `sync retry replans only sync work`() {
+    fun `backup retry replans only backup work`() {
         val update =
-            ArchiveRecoveryScheduler.syncUpdate(
-                R2SyncResult(shouldRetry = true, retryDelay = 5_000),
+            ArchiveRecoveryScheduler.backupUpdate(
+                R2BackupResult(shouldRetry = true, retryDelay = 5_000),
             )
 
-        assertEquals(RecoveryWorkKind.SYNC, update.kind)
+        assertEquals(RecoveryWorkKind.BACKUP, update.kind)
         assertEquals(5_000L, update.delayMs)
     }
 }

@@ -76,9 +76,15 @@ internal class ArchivePlatformHandler(
                 "clearInstagramSession" -> clearInstagramSession(result)
                 "saveR2Config" -> saveR2Config(call, result)
                 "clearR2Config" -> {
-                    configStore.clear()
-                    database.clearSyncResult()
-                    ArchiveRecoveryScheduler.scheduleSyncIfNeeded(applicationContext, null)
+                    ArchiveExecutionGate.acquire()
+                    try {
+                        configStore.clear()
+                        database.discardPendingBackupJobs()
+                        database.clearBackupResult()
+                    } finally {
+                        ArchiveExecutionGate.release()
+                    }
+                    ArchiveRecoveryScheduler.scheduleBackupIfNeeded(applicationContext, null)
                     result.success(null)
                 }
                 "ensureOriginal" -> ensureOriginal(call, result)
@@ -86,7 +92,7 @@ internal class ArchivePlatformHandler(
                 "deleteMediaSelection" -> deleteMediaSelection(call, result)
                 "shareMedia" -> shareMedia(call, result)
                 "saveMedia" -> saveMedia(call, result)
-                "syncNow" -> {
+                "backupNow" -> {
                     ArchiveForegroundService.start(applicationContext)
                     result.success(null)
                 }
@@ -471,11 +477,24 @@ internal class ArchivePlatformHandler(
     private fun saveR2Config(call: MethodCall, result: MethodChannel.Result) {
         val config = R2Config.fromMap(call.arguments as? Map<*, *> ?: emptyMap<Any, Any>())
         R2ObjectStore(config).testConnection()
-        database.seedRepositoryIfNeeded(
-            config.repositoryId,
-            DeviceIdentity(applicationContext).getOrCreate(),
-        )
-        configStore.save(config)
+        val deviceId = DeviceIdentity(applicationContext).getOrCreate()
+        ArchiveExecutionGate.acquire()
+        try {
+            val previousConfig = configStore.read()
+            configStore.save(config)
+            try {
+                database.activateBackupTarget(config.backupTargetId, deviceId)
+            } catch (error: Exception) {
+                try {
+                    if (previousConfig == null) configStore.clear() else configStore.save(previousConfig)
+                } catch (rollbackError: Exception) {
+                    error.addSuppressed(rollbackError)
+                }
+                throw error
+            }
+        } finally {
+            ArchiveExecutionGate.release()
+        }
         ArchiveForegroundService.start(applicationContext)
         result.success(config.summary())
     }
@@ -489,7 +508,7 @@ internal class ArchivePlatformHandler(
         ArchiveExecutionGate.acquire()
         val path =
             try {
-                R2SyncEngine(applicationContext, database).ensureOriginal(mediaId).absolutePath
+                R2BackupEngine(applicationContext, database).ensureOriginal(mediaId).absolutePath
             } finally {
                 ArchiveExecutionGate.release()
             }
@@ -501,7 +520,7 @@ internal class ArchivePlatformHandler(
         if (postId.isBlank()) throw ArchiveException("POST_NOT_FOUND", "帖子不存在")
         ArchiveExecutionGate.acquire()
         try {
-            database.deletePost(postId, DeviceIdentity(applicationContext).getOrCreate())
+            database.deletePost(postId)
         } finally {
             ArchiveExecutionGate.release()
         }
@@ -519,7 +538,6 @@ internal class ArchivePlatformHandler(
                 database.deleteMediaSelection(
                     postId,
                     mediaIds,
-                    DeviceIdentity(applicationContext).getOrCreate(),
                 )
             } finally {
                 ArchiveExecutionGate.release()
@@ -589,7 +607,7 @@ internal class ArchivePlatformHandler(
         try {
             if (configStore.read() != null) ArchiveForegroundService.start(applicationContext)
         } catch (error: Exception) {
-            Log.w(TAG, "本地删除已提交，但启动 R2 同步服务失败", error)
+            Log.w(TAG, "本地删除已提交，但启动 R2 备份服务失败", error)
         }
     }
 

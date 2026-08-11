@@ -130,6 +130,12 @@
   }
   .author-head .name { font-size: 15px; font-weight: 700; }
   .author-head .uname { font-size: var(--text-xs); color: var(--muted); font-family: var(--font-mono); }
+  .author-backup-success {
+    width: 28px; height: 28px; margin-left: auto; border-radius: var(--radius-pill); flex: none;
+    display: grid; place-items: center;
+    background: var(--fg); color: var(--bg);
+  }
+  .author-backup-success svg { width: 16px; height: 16px; }
 
   /* ─── 媒体查看器 ─── */
   .viewer {
@@ -485,6 +491,9 @@
             <div class="name">陈漫游</div>
             <div class="uname">@wander_chen</div>
           </div>
+          <span class="author-backup-success" role="img" aria-label="已备份" title="已备份" data-od-id="detail-backup-success">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M7.5 18.5h9a4.5 4.5 0 0 0 .8-8.9A6 6 0 0 0 5.9 8.1 4.7 4.7 0 0 0 7.5 18.5Z"/><path d="m9.2 13 2 2 3.8-4"/></svg>
+          </span>
         </div>
 
         <div class="viewer" id="viewer" data-od-id="media-viewer">
@@ -548,7 +557,7 @@
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5M8.5 11h5"/></svg>
         </div>
         <p>帖子不存在</p>
-        <p style="font-size:13px;">它可能已被删除,或尚未同步到本机。</p>
+        <p style="font-size:13px;">它可能已被删除,或本机数据已清除。</p>
       </div>
     </div>
 
@@ -612,7 +621,7 @@
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg>
         </button>
       </div>
-      <p class="sheet-sub" id="deleteNote">将删除选中的 2 项媒体,并同步到同一 R2 资料库的其他设备。</p>
+      <p class="sheet-sub" id="deleteNote">将只从本机删除选中的 2 项媒体,R2 中已有的备份会保留。</p>
       <div class="selectall-row">
         <label><input type="checkbox" id="deleteAll" data-od-id="delete-select-all">全选</label>
         <span class="sel-count" id="deleteCount">2/4</span>
@@ -694,7 +703,7 @@
           <div class="uname">@wander_chen</div>
         </div>
       </div>
-      <p class="warn-text">帖子会从本机和同一 R2 资料库的其他设备移除,已保存到系统相册的副本不受影响。</p>
+      <p class="warn-text">帖子只会从本机移除,R2 中已有的备份和系统相册副本不受影响。</p>
       <div class="sheet-btns">
         <button class="btn-ghost" id="cancelDelete" data-od-id="cancel-delete">取消</button>
         <button class="btn-primary danger" id="confirmDelete" data-od-id="confirm-delete">删除帖子</button>
@@ -932,8 +941,8 @@
     deleteSubmit.disabled = n === 0;
     deleteSubmit.textContent = n === 0 ? '删除' : '删除 ' + n + ' 项';
     deleteNote.textContent = n === deleteItems.length
-      ? '将删除整条帖子,并同步到同一 R2 资料库的其他设备。'
-      : '将删除选中的 ' + n + ' 项媒体,并同步到同一 R2 资料库的其他设备。';
+      ? '将只从本机删除整条帖子,R2 中已有的备份会保留。'
+      : '将只从本机删除选中的 ' + n + ' 项媒体,R2 中已有的备份会保留。';
   }
   deleteItems.forEach(item => item.addEventListener('click', () => {
     item.classList.toggle('selected');

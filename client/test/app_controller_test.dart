@@ -72,6 +72,54 @@ void main() {
     await runtime.close();
   });
 
+  test('初始化取得 R2 配置后使用当前资料库身份重新读取帖子', () async {
+    final database = _ImmediateDatabase();
+    final runtime = _FakeRuntimeBridge()
+      ..r2Config = const R2ConfigSummary(
+        endpoint: 'https://example.r2.cloudflarestorage.com',
+        bucket: 'photobook-test',
+        prefix: 'photobook',
+        accessKeyIdHint: 'abc…xyz',
+        backupTargetId: 'target-a',
+      );
+    final controller = AppController(
+      database: database,
+      runtimeBridge: runtime,
+      isAndroid: true,
+    );
+
+    await controller.initialize();
+
+    expect(database.postBackupTargetIds, [null, 'target-a']);
+    controller.dispose();
+    await runtime.close();
+  });
+
+  test('R2 配置已保存但列表刷新失败时保留成功结果并提示稍后重试', () async {
+    final database = _FailingReloadDatabase();
+    final runtime = _FakeRuntimeBridge();
+    final controller = AppController(
+      database: database,
+      runtimeBridge: runtime,
+      isAndroid: true,
+    );
+    const input = R2ConfigInput(
+      endpoint: 'https://example.r2.cloudflarestorage.com',
+      bucket: 'photobook-test',
+      prefix: 'photobook',
+      accessKeyId: 'access-key',
+      secretAccessKey: 'secret-key',
+    );
+
+    await expectLater(controller.saveR2Config(input), completes);
+
+    expect(runtime.savedR2Config, input);
+    expect(controller.r2Config?.backupTargetId, 'target-a');
+    expect(controller.message, 'R2 配置已保存，但本地状态刷新失败，稍后会自动重试');
+    controller.dispose();
+    await runtime.close();
+  });
+
   test('保存到系统相册成功后不触发全量数据刷新', () async {
     final database = _ImmediateDatabase();
     final runtime = _FakeRuntimeBridge();
@@ -118,6 +166,7 @@ void main() {
     expect(runtime.deletedMediaIds, ['media-0']);
     expect(controller.posts.single.media.map((item) => item.id), ['media-1']);
     expect(controller.posts.single.coverMediaId, 'media-1');
+    expect(controller.posts.single.isBackedUp, isTrue);
     expect(controller.message, '删除已完成，但列表刷新失败，稍后会自动重试');
     controller.dispose();
     await runtime.close();
@@ -170,13 +219,15 @@ void main() {
 
 class _ImmediateDatabase extends AppDatabase {
   int postReadCount = 0;
+  final List<String?> postBackupTargetIds = [];
 
   @override
   Future<void> initialize() async {}
 
   @override
-  Future<List<ArchivedPost>> listPosts() async {
+  Future<List<ArchivedPost>> listPosts({String? backupTargetId}) async {
     postReadCount += 1;
+    postBackupTargetIds.add(backupTargetId);
     return const [];
   }
 
@@ -184,7 +235,7 @@ class _ImmediateDatabase extends AppDatabase {
   Future<List<ArchiveJob>> listVisibleJobs() async => const [];
 
   @override
-  Future<SyncStatus> readSyncStatus() async => const SyncStatus();
+  Future<BackupStatus> readBackupStatus() async => const BackupStatus();
 
   @override
   Future<void> close() async {}
@@ -192,8 +243,9 @@ class _ImmediateDatabase extends AppDatabase {
 
 class _FailingReloadDatabase extends _ImmediateDatabase {
   @override
-  Future<List<ArchivedPost>> listPosts() async {
+  Future<List<ArchivedPost>> listPosts({String? backupTargetId}) async {
     postReadCount += 1;
+    postBackupTargetIds.add(backupTargetId);
     throw StateError('测试数据库读取失败');
   }
 }
@@ -203,6 +255,7 @@ class _DelayedDatabase extends AppDatabase {
   final Completer<void> firstTaskReadStarted = Completer<void>();
   int postReadCount = 0;
   int taskReadCount = 0;
+  final List<String?> postBackupTargetIds = [];
 
   void releaseFirstTaskRead() => _firstTaskRead.complete();
 
@@ -210,8 +263,9 @@ class _DelayedDatabase extends AppDatabase {
   Future<void> initialize() async {}
 
   @override
-  Future<List<ArchivedPost>> listPosts() async {
+  Future<List<ArchivedPost>> listPosts({String? backupTargetId}) async {
     postReadCount += 1;
+    postBackupTargetIds.add(backupTargetId);
     return const [];
   }
 
@@ -232,7 +286,7 @@ class _DelayedDatabase extends AppDatabase {
   }
 
   @override
-  Future<SyncStatus> readSyncStatus() async => const SyncStatus();
+  Future<BackupStatus> readBackupStatus() async => const BackupStatus();
 
   @override
   Future<void> close() async {}
@@ -245,16 +299,33 @@ class _FakeRuntimeBridge extends ArchiveRuntimeBridge {
   final List<String> savedMediaIds = [];
   final List<String> deletedMediaIds = [];
   bool deleteSelectionPostDeleted = false;
+  R2ConfigSummary? r2Config;
+  R2ConfigInput? savedR2Config;
 
   @override
   Stream<ArchiveRuntimeEvent> get events => _events.stream;
 
   @override
-  Future<ArchiveRuntimeState> getRuntimeState() async =>
-      const ArchiveRuntimeState(activeJobCount: 0, failedJobCount: 0);
+  Future<ArchiveRuntimeState> getRuntimeState() async => ArchiveRuntimeState(
+    activeJobCount: 0,
+    failedJobCount: 0,
+    r2Config: r2Config,
+  );
 
   @override
-  Future<void> syncNow() async {}
+  Future<void> backupNow() async {}
+
+  @override
+  Future<R2ConfigSummary> saveR2Config(R2ConfigInput config) async {
+    savedR2Config = config;
+    return r2Config = const R2ConfigSummary(
+      endpoint: 'https://example.r2.cloudflarestorage.com',
+      bucket: 'photobook-test',
+      prefix: 'photobook',
+      accessKeyIdHint: 'ac****ey',
+      backupTargetId: 'target-a',
+    );
+  }
 
   @override
   Future<String> saveMedia(
@@ -306,6 +377,7 @@ ArchivedPost _postWithMedia() => const ArchivedPost(
   publishedAt: 1,
   coverMediaId: 'media-0',
   mediaCount: 2,
+  isBackedUp: true,
   media: [
     PostMedia(
       id: 'media-0',

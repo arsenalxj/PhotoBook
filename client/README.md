@@ -4,8 +4,8 @@
 
 - 接收 Instagram `ACTION_SEND text/plain` 分享。
 - 通过 Android 前台服务和 Chaquopy/Instaloader 在手机内匿名优先解析并下载公开帖子，登录墙出现时可用本机会话重试。
-- 用 SQLite 保存帖子、媒体清单、任务和同步状态，用 App 沙盒保存媒体文件。
-- 默认完全本地运行；用户配置 R2 后才启用多设备同步。
+- 用 SQLite 保存帖子、媒体清单、抓取任务和备份状态，用 App 沙盒保存媒体文件。
+- 默认完全本地运行；用户配置 R2 后才启用按安装实例隔离的单向云备份。
 - 用 Android Keystore 分别加密保存用户填写的 R2 凭证和可选 Instagram Session。
 - 展示本地帖子、任务阶段，以及任务取消、失败/取消重试、记录删除、详情和 R2 设置。
 - 从 Public GitHub Release 检查、校验并安装正式更新。
@@ -19,4 +19,4 @@ flutter test
 flutter build apk --debug
 ```
 
-当前只支持 Android 和 Instagram 公开内容；可选登录只用于处理公开帖登录墙，不归档私密帖子。架构、同步协议和真机验收项见根目录 `docs/`。
+当前只支持 Android 和 Instagram 公开内容；可选登录只用于处理公开帖登录墙，不归档私密帖子。架构、备份协议和真机验收项见根目录 `docs/`。

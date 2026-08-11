@@ -5,15 +5,15 @@ import 'package:flutter_test/flutter_test.dart';
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('解析原生运行完成事件和同步错误', () {
+  test('解析原生运行完成事件和备份错误', () {
     final event = ArchiveRuntimeEvent.fromMap({
       'type': 'runFinished',
       'timestamp': 1750000000000,
-      'error': 'R2 读取失败',
+      'error': 'R2 备份失败',
     });
 
     expect(event.type, ArchiveRuntimeEventType.runFinished);
-    expect(event.error, 'R2 读取失败');
+    expect(event.error, 'R2 备份失败');
   });
 
   test('解析任务失效通知且不依赖任务快照', () {
@@ -44,6 +44,23 @@ void main() {
     );
     expect(runtime.instagramSession?.username, 'archive_user');
     expect(runtime.instagramSession?.validatedAt, 1750000000000);
+  });
+
+  test('解析 R2 目标身份用于帖子备份状态', () {
+    final runtime = ArchiveRuntimeState.fromMap({
+      'activeJobCount': 0,
+      'failedJobCount': 0,
+      'instagramSession': null,
+      'r2Config': {
+        'endpoint': 'https://example.r2.cloudflarestorage.com',
+        'bucket': 'photobook-test',
+        'prefix': 'photobook',
+        'accessKeyIdHint': 'abc…xyz',
+        'backupTargetId': 'target-a',
+      },
+    });
+
+    expect(runtime.r2Config?.backupTargetId, 'target-a');
   });
 
   test('删除、分享和保存方法使用稳定的原生通道参数', () async {
@@ -91,6 +108,7 @@ void main() {
     );
     await bridge.copyInstagramCookies();
     await bridge.clearInstagramSession();
+    await bridge.backupNow();
     await bridge.copyJobSourceUrl('job-active');
     await bridge.cancelJob('job-active');
     await bridge.retryJob('job-failed');
@@ -118,6 +136,7 @@ void main() {
       'importInstagramCookies',
       'copyInstagramCookies',
       'clearInstagramSession',
+      'backupNow',
       'copyJobSourceUrl',
       'cancelJob',
       'retryJob',
@@ -131,20 +150,20 @@ void main() {
     expect(calls[4].arguments, {
       'cookieHeader': 'sessionid=session-secret; csrftoken=csrf-value',
     });
-    expect(calls[7].arguments, {'jobId': 'job-active'});
     expect(calls[8].arguments, {'jobId': 'job-active'});
-    expect(calls[9].arguments, {'jobId': 'job-failed'});
-    expect(calls[10].arguments, {'jobId': 'job-cancelled'});
-    expect(calls[11].arguments, {'postId': 'post-1'});
-    expect(calls[12].arguments, {
+    expect(calls[9].arguments, {'jobId': 'job-active'});
+    expect(calls[10].arguments, {'jobId': 'job-failed'});
+    expect(calls[11].arguments, {'jobId': 'job-cancelled'});
+    expect(calls[12].arguments, {'postId': 'post-1'});
+    expect(calls[13].arguments, {
       'postId': 'post-1',
       'mediaIds': ['media-1', 'media-2'],
     });
-    expect(calls[13].arguments, {
+    expect(calls[14].arguments, {
       'mediaIds': ['media-1', 'media-2'],
       'exportMode': 'original',
     });
-    expect(calls[14].arguments, {
+    expect(calls[15].arguments, {
       'mediaId': 'media-1',
       'exportMode': 'original',
     });

@@ -48,7 +48,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         appBar: AppBar(
           title: _buildTitle(context),
           actions: [
-            if (controller.isSyncing)
+            if (controller.isRunning)
               const SizedBox.square(
                 dimension: 48,
                 child: Center(
@@ -99,7 +99,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ? null
               : () => setState(() => _activePostId = null),
           child: RefreshIndicator(
-            onRefresh: () => controller.synchronize(showErrors: true),
+            onRefresh: () => controller.refreshArchive(showErrors: true),
             child: controller.posts.isEmpty
                 ? const _EmptyLibrary(
                     message: '还没有保存的帖子',

@@ -71,4 +71,46 @@ void main() {
     expect(find.text('@archive_user'), findsOneWidget);
     expect(find.byIcon(LucideIcons.camera), findsOneWidget);
   });
+
+  testWidgets('R2 保存发生非平台异常时显示可重试错误并退出加载态', (tester) async {
+    final controller = _FailingR2Controller()..phase = AppPhase.ready;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [appControllerProvider.overrideWith((ref) => controller)],
+        child: MaterialApp(
+          theme: AppTheme.light,
+          home: const R2SettingsScreen(),
+        ),
+      ),
+    );
+
+    final fields = find.byType(TextFormField);
+    await tester.enterText(
+      fields.at(0),
+      'https://example.r2.cloudflarestorage.com',
+    );
+    await tester.enterText(fields.at(1), 'photobook-test');
+    await tester.enterText(fields.at(2), 'photobook');
+    await tester.enterText(fields.at(3), 'access-key');
+    await tester.enterText(fields.at(4), 'secret-key');
+    await tester.drag(find.byType(ListView), const Offset(0, -600));
+    await tester.pumpAndSettle();
+    final saveButton = find.text('验证并保存');
+    await tester.tap(saveButton);
+    await tester.pump();
+
+    expect(find.text('R2 配置保存失败，请重试'), findsOneWidget);
+    expect(find.text('正在验证…'), findsNothing);
+    expect(controller.saveAttempts, 1);
+  });
+}
+
+class _FailingR2Controller extends AppController {
+  int saveAttempts = 0;
+
+  @override
+  Future<void> saveR2Config(R2ConfigInput config) async {
+    saveAttempts += 1;
+    throw StateError('测试保存失败');
+  }
 }

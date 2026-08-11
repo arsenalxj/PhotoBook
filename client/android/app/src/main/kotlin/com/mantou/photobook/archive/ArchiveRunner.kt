@@ -7,6 +7,7 @@ class ArchiveRunner(context: Context, private val database: ArchiveDatabase) {
     private val xiaohongshu = XiaohongshuClient(context)
     private val media = MediaPipeline(context, database::isMediaShaReferenced)
     private val deviceId = DeviceIdentity(context).getOrCreate()
+    private val r2ConfigStore = R2ConfigStore(context)
 
     init {
         media.cleanupStaleParts()
@@ -74,7 +75,9 @@ class ArchiveRunner(context: Context, private val database: ArchiveDatabase) {
                         job.id,
                         job.attemptCount,
                         preparedPost,
-                        deviceId,
+                        r2ConfigStore.read()?.let { config ->
+                            BackupDestination(config.backupTargetId, deviceId)
+                        },
                     )
                 ) {
                     throw ArchiveAttemptStoppedException()

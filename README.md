@@ -2,7 +2,7 @@
 
 PhotoBook 是一个运行在 Android 手机上的多平台帖子归档 App，当前支持 Instagram 和小红书公开帖子。用户从平台 App 或浏览器把帖子链接分享到 PhotoBook 后，App 会在手机内解析并保存图片、GIF、视频和 Live Photo；整个归档流程不依赖自建服务器。
 
-> PhotoBook 的 Instagram 解析能力主要基于开源项目 [Instaloader](https://github.com/instaloader/instaloader)，小红书只匿名解析公开分享页中的页面状态，不接入登录、Cookie、签名接口或验证码绕过。两个解析器都通过 Chaquopy 在 APK 内运行，移动端任务调度、媒体下载、本地存储、界面和可选的 Cloudflare R2 同步由 PhotoBook 自己完成。
+> PhotoBook 的 Instagram 解析能力主要基于开源项目 [Instaloader](https://github.com/instaloader/instaloader)，小红书只匿名解析公开分享页中的页面状态，不接入登录、Cookie、签名接口或验证码绕过。两个解析器都通过 Chaquopy 在 APK 内运行，移动端任务调度、媒体下载、本地存储、界面和可选的 Cloudflare R2 备份由 PhotoBook 自己完成。
 
 ## 项目定位
 
@@ -11,7 +11,7 @@ PhotoBook 解决的是“看到一条帖子，分享到手机 App 后长期保�
 - 支持 Instagram 公开图片帖、多图帖和 Reel，以及小红书公开图片、视频、原生 GIF 和 Live Photo。
 - 接收 Android 系统分享，任务进入后台或锁屏后仍由前台服务继续执行。
 - 默认只保存在本机，不要求 PhotoBook 账号、设备配对、Worker、D1 或下载服务器。
-- 可选配置私有 Cloudflare R2，在多个设备之间同步帖子、预览和原媒体。
+- 可选配置私有 Cloudflare R2，按当前安装实例单向备份帖子快照、预览和原媒体；其他设备不会读取这些数据。
 - 支持查看、筛选、逻辑删除、保存原媒体和通过 Android 系统面板分享原文件，并可在首页任务列表查看阶段、取消、重试或删除归档任务。
 - Live Photo 默认显示静态图，长按播放动态；完整态可互斥保存或分享为静态图、GIF、视频，动态部分失败时静态降级且只提供静态图。
 - 使用 Android 默认网络；系统 VPN 是否接管流量由手机系统决定。
@@ -47,7 +47,7 @@ flowchart TD
     JSON --> MEDIA["Android 原生流式下载与校验"]
     MEDIA --> LOCAL["App 沙盒媒体 + SQLite 元数据"]
     LOCAL --> UI["Flutter 首页、详情和任务状态"]
-    LOCAL -. "可选同步" .-> R2["用户的私有 Cloudflare R2"]
+    LOCAL -. "可选备份" .-> R2["用户的私有 Cloudflare R2"]
 ```
 
 一次归档按以下顺序执行：
@@ -56,8 +56,8 @@ flowchart TD
 2. `ArchiveForegroundService` 立即显示通知，并在单线程后台队列中串行处理平台解析与下载任务。
 3. Kotlin 通过 Chaquopy 调用 Instagram 或小红书 Python 桥，并把解析结果映射成 PhotoBook 约定的统一 JSON。
 4. `MediaPipeline` 使用 Android 网络 API 流式下载媒体。文件先写入 `.part`，同步计算 SHA-256，完成后再原子发布到内容寻址目录，同时生成头像、缩略图和视频元数据。
-5. 帖子、媒体、任务完成状态和 R2 outbox 在同一个 SQLite 事务中提交。准备或提交失败时，只回滚本次新增且尚未被引用的文件。
-6. 本地归档完成后才尝试 R2 同步。R2 失败不会撤销已经保存的本机帖子，后续由前台服务或 WorkManager 继续恢复。
+5. 帖子、媒体、任务完成状态和不可变 R2 备份任务在同一个 SQLite 事务中提交。准备或提交失败时，只回滚本次新增且尚未被引用的文件。
+6. 本地归档完成后才尝试 R2 备份。R2 失败不会撤销已经保存的本机帖子，后续由前台服务或 WorkManager 继续恢复。
 
 ## 组件分工
 
@@ -65,18 +65,18 @@ flowchart TD
 | --- | --- |
 | Instaloader | 解析 Instagram 帖子、作者、媒体列表和可选登录 Session |
 | Chaquopy / Python 桥 | 在 APK 内运行 Instagram 和小红书解析器，并输出稳定的统一 JSON 协议 |
-| Kotlin Android 层 | 分享接收、前台服务、任务恢复、媒体下载、SQLite、Keystore、R2 同步和应用更新 |
+| Kotlin Android 层 | 分享接收、前台服务、任务恢复、媒体下载、SQLite、Keystore、R2 备份和应用更新 |
 | Flutter | 首页、详情、任务列表、Instagram 登录页、R2 设置及状态展示 |
-| SQLite | 本机帖子、媒体清单、抓取任务、错误记录和同步状态的权威数据源 |
-| Cloudflare R2 | 用户可选的多设备共享资料库，不参与本地归档是否成功的判断 |
+| SQLite | 本机帖子、媒体清单、抓取任务、错误记录和备份状态的权威数据源 |
+| Cloudflare R2 | 用户可选、按安装实例隔离的单向备份目标，不参与本地归档是否成功的判断 |
 
 ## 数据与安全
 
-- 帖子元数据、任务和同步状态保存在本机 SQLite。
+- 帖子元数据、任务和备份状态保存在本机 SQLite。
 - 头像、缩略图和原媒体保存在 App 沙盒，SQLite 只记录路径、大小和 SHA-256。
 - Instagram Session 与 R2 Secret 使用 Android Keystore 加密，只保存在当前设备。
 - Instagram Session 和已保存 Cookie 不进入 Flutter 状态；用户手动粘贴的 Cookie 只在隐藏输入框和一次原生调用中短暂存在，提交即清空。R2 Secret 只在用户保存配置时传给原生层，这些凭证都不会写入 SQLite、R2、日志、通知或异常文本。
-- R2 使用 SHA-256 内容寻址；删除帖子或媒体时同步逻辑墓碑，不物理删除远端原媒体对象。
+- R2 使用当前安装 `device_id` 下的 SHA-256 内容寻址；删除本机帖子或媒体不会上传删除事件，也不会删除远端对象或历史快照。
 - 未配置 R2 时，卸载 App 或清除应用数据会同时删除本机 SQLite 和媒体，无法恢复。
 
 
@@ -87,7 +87,7 @@ client/
 ├── lib/                                  Flutter UI、状态和原生桥接
 ├── android/app/src/main/kotlin/
 │   └── com/mantou/photobook/
-│       ├── archive/                      分享、任务、下载、数据库和 R2 同步
+│       ├── archive/                      分享、任务、下载、数据库和 R2 备份
 │       └── update/                       GitHub Release 更新、校验和安装
 ├── android/app/src/main/python/          Chaquopy / Instaloader Python 桥
 ├── android/python/wheels/                固定版本的 Instaloader wheel
@@ -104,7 +104,7 @@ docs/                                     中文架构、构建和运维文档
 3. PhotoBook 会显示前台通知并在本机完成解析、下载和入库；完成后通知自动消失。
 4. 首页右上角任务列表可查看当前阶段，并取消、重试或删除任务记录。
 5. 需要提高公开帖解析成功率时，可在设置页通过 Instagram 官方网页或粘贴完整 Cookie 建立本机会话。
-6. 需要多设备同步时，可在设置页填写自己的 Cloudflare R2 endpoint、bucket、prefix 和对象读写凭证。
+6. 需要为当前安装启用云备份时，可在设置页填写自己的 Cloudflare R2 endpoint、bucket、prefix 和对象读写凭证。
 
 ## 开发与验证
 
@@ -139,7 +139,7 @@ PHOTOBOOK_TARGET_ABIS=arm64-v8a \
 
 ## 进一步阅读
 
-- [`docs/architecture-plan.md`](docs/architecture-plan.md)：完整架构、数据模型、登录和 R2 同步设计。
+- [`docs/architecture-plan.md`](docs/architecture-plan.md)：完整架构、数据模型、登录和 R2 备份设计。
 - [`docs/api.md`](docs/api.md)：Flutter、Kotlin 与 Python 之间的桥接协议。
 - [`docs/deployment.md`](docs/deployment.md)：构建、签名、发布和真机验收。
 - [`docs/operations.md`](docs/operations.md)：日常使用、故障处理、恢复和清理。

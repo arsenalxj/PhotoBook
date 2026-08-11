@@ -11,7 +11,7 @@ data class R2Config(
     val accessKeyId: String,
     val secretAccessKey: String,
 ) {
-    val repositoryId: String by lazy {
+    val backupTargetId: String by lazy {
         sha256("$endpoint\n$bucket\n$prefix")
     }
 
@@ -33,6 +33,7 @@ data class R2Config(
             "bucket" to bucket,
             "prefix" to prefix,
             "accessKeyIdHint" to maskAccessKey(accessKeyId),
+            "backupTargetId" to backupTargetId,
         )
 
     companion object {

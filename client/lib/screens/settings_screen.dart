@@ -17,7 +17,7 @@ class SettingsScreen extends ConsumerWidget {
     final controller = ref.watch(appControllerProvider);
     final instagramSession = controller.instagramSession;
     final savedConfig = controller.r2Config;
-    final hasSyncError = controller.syncStatus.lastError != null;
+    final hasBackupError = controller.backupStatus.lastError != null;
     final updateController = ref.watch(updateControllerProvider);
     final updateState = updateController.state;
 
@@ -32,11 +32,11 @@ class SettingsScreen extends ConsumerWidget {
         '@${instagramSession!.username} · 登录已失效',
       null => '未登录',
     };
-    final r2Color = hasSyncError ? AppTheme.danger : AppTheme.foreground;
+    final r2Color = hasBackupError ? AppTheme.danger : AppTheme.foreground;
     final r2Status = savedConfig == null
         ? '未配置'
-        : hasSyncError
-        ? '同步失败'
+        : hasBackupError
+        ? '备份失败'
         : '${savedConfig.bucket} / ${savedConfig.prefix}';
 
     return Scaffold(
@@ -63,14 +63,14 @@ class SettingsScreen extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
           _SettingsSection(
-            title: '云同步',
+            title: '云备份',
             child: _SettingsRow(
-              icon: hasSyncError ? LucideIcons.cloudOff : LucideIcons.cloud,
+              icon: hasBackupError ? LucideIcons.cloudOff : LucideIcons.cloud,
               iconColor: r2Color,
               title: 'Cloudflare R2',
               subtitle: r2Status,
               subtitleColor: r2Color,
-              monoSubtitle: savedConfig != null && !hasSyncError,
+              monoSubtitle: savedConfig != null && !hasBackupError,
               onTap: () => Navigator.of(context).push(
                 MaterialPageRoute<void>(
                   builder: (_) => const R2SettingsScreen(),
@@ -297,6 +297,9 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
     } on PlatformException catch (error) {
       if (!mounted) return;
       setState(() => _saveError = error.message ?? 'R2 配置验证失败');
+    } on Object {
+      if (!mounted) return;
+      setState(() => _saveError = 'R2 配置保存失败，请重试');
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -307,7 +310,7 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('清除 R2 配置?'),
-        content: const Text('本地帖子不会删除。'),
+        content: const Text('本地帖子和已上传的 R2 内容不会删除，未完成的备份将停止。'),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context, false),
@@ -339,7 +342,7 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
   Widget build(BuildContext context) {
     final controller = ref.watch(appControllerProvider);
     final savedConfig = controller.r2Config;
-    final syncError = controller.syncStatus.lastError;
+    final backupError = controller.backupStatus.lastError;
     return Scaffold(
       appBar: AppBar(
         title: const Text('Cloudflare R2'),
@@ -359,9 +362,9 @@ class _R2SettingsScreenState extends ConsumerState<R2SettingsScreen> {
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 32),
           children: [
             _R2StatusCard(config: savedConfig),
-            if (savedConfig != null && syncError != null) ...[
+            if (savedConfig != null && backupError != null) ...[
               const SizedBox(height: 16),
-              _InlineError(message: '最近同步失败:$syncError'),
+              _InlineError(message: '最近备份失败：$backupError'),
             ],
             const SizedBox(height: 16),
             _field(
@@ -525,7 +528,7 @@ class _R2StatusCard extends StatelessWidget {
                   Text(
                     configured
                         ? 'AccessKey ${config!.accessKeyIdHint}'
-                        : '填写下方表单以启用云同步',
+                        : '填写下方表单以启用单向云备份',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(

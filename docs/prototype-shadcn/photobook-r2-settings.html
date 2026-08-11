@@ -129,7 +129,7 @@
   .device:not([data-state="unconfigured"]) .mark-icon-ok { display: block; }
   .device[data-state="unconfigured"] .mark-icon-off { display: block; }
 
-  /* ─── 同步错误横幅 ─── */
+  /* ─── 备份错误横幅 ─── */
   .error-banner {
     display: none; align-items: flex-start; gap: 10px;
     padding: var(--space-3) 14px; border-radius: var(--radius-md);
@@ -138,7 +138,7 @@
     margin-bottom: var(--space-4); font-size: 13px; line-height: 1.45;
   }
   .error-banner svg { width: 20px; height: 20px; flex: none; color: var(--danger); margin-top: 1px; }
-  .device[data-state="sync-failed"] .error-banner { display: flex; }
+  .device[data-state="backup-failed"] .error-banner { display: flex; }
 
   /* ─── 表单 ─── */
   .field { margin-bottom: var(--space-4); }
@@ -243,7 +243,7 @@
     <nav class="state-switch" data-od-id="state-switch">
       <button class="state-btn active" data-state="configured">已配置</button>
       <button class="state-btn" data-state="unconfigured">未配置</button>
-      <button class="state-btn" data-state="sync-failed">同步失败</button>
+      <button class="state-btn" data-state="backup-failed">备份失败</button>
       <button class="state-btn" data-state="verifying">验证中</button>
       <button class="state-btn" data-state="validation">校验错误</button>
     </nav>
@@ -283,14 +283,14 @@
             </span>
             <span class="st-unconfigured">
               <div class="st-title">R2 未配置</div>
-              <div class="st-sub">填写下方表单以启用云同步</div>
+              <div class="st-sub">填写下方表单以启用单向云备份</div>
             </span>
           </span>
         </div>
 
         <div class="error-banner" data-od-id="error-banner">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V13M12 16.2v.3"/></svg>
-          <span>最近同步失败:网络连接失败,请检查系统网络或 VPN。</span>
+          <span>最近备份失败:网络连接失败,请检查系统网络或 VPN。</span>
         </div>
 
         <form id="r2Form" novalidate data-od-id="r2-form">
@@ -352,7 +352,7 @@
     <div class="gesture-bar"><span></span></div>
   </div>
 </div>
-<p class="hint">交互:「验证并保存」校验必填项,通过后进入验证中并提示保存结果;眼睛图标切换密钥明文;右上角删除(仅已配置)弹出确认对话框;proto-bar 可切换已配置 / 未配置 / 同步失败 / 验证中 / 校验错误状态。</p>
+<p class="hint">交互:「验证并保存」校验必填项,通过后进入验证中并提示保存结果;眼睛图标切换密钥明文;右上角删除(仅已配置)弹出确认对话框;proto-bar 可切换已配置 / 未配置 / 备份失败 / 验证中 / 校验错误状态。</p>
 
 <script>
   const device = document.getElementById('device');

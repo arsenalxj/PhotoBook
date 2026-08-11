@@ -105,6 +105,7 @@ class ArchivedPost {
     this.locationName,
     this.localAvatarPath,
     this.sourcePlatform = PostSourcePlatform.instagram,
+    this.isBackedUp = false,
   });
 
   final String id;
@@ -119,6 +120,7 @@ class ArchivedPost {
   final int mediaCount;
   final String? localAvatarPath;
   final List<PostMedia> media;
+  final bool isBackedUp;
 
   PostMedia get coverMedia => media.firstWhere(
     (item) => item.id == coverMediaId,

@@ -287,7 +287,7 @@ class _MissingPost extends StatelessWidget {
           ),
           const SizedBox(height: 12),
           const Text(
-            '它可能已被删除，或尚未同步到本机。',
+            '该帖子可能已从本机删除。',
             textAlign: TextAlign.center,
             style: TextStyle(color: AppTheme.muted, fontSize: 13),
           ),
@@ -369,6 +369,27 @@ class _AuthorHeader extends StatelessWidget {
               ],
             ),
           ),
+          if (post.isBackedUp) ...[
+            const SizedBox(width: 12),
+            Tooltip(
+              message: '已备份到 R2',
+              child: DecoratedBox(
+                key: const ValueKey('detail-backup-success'),
+                decoration: BoxDecoration(
+                  color: AppTheme.foreground,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: const SizedBox.square(
+                  dimension: 28,
+                  child: Icon(
+                    LucideIcons.cloudCheck,
+                    size: 16,
+                    color: AppTheme.background,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

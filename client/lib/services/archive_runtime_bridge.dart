@@ -134,18 +134,21 @@ class R2ConfigSummary {
     required this.bucket,
     required this.prefix,
     required this.accessKeyIdHint,
+    required this.backupTargetId,
   });
 
   final String endpoint;
   final String bucket;
   final String prefix;
   final String accessKeyIdHint;
+  final String backupTargetId;
 
   factory R2ConfigSummary.fromMap(Map<Object?, Object?> map) => R2ConfigSummary(
     endpoint: map['endpoint']! as String,
     bucket: map['bucket']! as String,
     prefix: map['prefix']! as String,
     accessKeyIdHint: map['accessKeyIdHint']! as String,
+    backupTargetId: map['backupTargetId']! as String,
   );
 }
 
@@ -270,7 +273,7 @@ class ArchiveRuntimeBridge {
   Future<void> clearInstagramSession() =>
       _methodChannel.invokeMethod<void>('clearInstagramSession');
 
-  Future<void> syncNow() => _methodChannel.invokeMethod<void>('syncNow');
+  Future<void> backupNow() => _methodChannel.invokeMethod<void>('backupNow');
 
   Future<R2ConfigSummary> saveR2Config(R2ConfigInput config) async {
     final value = await _methodChannel.invokeMapMethod<Object?, Object?>(

@@ -138,11 +138,11 @@ data class PreparedPost(
 ) {
     val id: String = "$sourcePlatform:$sourcePostId"
 
-    fun operationJson(
+    fun backupSnapshotJson(
         deviceId: String,
-        seq: Long,
+        backupSeq: Long,
+        generation: Long,
         now: Long,
-        version: Long = now,
     ): String {
         val post =
             JSONObject()
@@ -163,15 +163,14 @@ data class PreparedPost(
                 .put("savedAt", now)
                 .put("updatedAt", now)
         val mediaArray = JSONArray()
-        media.forEach { mediaArray.put(it.toSyncJson(id)) }
+        media.forEach { mediaArray.put(it.toBackupJson(id)) }
         return JSONObject()
             .put("deviceId", deviceId)
-            .put("seq", seq)
-            .put("entityVersion", EntityVersion(version, deviceId, seq).toJson())
-            .put("operation", "upsert_post")
-            .put("entityId", id)
+            .put("backupSeq", backupSeq)
+            .put("generation", generation)
             .put("createdAt", now)
-            .put("payload", JSONObject().put("post", post).put("media", mediaArray))
+            .put("post", post)
+            .put("media", mediaArray)
             .toString()
     }
 }
@@ -193,7 +192,7 @@ data class PreparedMedia(
 ) {
     fun id(postId: String): String = "$postId:$sortIndex"
 
-    fun toSyncJson(postId: String): JSONObject =
+    fun toBackupJson(postId: String): JSONObject =
         JSONObject()
             .put("id", id(postId))
             .put("postId", postId)
