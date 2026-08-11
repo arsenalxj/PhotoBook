@@ -477,6 +477,10 @@
     </div>
 
     <div class="menu-popup" id="overflowMenu" data-od-id="overflow-menu">
+      <button class="menu-item" id="copyLink" data-od-id="copy-link">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"/></svg>
+        复制链接
+      </button>
       <button class="menu-item" id="openOriginal" data-od-id="open-original">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h6v6M20 4l-9 9M9 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
         打开原帖
@@ -717,7 +721,7 @@
     <div class="gesture-bar"><span></span></div>
   </div>
 </div>
-<p class="hint">交互:默认态媒体区左右拖拽翻页(1/4);右上角依次为分享媒体、保存媒体、删除媒体、更多(打开原帖);删除媒体弹层中全选后点删除,会进入「删除这条帖子?」确认。</p>
+<p class="hint">交互:默认态媒体区左右拖拽翻页(1/4);右上角依次为分享媒体、保存媒体、删除媒体、更多(复制链接/打开原帖);删除媒体弹层中全选后点删除,会进入「删除这条帖子?」确认。</p>
 
 <script>
   const device = document.getElementById('device');
@@ -792,6 +796,10 @@
   document.getElementById('overflowBtn').addEventListener('click', e => {
     e.stopPropagation();
     overflowMenu.classList.toggle('open');
+  });
+  document.getElementById('copyLink').addEventListener('click', () => {
+    closeMenu();
+    snackbar('链接已复制');
   });
   document.getElementById('openOriginal').addEventListener('click', () => {
     closeMenu();

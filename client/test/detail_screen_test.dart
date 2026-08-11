@@ -112,6 +112,44 @@ void main() {
     );
   });
 
+  testWidgets('详情页更多菜单可复制原帖链接并给出反馈', (tester) async {
+    String? copiedText;
+    tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+      SystemChannels.platform,
+      (call) async {
+        if (call.method == 'Clipboard.setData') {
+          copiedText =
+              (call.arguments as Map<Object?, Object?>)['text'] as String?;
+        }
+        return null;
+      },
+    );
+    addTearDown(
+      () => tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+        SystemChannels.platform,
+        null,
+      ),
+    );
+    final controller = AppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _postWithMedia(const [(width: 1080, height: 1350)]),
+      ];
+    await _pumpDetail(tester, controller);
+
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('复制链接'), findsOneWidget);
+    expect(find.byIcon(LucideIcons.copy), findsOneWidget);
+
+    await tester.tap(find.text('复制链接'));
+    await tester.pumpAndSettle();
+
+    expect(copiedText, 'https://www.instagram.com/p/test/');
+    expect(find.text('链接已复制'), findsOneWidget);
+  });
+
   testWidgets('详情页仅在已备份时于作者行最右显示云朵勾选图标', (tester) async {
     final controller = AppController()
       ..phase = AppPhase.ready

@@ -85,11 +85,22 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             tooltip: '更多',
             icon: const Icon(LucideIcons.ellipsisVertical),
             onSelected: (action) {
-              if (action == _DetailMenuAction.openSource) {
-                unawaited(_openSource(post!.sourceUrl));
+              final sourceUrl = post!.sourceUrl;
+              if (action == _DetailMenuAction.copySource) {
+                unawaited(_copySource(sourceUrl));
+              } else {
+                unawaited(_openSource(sourceUrl));
               }
             },
             itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: _DetailMenuAction.copySource,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(LucideIcons.copy),
+                  title: Text('复制链接'),
+                ),
+              ),
               PopupMenuItem(
                 value: _DetailMenuAction.openSource,
                 child: ListTile(
@@ -238,6 +249,21 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     );
   }
 
+  Future<void> _copySource(String sourceUrl) async {
+    try {
+      await Clipboard.setData(ClipboardData(text: sourceUrl));
+      if (!mounted) return;
+      final messenger = ScaffoldMessenger.of(context);
+      messenger.hideCurrentSnackBar();
+      messenger.showSnackBar(const SnackBar(content: Text('链接已复制')));
+    } on Object {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('链接复制失败，请重试')));
+    }
+  }
+
   Future<void> _openSource(String sourceUrl) async {
     try {
       final opened = await launchUrl(
@@ -254,7 +280,7 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   }
 }
 
-enum _DetailMenuAction { openSource }
+enum _DetailMenuAction { copySource, openSource }
 
 class _MissingPost extends StatelessWidget {
   const _MissingPost();
