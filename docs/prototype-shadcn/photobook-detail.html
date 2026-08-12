@@ -137,6 +137,14 @@
     background: var(--fg); color: var(--bg);
   }
   .author-backup-success svg { width: 16px; height: 16px; }
+  .author-backup-progress {
+    width: 28px; height: 28px; margin-left: auto; border-radius: var(--radius-pill); flex: none;
+    display: none; place-items: center;
+    background: var(--fg); color: var(--bg);
+  }
+  .author-backup-progress .spin { width: 16px; height: 16px; }
+  .device[data-state="backing-up"] .author-backup-success { display: none; }
+  .device[data-state="backing-up"] .author-backup-progress { display: grid; }
 
   /* ─── 媒体查看器 ─── */
   .viewer {
@@ -236,7 +244,7 @@
   .retry-round svg { width: 24px; height: 24px; }
 
   /* 状态驱动 */
-  .device:not([data-state="default"]) .pager-ui { display: none; }
+  .device:not([data-state="default"]):not([data-state="backing-up"]) .pager-ui { display: none; }
   .device[data-state="video"] .view-video { display: grid; }
   .device[data-state="livephoto"] .view-live { display: grid; }
   .device[data-state="loading"] .viewer-loading { display: flex; }
@@ -461,6 +469,7 @@
       <button class="state-btn active" data-state="default">默认多图</button>
       <button class="state-btn" data-state="video">视频</button>
       <button class="state-btn" data-state="livephoto">Live Photo</button>
+      <button class="state-btn" data-state="backing-up">帖子备份中</button>
       <button class="state-btn" data-state="loading">下载中</button>
       <button class="state-btn" data-state="failed">下载失败</button>
       <button class="state-btn" data-state="missing">帖子不存在</button>
@@ -522,6 +531,7 @@
           <span class="author-backup-success" role="img" aria-label="已备份" title="已备份" data-od-id="detail-backup-success">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M7.5 18.5h9a4.5 4.5 0 0 0 .8-8.9A6 6 0 0 0 5.9 8.1 4.7 4.7 0 0 0 7.5 18.5Z"/><path d="m9.2 13 2 2 3.8-4"/></svg>
           </span>
+          <span class="author-backup-progress" role="status" aria-label="备份中" title="备份中" data-od-id="detail-backup-progress"><span class="spin"></span></span>
         </div>
 
         <div class="viewer" id="viewer" data-od-id="media-viewer">
@@ -775,7 +785,7 @@
     <div class="gesture-bar"><span></span></div>
   </div>
 </div>
-<p class="hint">交互:默认态媒体区左右拖拽翻页(1/4);右上角依次为分享媒体、保存媒体、手动备份、更多;备份抽屉按 bucket 分组选择一个 prefix;删除媒体位于更多菜单底部。</p>
+<p class="hint">交互:默认态媒体区左右拖拽翻页(1/4);右上角依次为分享媒体、保存媒体、手动备份、更多;备份抽屉按 bucket 分组选择一个 prefix;备份中在作者行完成图标位置显示动画;删除媒体位于更多菜单底部。</p>
 
 <script>
   const device = document.getElementById('device');
@@ -880,7 +890,7 @@
   }
   let startX = 0, dx = 0, dragging = false, moved = false;
   viewer.addEventListener('pointerdown', e => {
-    if (device.dataset.state !== 'default') return;
+    if (!['default', 'backing-up'].includes(device.dataset.state)) return;
     startX = e.clientX; dx = 0; moved = false; dragging = true;
   });
   viewer.addEventListener('pointermove', e => {
@@ -904,7 +914,7 @@
   viewer.addEventListener('pointercancel', endDrag);
   viewer.addEventListener('contextmenu', e => e.preventDefault());
   viewer.addEventListener('click', e => {
-    if (device.dataset.state !== 'default') return;
+    if (!['default', 'backing-up'].includes(device.dataset.state)) return;
     const r = viewer.getBoundingClientRect();
     const x = e.clientX - r.left;
     if (x < r.width * 0.25) go(index - 1);

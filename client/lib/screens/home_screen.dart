@@ -48,16 +48,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         appBar: AppBar(
           title: _buildTitle(context),
           actions: [
-            if (controller.isRunning)
-              const SizedBox.square(
-                dimension: 48,
-                child: Center(
-                  child: SizedBox.square(
-                    dimension: 19,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                ),
-              ),
             IconButton(
               tooltip: '粘贴链接',
               onPressed: controller.isImportingClipboard

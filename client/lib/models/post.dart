@@ -44,6 +44,8 @@ enum MediaExportMode {
   final String wireValue;
 }
 
+enum PostBackupState { notBackedUp, backingUp, completed }
+
 class PostMedia {
   const PostMedia({
     required this.id,
@@ -105,7 +107,7 @@ class ArchivedPost {
     this.locationName,
     this.localAvatarPath,
     this.sourcePlatform = PostSourcePlatform.instagram,
-    this.isBackedUp = false,
+    this.backupState = PostBackupState.notBackedUp,
   });
 
   final String id;
@@ -120,7 +122,7 @@ class ArchivedPost {
   final int mediaCount;
   final String? localAvatarPath;
   final List<PostMedia> media;
-  final bool isBackedUp;
+  final PostBackupState backupState;
 
   PostMedia get coverMedia => media.firstWhere(
     (item) => item.id == coverMediaId,

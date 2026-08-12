@@ -217,7 +217,7 @@ class AppDatabase {
       ],
       orderBy: 'post_id, sort_index ASC',
     );
-    final backedUpPostIds = await _backedUpPostIds();
+    final backupStates = await _postBackupStates();
     final groupedMedia = <String, List<PostMedia>>{};
     for (final row in mediaRows) {
       final postId = row['post_id']! as String;
@@ -228,7 +228,7 @@ class AppDatabase {
           (row) => _postFromRow(
             row,
             _logicalMedia(groupedMedia[row['id']] ?? const []),
-            isBackedUp: backedUpPostIds.contains(row['id']),
+            backupState: backupStates[row['id']] ?? PostBackupState.notBackedUp,
           ),
         )
         .where((post) => post.media.isNotEmpty)
@@ -329,22 +329,39 @@ class AppDatabase {
     return const BackupTargetStatus(state: BackupTargetState.pending);
   }
 
-  Future<Set<String>> _backedUpPostIds() async {
+  Future<Map<String, PostBackupState>> _postBackupStates() async {
     final rows = await _db.rawQuery('''
-      SELECT DISTINCT j.post_id
+      SELECT
+        j.post_id,
+        MAX(
+          CASE
+            WHEN j.status = 'pending'
+             AND (j.last_error IS NULL OR TRIM(j.last_error) = '')
+            THEN 1
+            ELSE 0
+          END
+        ) AS has_pending,
+        MAX(CASE WHEN j.status = 'completed' THEN 1 ELSE 0 END) AS has_completed
       FROM r2_backup_jobs j
       JOIN posts p
         ON p.id = j.post_id
        AND p.backup_generation = j.generation
-      WHERE j.status = 'completed'
+      GROUP BY j.post_id
       ''');
-    return rows.map((row) => row['post_id']! as String).toSet();
+    return {
+      for (final row in rows)
+        row['post_id']! as String: row['has_completed'] == 1
+            ? PostBackupState.completed
+            : row['has_pending'] == 1
+            ? PostBackupState.backingUp
+            : PostBackupState.notBackedUp,
+    };
   }
 
   ArchivedPost _postFromRow(
     Map<String, Object?> row,
     List<PostMedia> media, {
-    required bool isBackedUp,
+    required PostBackupState backupState,
   }) => ArchivedPost(
     id: row['id']! as String,
     sourcePlatform: PostSourcePlatform.parse(row['source_platform']),
@@ -358,7 +375,7 @@ class AppDatabase {
     mediaCount: media.length,
     localAvatarPath: row['local_avatar_path'] as String?,
     media: media,
-    isBackedUp: isBackedUp,
+    backupState: backupState,
   );
 
   PostMedia _mediaFromRow(Map<String, Object?> row) => PostMedia(

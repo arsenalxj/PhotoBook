@@ -1,12 +1,29 @@
 package com.mantou.photobook.archive
 
+import android.app.Notification
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import org.junit.runner.RunWith
+import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
+@RunWith(RobolectricTestRunner::class)
+@Config(sdk = [35])
 class ArchiveRecoverySchedulerTest {
+    @Test
+    fun `backup recovery foreground notification describes active backup`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        val notification = backupRecoveryForegroundInfo(context).notification
+
+        assertEquals("正在备份帖子", notification.extras.getCharSequence(Notification.EXTRA_TEXT))
+    }
+
     @Test
     fun `queued cancellation replans capture without touching backup`() {
         val capture = ArchiveRecoveryScheduler.captureUpdate(null, hasRunningCapture = false)

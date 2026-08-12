@@ -48,6 +48,91 @@ void main() {
     await runtime.close();
   });
 
+  test('原生运行期间下拉刷新不会重复启动抓取服务', () async {
+    final database = _ImmediateDatabase();
+    final runtime = _FakeRuntimeBridge();
+    final controller = AppController(
+      database: database,
+      runtimeBridge: runtime,
+      isAndroid: true,
+    );
+    await controller.initialize();
+    controller.tasks = const [
+      ArchiveJob(
+        id: 'active',
+        sourcePostId: 'ACTIVE',
+        status: ArchiveJobStatus.fetching,
+      ),
+    ];
+
+    runtime.emitRunStarted();
+    await controller.refreshArchive();
+    expect(runtime.resumeCaptureCalls, 0);
+
+    runtime.emitRunFinished();
+    await controller.refreshArchive();
+    expect(runtime.resumeCaptureCalls, 1);
+
+    controller.dispose();
+    await runtime.close();
+  });
+
+  test('多个原生执行重叠时保留互斥直到全部结束', () async {
+    final database = _ImmediateDatabase();
+    final runtime = _FakeRuntimeBridge();
+    final controller = AppController(
+      database: database,
+      runtimeBridge: runtime,
+      isAndroid: true,
+    );
+    await controller.initialize();
+    controller.tasks = const [
+      ArchiveJob(
+        id: 'active',
+        sourcePostId: 'ACTIVE',
+        status: ArchiveJobStatus.fetching,
+      ),
+    ];
+
+    runtime.emitRunStarted();
+    runtime.emitRunStarted();
+    runtime.emitRunFinished();
+    await controller.refreshArchive();
+    expect(runtime.resumeCaptureCalls, 0);
+
+    runtime.emitRunFinished();
+    await controller.refreshArchive();
+    expect(runtime.resumeCaptureCalls, 1);
+
+    controller.dispose();
+    await runtime.close();
+  });
+
+  test('原生启动请求返回到运行事件送达前不重复启动', () async {
+    final database = _ImmediateDatabase();
+    final runtime = _FakeRuntimeBridge();
+    final controller = AppController(
+      database: database,
+      runtimeBridge: runtime,
+      isAndroid: true,
+    );
+    await controller.initialize();
+    controller.tasks = const [
+      ArchiveJob(
+        id: 'active',
+        sourcePostId: 'ACTIVE',
+        status: ArchiveJobStatus.fetching,
+      ),
+    ];
+
+    await controller.refreshArchive();
+    await controller.refreshArchive();
+
+    expect(runtime.resumeCaptureCalls, 1);
+    controller.dispose();
+    await runtime.close();
+  });
+
   test('进入前台时使用自动模式检查剪贴板', () async {
     final database = _ImmediateDatabase();
     final runtime = _FakeRuntimeBridge();
@@ -204,7 +289,7 @@ void main() {
     expect(runtime.deletedMediaIds, ['media-0']);
     expect(controller.posts.single.media.map((item) => item.id), ['media-1']);
     expect(controller.posts.single.coverMediaId, 'media-1');
-    expect(controller.posts.single.isBackedUp, isTrue);
+    expect(controller.posts.single.backupState, PostBackupState.completed);
     expect(controller.message, '删除已完成，但列表刷新失败，稍后会自动重试');
     controller.dispose();
     await runtime.close();
@@ -431,6 +516,24 @@ class _FakeRuntimeBridge extends ArchiveRuntimeBridge {
     );
   }
 
+  void emitRunStarted() {
+    _events.add(
+      const ArchiveRuntimeEvent(
+        type: ArchiveRuntimeEventType.runStarted,
+        timestamp: 1,
+      ),
+    );
+  }
+
+  void emitRunFinished() {
+    _events.add(
+      const ArchiveRuntimeEvent(
+        type: ArchiveRuntimeEventType.runFinished,
+        timestamp: 2,
+      ),
+    );
+  }
+
   Future<void> close() => _events.close();
 }
 
@@ -443,7 +546,7 @@ ArchivedPost _postWithMedia() => const ArchivedPost(
   publishedAt: 1,
   coverMediaId: 'media-0',
   mediaCount: 2,
-  isBackedUp: true,
+  backupState: PostBackupState.completed,
   media: [
     PostMedia(
       id: 'media-0',

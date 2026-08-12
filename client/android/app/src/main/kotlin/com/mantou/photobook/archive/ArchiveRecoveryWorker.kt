@@ -64,7 +64,7 @@ class R2BackupRecoveryWorker(
         var runError: String? = null
         ArchiveEventBus.emitRunStarted()
         return try {
-            setForeground(recoveryForegroundInfo(applicationContext, "正在恢复 R2 备份"))
+            setForeground(backupRecoveryForegroundInfo(applicationContext))
             database.migrateToManualBackupMode()
             val backupResult = R2BackupEngine(applicationContext, database).backupPending()
             runError = backupResult.error
@@ -203,6 +203,9 @@ object ArchiveRecoveryScheduler {
 
     private const val BACKUP_RETRY_DELAY_MS = 15L * 60L * 1000L
 }
+
+internal fun backupRecoveryForegroundInfo(context: Context): ForegroundInfo =
+    recoveryForegroundInfo(context, "正在备份帖子")
 
 private fun recoveryForegroundInfo(context: Context, text: String): ForegroundInfo {
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

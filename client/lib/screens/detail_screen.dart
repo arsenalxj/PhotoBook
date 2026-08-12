@@ -15,6 +15,7 @@ import '../core/theme/app_theme.dart';
 import '../models/post.dart';
 import '../services/archive_runtime_bridge.dart';
 import '../widgets/post_action_sheets.dart';
+import '../widgets/post_backup_indicator.dart';
 import 'r2_settings_screen.dart';
 
 class DetailScreen extends ConsumerStatefulWidget {
@@ -744,25 +745,16 @@ class _AuthorHeader extends StatelessWidget {
               ],
             ),
           ),
-          if (post.isBackedUp) ...[
+          if (post.backupState != PostBackupState.notBackedUp) ...[
             const SizedBox(width: 12),
-            Tooltip(
-              message: '已备份到 R2',
-              child: DecoratedBox(
-                key: const ValueKey('detail-backup-success'),
-                decoration: BoxDecoration(
-                  color: AppTheme.foreground,
-                  borderRadius: BorderRadius.circular(999),
-                ),
-                child: const SizedBox.square(
-                  dimension: 28,
-                  child: Icon(
-                    LucideIcons.cloudCheck,
-                    size: 16,
-                    color: AppTheme.background,
-                  ),
-                ),
-              ),
+            PostBackupIndicator(
+              state: post.backupState,
+              dimension: 28,
+              iconSize: 16,
+              backgroundColor: AppTheme.foreground,
+              foregroundColor: AppTheme.background,
+              progressKey: const ValueKey('detail-backup-progress'),
+              successKey: const ValueKey('detail-backup-success'),
             ),
           ],
         ],

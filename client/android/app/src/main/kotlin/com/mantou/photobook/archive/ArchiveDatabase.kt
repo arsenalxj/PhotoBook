@@ -750,6 +750,14 @@ class ArchiveDatabase(context: Context) :
         check(updated == 1) { "待确认 R2 备份任务不存在" }
     }
 
+    fun clearBackupError(backupSeq: Long): Boolean =
+        writableDatabase.update(
+            "r2_backup_jobs",
+            ContentValues().apply { putNull("last_error") },
+            "backup_seq = ? AND status = 'pending' AND last_error IS NOT NULL AND TRIM(last_error) != ''",
+            arrayOf(backupSeq.toString()),
+        ) == 1
+
     fun markBackupError(backupSeq: Long, message: String) {
         writableDatabase.update(
             "r2_backup_jobs",

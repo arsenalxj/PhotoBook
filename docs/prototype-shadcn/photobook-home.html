@@ -139,12 +139,13 @@
     padding: 0 8px; border-radius: var(--radius-pill); font-family: var(--font-mono); font-size: 11px;
     background: color-mix(in oklab, var(--accent) 78%, transparent); color: var(--accent-on);
   }
-  .backup-success {
+  .backup-success, .backup-progress {
     width: 26px; height: 26px; border-radius: var(--radius-pill); flex: none;
     display: grid; place-items: center;
     background: color-mix(in oklab, var(--accent) 78%, transparent); color: var(--accent-on);
   }
   .backup-success svg { width: 15px; height: 15px; }
+  .backup-progress .spin { width: 15px; height: 15px; }
   .post-meta { padding: 10px 12px 12px; }
   .caption {
     margin: 0 0 8px; font-size: 13px; line-height: 1.45;
@@ -195,8 +196,6 @@
   .device:not([data-state="filter"]):not([data-state="filter-empty"]) .filter-chip { display: none; }
   .device[data-state="filter"] .appbar-title,
   .device[data-state="filter-empty"] .appbar-title { display: none; }
-  .backup-spin { display: none; }
-  .device[data-state="backing-up"] .backup-spin { display: grid; }
   .snackbar {
     position: absolute; left: 16px; right: 16px; bottom: 24px; z-index: 30;
     display: flex; align-items: center; gap: 12px; min-height: 52px;
@@ -249,7 +248,6 @@
       <span class="appbar-title">PhotoBook</span>
       <span class="filter-chip" data-od-id="filter-chip">@wander_chen <button id="clearFilter" aria-label="清除筛选">×</button></span>
       <span class="spacer"></span>
-      <span class="icon-btn backup-spin" aria-label="备份中"><span class="spin"></span></span>
       <a class="icon-btn" href="photobook-tasks.html" aria-label="任务列表" data-od-id="tasks-entry">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 6h16M4 12h16M4 18h10"></path></svg>
         <span class="badge num">2</span>
@@ -279,11 +277,11 @@
     <div class="gesture-bar"><span></span></div>
   </div>
 </div>
-<p class="hint">交互:点击卡片进入帖子详情;长按卡片(约 0.5 秒)弹出「只看TA / 删除」操作;右上角进入任务列表与设置。</p>
+<p class="hint">交互:点击卡片进入帖子详情;长按卡片(约 0.5 秒)弹出「只看TA / 删除」操作;右上角进入任务列表与设置;顶部不显示全局运行动画,备份动画只出现在对应帖子卡片。</p>
 
 <script>
   const POSTS = [
-    { id: 1, user: 'wander_chen', name: '陈漫游', platform: 'IG',   caption: '雨后的武功山草甸,云从山谷里一层一层漫上来。', count: 4, video: false, backedUp: true, ratio: '4/5',  tint: 18 },
+    { id: 1, user: 'wander_chen', name: '陈漫游', platform: 'IG',   caption: '雨后的武功山草甸,云从山谷里一层一层漫上来。', count: 4, video: false, backedUp: false, ratio: '4/5', tint: 18 },
     { id: 2, user: 'kitchen.lab', name: '厨房实验室', platform: 'IG',   caption: '第 12 次调整配方:脆皮年糕外皮的关键是二次复炸,油温 190℃。', count: 1, video: true,  backedUp: true, ratio: '1/1',  tint: 30 },
     { id: 3, user: '山丘日记',   name: '山丘日记', platform: '小红书', caption: '日出前四十分钟赶到观景台是值得的。', count: 1, video: false, backedUp: true, ratio: '3/4',  tint: 10 },
     { id: 4, user: 'type.daily', name: '字体日报', platform: 'IG',   caption: '一家开在深圳的旧印刷厂,还保留着整套铅字。', count: 7, video: false, backedUp: true, ratio: '4/3',  tint: 24 },
@@ -305,6 +303,7 @@
   function render(filterUser) {
     grid.innerHTML = '';
     POSTS.filter(p => !filterUser || p.user === filterUser).forEach(p => {
+      const backingUp = device.dataset.state === 'backing-up' && p.id === 1;
       const card = document.createElement('article');
       card.className = 'post-card';
       card.dataset.odId = 'post-card-' + p.id;
@@ -314,7 +313,8 @@
           ${p.video ? '<div class="play"><span><svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg></span></div>' : ''}
           <span class="cover-badges">
             ${p.count > 1 ? `<span class="count-badge"><svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="7" width="14" height="14" rx="2"/><path d="M7 7V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-2"/></svg>${p.count}</span>` : ''}
-            ${p.backedUp ? `<span class="backup-success" role="img" aria-label="已备份" title="已备份" data-od-id="post-backup-success-${p.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M7.5 18.5h9a4.5 4.5 0 0 0 .8-8.9A6 6 0 0 0 5.9 8.1 4.7 4.7 0 0 0 7.5 18.5Z"/><path d="m9.2 13 2 2 3.8-4"/></svg></span>` : ''}
+            ${backingUp ? `<span class="backup-progress" role="status" aria-label="备份中" title="备份中" data-od-id="post-backup-progress-${p.id}"><span class="spin"></span></span>` : ''}
+            ${p.backedUp && !backingUp ? `<span class="backup-success" role="img" aria-label="已备份" title="已备份" data-od-id="post-backup-success-${p.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M7.5 18.5h9a4.5 4.5 0 0 0 .8-8.9A6 6 0 0 0 5.9 8.1 4.7 4.7 0 0 0 7.5 18.5Z"/><path d="m9.2 13 2 2 3.8-4"/></svg></span>` : ''}
           </span>
         </div>
         <div class="post-meta">

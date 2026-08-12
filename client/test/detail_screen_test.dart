@@ -157,7 +157,9 @@ void main() {
     final controller = AppController()
       ..phase = AppPhase.ready
       ..posts = [
-        _postWithMedia(const [(width: 1080, height: 1350)], isBackedUp: true),
+        _postWithMedia(const [
+          (width: 1080, height: 1350),
+        ], backupState: PostBackupState.completed),
       ];
     await tester.pumpWidget(
       ProviderScope(
@@ -194,6 +196,29 @@ void main() {
     controller.notifyListeners();
     await tester.pump();
     expect(backupBadge, findsNothing);
+  });
+
+  testWidgets('详情页在备份完成图标位置显示当前帖备份动画', (tester) async {
+    final controller = AppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _postWithMedia(const [
+          (width: 1080, height: 1350),
+        ], backupState: PostBackupState.backingUp),
+      ];
+    await _pumpDetail(tester, controller);
+
+    final progressBadge = find.byKey(const ValueKey('detail-backup-progress'));
+    expect(progressBadge, findsOneWidget);
+    expect(tester.getSize(progressBadge), const Size.square(28));
+    expect(
+      find.descendant(
+        of: progressBadge,
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsOneWidget,
+    );
+    expect(find.byKey(const ValueKey('detail-backup-success')), findsNothing);
   });
 
   testWidgets('详情页手动备份抽屉按 bucket 展示逐位置状态并允许失败位置重试', (tester) async {
@@ -943,7 +968,7 @@ ArchivedPost _postWithMedia(
   PostMediaType mediaType = PostMediaType.image,
   List<PostMediaType>? mediaTypes,
   List<String?>? localOriginalPaths,
-  bool isBackedUp = false,
+  PostBackupState backupState = PostBackupState.notBackedUp,
 }) {
   final media = [
     for (var index = 0; index < sizes.length; index += 1)
@@ -964,7 +989,7 @@ ArchivedPost _postWithMedia(
     publishedAt: 1,
     coverMediaId: media.first.id,
     mediaCount: media.length,
-    isBackedUp: isBackedUp,
+    backupState: backupState,
     media: media,
   );
 }

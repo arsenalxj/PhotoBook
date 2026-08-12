@@ -28,12 +28,14 @@ class AppController extends ChangeNotifier {
   int _localReloadRevision = 0;
   bool _fullReloadRequested = false;
   bool _clipboardImportInProgress = false;
+  bool _refreshArchiveInProgress = false;
+  bool _nativeRunRequested = false;
+  int _nativeRunCount = 0;
   bool _isForeground = false;
 
   AppPhase phase = AppPhase.initializing;
   List<ArchivedPost> posts = const [];
   List<ArchiveJob> tasks = const [];
-  bool isRunning = false;
   InstagramSessionSummary? instagramSession;
   R2SettingsSummary r2Settings = const R2SettingsSummary();
   BackupStatus backupStatus = const BackupStatus();
@@ -73,20 +75,24 @@ class AppController extends ChangeNotifier {
   }
 
   Future<void> refreshArchive({bool showErrors = true}) async {
-    if (isRunning) return;
-    final shouldStart = _isAndroid && activeJobCount > 0;
-    if (shouldStart) {
-      isRunning = true;
-      notifyListeners();
+    if (_refreshArchiveInProgress ||
+        _nativeRunRequested ||
+        _nativeRunCount > 0) {
+      return;
     }
+    _refreshArchiveInProgress = true;
+    final shouldStart = _isAndroid && activeJobCount > 0;
+    if (shouldStart) _nativeRunRequested = true;
     try {
       if (shouldStart) {
         await _runtimeBridge.resumeCaptureJobs();
       }
       await _reloadLocalState();
     } on PlatformException catch (error) {
-      isRunning = false;
+      _nativeRunRequested = false;
       if (showErrors) _publishMessage(error.message ?? '归档任务恢复失败');
+    } finally {
+      _refreshArchiveInProgress = false;
     }
   }
 
@@ -394,7 +400,7 @@ class AppController extends ChangeNotifier {
       mediaCount: remaining.length,
       localAvatarPath: post.localAvatarPath,
       media: remaining,
-      isBackedUp: post.isBackedUp,
+      backupState: post.backupState,
     );
     posts = [
       for (final candidate in posts)
@@ -427,14 +433,14 @@ class AppController extends ChangeNotifier {
   void _handleRuntimeEvent(ArchiveRuntimeEvent event) {
     switch (event.type) {
       case ArchiveRuntimeEventType.runStarted:
-        isRunning = true;
-        notifyListeners();
+        _nativeRunRequested = false;
+        _nativeRunCount += 1;
       case ArchiveRuntimeEventType.archiveChanged:
         unawaited(_reloadLocalState());
       case ArchiveRuntimeEventType.jobChanged:
         unawaited(_reloadTaskState());
       case ArchiveRuntimeEventType.runFinished:
-        isRunning = false;
+        if (_nativeRunCount > 0) _nativeRunCount -= 1;
         unawaited(_reloadLocalState());
         unawaited(_reloadRuntimeState());
         final error = event.error;

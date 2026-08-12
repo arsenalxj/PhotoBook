@@ -96,6 +96,23 @@ class R2BackupEngineTest {
     }
 
     @Test
+    fun `retry clears displayed error before uploading again`() {
+        archive("RetryState1", config.backupTargetId)
+        val failingStore = FakeR2Store(config, uploadError = IOException("offline"))
+        assertTrue(engine(failingStore).backupPending().shouldRetry)
+        var archiveChangedCount = 0
+
+        val result =
+            engine(
+                failingStore,
+                archiveChangedEmitter = { archiveChangedCount += 1 },
+            ).backupPending()
+
+        assertTrue(result.shouldRetry)
+        assertEquals(1, archiveChangedCount)
+    }
+
+    @Test
     fun `deleting post does not cancel an immutable pending backup`() {
         val postId = archive("DeletePending1", config.backupTargetId)
         database.deletePost(postId)
@@ -272,6 +289,7 @@ class R2BackupEngineTest {
         store: R2Store,
         maxJobsPerBatch: Int = 25,
         deviceId: String = LOCAL_DEVICE,
+        archiveChangedEmitter: () -> Unit = {},
     ): R2BackupEngine =
         R2BackupEngine(
             context = context,
@@ -280,7 +298,7 @@ class R2BackupEngineTest {
             storeFactory = { store },
             deviceInfo = DeviceInfo(deviceId, 1_750_000_000_000),
             maxJobsPerBatch = maxJobsPerBatch,
-            archiveChangedEmitter = {},
+            archiveChangedEmitter = archiveChangedEmitter,
         )
 
     private fun settingsFor(config: R2Config): R2Settings {

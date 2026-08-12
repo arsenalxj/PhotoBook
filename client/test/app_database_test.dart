@@ -170,13 +170,16 @@ void main() {
     expect(post.media.single.liveMotion?.id, 'xiaohongshu:live1:1');
   });
 
-  test('当前 generation 在任一目标完成后显示已备份并保留逐目标状态', () async {
+  test('当前 generation 只把无错误等待任务聚合为备份中', () async {
     final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
     const postId = 'instagram:post1';
     await _insertPost(raw, postId: postId);
     await _insertMedia(raw, postId: postId, id: '$postId:0');
 
-    expect((await database.listPosts()).single.isBackedUp, isFalse);
+    expect(
+      (await database.listPosts()).single.backupState,
+      PostBackupState.notBackedUp,
+    );
     await _insertBackupJob(
       raw,
       backupSeq: 1,
@@ -185,7 +188,10 @@ void main() {
       generation: 1,
       status: 'pending',
     );
-    expect((await database.listPosts()).single.isBackedUp, isFalse);
+    expect(
+      (await database.listPosts()).single.backupState,
+      PostBackupState.backingUp,
+    );
     expect(
       (await database.readBackupTargetStatuses(postId))['target-a']?.state,
       BackupTargetState.pending,
@@ -194,7 +200,10 @@ void main() {
       'status': 'completed',
       'completed_at': 10,
     }, where: 'backup_seq = 1');
-    expect((await database.listPosts()).single.isBackedUp, isTrue);
+    expect(
+      (await database.listPosts()).single.backupState,
+      PostBackupState.completed,
+    );
     expect(
       (await database.readBackupTargetStatuses(postId))['target-a']?.state,
       BackupTargetState.completed,
@@ -208,9 +217,62 @@ void main() {
       status: 'pending',
       lastError: '权限不足',
     );
+    expect(
+      (await database.listPosts()).single.backupState,
+      PostBackupState.completed,
+    );
     final statuses = await database.readBackupTargetStatuses(postId);
     expect(statuses['target-b']?.state, BackupTargetState.failed);
     expect(statuses['target-b']?.lastError, '权限不足');
+  });
+
+  test('一个位置已完成时其他位置备份中仍显示已备份', () async {
+    final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    const postId = 'instagram:completed-and-pending';
+    await _insertPost(raw, postId: postId);
+    await _insertMedia(raw, postId: postId, id: '$postId:0');
+    await _insertBackupJob(
+      raw,
+      backupSeq: 1,
+      backupTargetId: 'target-a',
+      postId: postId,
+      generation: 1,
+      status: 'completed',
+    );
+    await _insertBackupJob(
+      raw,
+      backupSeq: 2,
+      backupTargetId: 'target-b',
+      postId: postId,
+      generation: 1,
+      status: 'pending',
+    );
+
+    expect(
+      (await database.listPosts()).single.backupState,
+      PostBackupState.completed,
+    );
+  });
+
+  test('当前 generation 只有失败任务时不显示备份动画', () async {
+    final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
+    const postId = 'instagram:failed-backup';
+    await _insertPost(raw, postId: postId);
+    await _insertMedia(raw, postId: postId, id: '$postId:0');
+    await _insertBackupJob(
+      raw,
+      backupSeq: 1,
+      backupTargetId: 'target-a',
+      postId: postId,
+      generation: 1,
+      status: 'pending',
+      lastError: '网络不可用',
+    );
+
+    expect(
+      (await database.listPosts()).single.backupState,
+      PostBackupState.notBackedUp,
+    );
   });
 
   test('重新归档后的新 generation 在完成前不显示已备份', () async {
@@ -233,7 +295,10 @@ void main() {
       whereArgs: [postId],
     );
 
-    expect((await database.listPosts()).single.isBackedUp, isFalse);
+    expect(
+      (await database.listPosts()).single.backupState,
+      PostBackupState.notBackedUp,
+    );
     await _insertBackupJob(
       raw,
       backupSeq: 2,
@@ -242,7 +307,10 @@ void main() {
       generation: 2,
       status: 'completed',
     );
-    expect((await database.listPosts()).single.isBackedUp, isTrue);
+    expect(
+      (await database.listPosts()).single.backupState,
+      PostBackupState.completed,
+    );
   });
 
   test('部分删除不改变 generation 因而保留已备份标记', () async {
@@ -264,7 +332,7 @@ void main() {
 
     final post = (await database.listPosts()).single;
     expect(post.mediaCount, 1);
-    expect(post.isBackedUp, isTrue);
+    expect(post.backupState, PostBackupState.completed);
   });
 }
 

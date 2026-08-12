@@ -5,6 +5,7 @@ import 'package:lucide_icons_flutter/lucide_icons.dart';
 
 import '../core/theme/app_theme.dart';
 import '../models/post.dart';
+import 'post_backup_indicator.dart';
 
 class PostCard extends StatelessWidget {
   const PostCard({
@@ -78,7 +79,8 @@ class PostCard extends StatelessWidget {
                               ),
                             ),
                           ),
-                        if (post.mediaCount > 1 || post.isBackedUp)
+                        if (post.mediaCount > 1 ||
+                            post.backupState != PostBackupState.notBackedUp)
                           Positioned(
                             right: 8,
                             top: 8,
@@ -87,10 +89,27 @@ class PostCard extends StatelessWidget {
                               children: [
                                 if (post.mediaCount > 1)
                                   _MediaCountBadge(post: post),
-                                if (post.mediaCount > 1 && post.isBackedUp)
+                                if (post.mediaCount > 1 &&
+                                    post.backupState !=
+                                        PostBackupState.notBackedUp)
                                   const SizedBox(width: 6),
-                                if (post.isBackedUp)
-                                  _PostBackupBadge(postId: post.id),
+                                if (post.backupState !=
+                                    PostBackupState.notBackedUp)
+                                  PostBackupIndicator(
+                                    state: post.backupState,
+                                    dimension: 26,
+                                    iconSize: 15,
+                                    backgroundColor: AppTheme.accent.withValues(
+                                      alpha: 0.78,
+                                    ),
+                                    foregroundColor: AppTheme.accentOn,
+                                    progressKey: ValueKey(
+                                      'post-backup-progress-${post.id}',
+                                    ),
+                                    successKey: ValueKey(
+                                      'post-backup-success-${post.id}',
+                                    ),
+                                  ),
                               ],
                             ),
                           ),
@@ -218,28 +237,6 @@ class _MediaCountBadge extends StatelessWidget {
             ),
           ],
         ),
-      ),
-    ),
-  );
-}
-
-class _PostBackupBadge extends StatelessWidget {
-  const _PostBackupBadge({required this.postId});
-
-  final String postId;
-
-  @override
-  Widget build(BuildContext context) => Tooltip(
-    message: '已备份到 R2',
-    child: DecoratedBox(
-      key: ValueKey('post-backup-success-$postId'),
-      decoration: BoxDecoration(
-        color: AppTheme.accent.withValues(alpha: 0.78),
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: const SizedBox.square(
-        dimension: 26,
-        child: Icon(LucideIcons.cloudCheck, size: 15, color: AppTheme.accentOn),
       ),
     ),
   );

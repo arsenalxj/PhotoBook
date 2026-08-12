@@ -73,10 +73,16 @@ class R2BackupEngine(
                 )
             if (jobs.isEmpty()) continue
             val store = storeFactory(config)
+            if (database.clearBackupError(jobs.first().backupSeq)) {
+                archiveChangedEmitter()
+            }
             try {
                 uploadDeviceDescriptor(store)
-                for (job in jobs) {
+                for ((index, job) in jobs.withIndex()) {
                     try {
+                        if (index > 0 && database.clearBackupError(job.backupSeq)) {
+                            archiveChangedEmitter()
+                        }
                         uploadJob(store, job)
                         database.markBackupCompleted(job.backupSeq)
                         completedAny = true

@@ -110,7 +110,7 @@ void main() {
           username: 'alice',
           displayName: 'Alice',
           mediaCount: 3,
-          isBackedUp: true,
+          backupState: PostBackupState.completed,
         ),
         _post(id: 'post-local', username: 'bob', displayName: 'Bob'),
       ];
@@ -163,6 +163,49 @@ void main() {
     expect(backupRect.left - countRect.right, 6);
     expect(backupRect.top - coverRect.top, 8);
     expect(coverRect.right - backupRect.right, 8);
+  });
+
+  testWidgets('首页只在对应备份中帖子卡片的备份图标位置显示动画', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..posts = [
+        _post(
+          id: 'post-backing-up',
+          username: 'alice',
+          displayName: 'Alice',
+          backupState: PostBackupState.backingUp,
+        ),
+        _post(id: 'post-local', username: 'bob', displayName: 'Bob'),
+      ];
+    await _pumpHome(tester, controller);
+
+    final progressBadge = find.byKey(
+      const ValueKey('post-backup-progress-post-backing-up'),
+    );
+    expect(progressBadge, findsOneWidget);
+    expect(tester.getSize(progressBadge), const Size.square(26));
+    expect(
+      find.descendant(
+        of: progressBadge,
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.byKey(const ValueKey('post-backup-progress-post-local')),
+      findsNothing,
+    );
+    expect(
+      find.byKey(const ValueKey('post-backup-success-post-backing-up')),
+      findsNothing,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byType(CircularProgressIndicator),
+      ),
+      findsNothing,
+    );
   });
 
   testWidgets('只有进行中任务时角标使用非错误色', (tester) async {
@@ -284,7 +327,7 @@ ArchivedPost _post({
   required String displayName,
   PostSourcePlatform sourcePlatform = PostSourcePlatform.instagram,
   int mediaCount = 1,
-  bool isBackedUp = false,
+  PostBackupState backupState = PostBackupState.notBackedUp,
 }) => ArchivedPost(
   id: id,
   sourcePlatform: sourcePlatform,
@@ -297,7 +340,7 @@ ArchivedPost _post({
   publishedAt: 1,
   coverMediaId: '$id-media-0',
   mediaCount: mediaCount,
-  isBackedUp: isBackedUp,
+  backupState: backupState,
   media: [
     for (var index = 0; index < mediaCount; index += 1)
       PostMedia(
