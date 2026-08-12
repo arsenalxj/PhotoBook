@@ -10,9 +10,12 @@ import 'package:url_launcher/url_launcher.dart';
 import 'package:video_player/video_player.dart';
 
 import '../controllers/providers.dart';
+import '../core/database/app_database.dart';
 import '../core/theme/app_theme.dart';
 import '../models/post.dart';
+import '../services/archive_runtime_bridge.dart';
 import '../widgets/post_action_sheets.dart';
+import 'r2_settings_screen.dart';
 
 class DetailScreen extends ConsumerStatefulWidget {
   const DetailScreen({required this.postId, super.key});
@@ -76,20 +79,23 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
             icon: const Icon(LucideIcons.download),
           ),
           IconButton(
-            key: const ValueKey('delete-post-media'),
-            tooltip: '删除媒体',
-            onPressed: () => _deletePostMedia(post!),
-            icon: const Icon(LucideIcons.trash),
+            key: const ValueKey('backup-post'),
+            tooltip: '备份帖子',
+            onPressed: () => _showBackupTargets(post!),
+            icon: const Icon(LucideIcons.cloudUpload),
           ),
           PopupMenuButton<_DetailMenuAction>(
             tooltip: '更多',
             icon: const Icon(LucideIcons.ellipsisVertical),
             onSelected: (action) {
               final sourceUrl = post!.sourceUrl;
-              if (action == _DetailMenuAction.copySource) {
-                unawaited(_copySource(sourceUrl));
-              } else {
-                unawaited(_openSource(sourceUrl));
+              switch (action) {
+                case _DetailMenuAction.copySource:
+                  unawaited(_copySource(sourceUrl));
+                case _DetailMenuAction.openSource:
+                  unawaited(_openSource(sourceUrl));
+                case _DetailMenuAction.deleteMedia:
+                  unawaited(_deletePostMedia(post));
               }
             },
             itemBuilder: (context) => const [
@@ -107,6 +113,16 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
                   contentPadding: EdgeInsets.zero,
                   leading: Icon(LucideIcons.externalLink),
                   title: Text('打开原帖'),
+                ),
+              ),
+              PopupMenuDivider(),
+              PopupMenuItem(
+                key: ValueKey('delete-post-media'),
+                value: _DetailMenuAction.deleteMedia,
+                child: ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(LucideIcons.trash, color: AppTheme.danger),
+                  title: Text('删除媒体', style: TextStyle(color: AppTheme.danger)),
                 ),
               ),
             ],
@@ -212,6 +228,13 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
     ).showSnackBar(SnackBar(content: Text('已保存 $savedCount 项到系统相册')));
   }
 
+  Future<void> _showBackupTargets(ArchivedPost post) =>
+      showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true,
+        builder: (_) => _ManualBackupSheet(post: post),
+      );
+
   Future<void> _deletePostMedia(ArchivedPost post) async {
     final outcome = await showDeleteMediaSelectionSheet(
       context: context,
@@ -280,7 +303,333 @@ class _DetailScreenState extends ConsumerState<DetailScreen> {
   }
 }
 
-enum _DetailMenuAction { copySource, openSource }
+enum _DetailMenuAction { copySource, openSource, deleteMedia }
+
+class _ManualBackupSheet extends ConsumerStatefulWidget {
+  const _ManualBackupSheet({required this.post});
+
+  final ArchivedPost post;
+
+  @override
+  ConsumerState<_ManualBackupSheet> createState() => _ManualBackupSheetState();
+}
+
+class _ManualBackupSheetState extends ConsumerState<_ManualBackupSheet> {
+  Map<String, BackupTargetStatus> _statuses = const {};
+  String? _activeTargetId;
+  String? _loadError;
+  bool _loading = true;
+  int? _seenRevision;
+
+  @override
+  void initState() {
+    super.initState();
+    unawaited(_loadStatuses());
+  }
+
+  Future<void> _loadStatuses() async {
+    try {
+      final statuses = await ref
+          .read(appControllerProvider)
+          .readBackupTargetStatuses(widget.post.id);
+      if (!mounted) return;
+      setState(() {
+        _statuses = statuses;
+        _loadError = null;
+        _loading = false;
+      });
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loadError = _messageFor(error);
+        _loading = false;
+      });
+    }
+  }
+
+  Future<void> _enqueue(R2BackupTargetSummary target) async {
+    if (_activeTargetId != null ||
+        _statuses[target.targetId]?.state == BackupTargetState.completed) {
+      return;
+    }
+    setState(() {
+      _activeTargetId = target.targetId;
+      _loadError = null;
+    });
+    try {
+      final status = await ref
+          .read(appControllerProvider)
+          .enqueueR2Backup(widget.post.id, target.targetId);
+      if (!mounted) return;
+      setState(() {
+        _statuses = {
+          ..._statuses,
+          target.targetId: BackupTargetStatus(
+            state: status == ManualBackupEnqueueStatus.completed
+                ? BackupTargetState.completed
+                : BackupTargetState.pending,
+          ),
+        };
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            status == ManualBackupEnqueueStatus.completed
+                ? '该帖子已备份到${target.name}'
+                : '已开始备份到${target.name}',
+          ),
+        ),
+      );
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _loadError = _messageFor(error));
+    } finally {
+      if (mounted) setState(() => _activeTargetId = null);
+    }
+  }
+
+  void _manageTargets() {
+    final navigator = Navigator.of(context);
+    navigator.pop();
+    unawaited(
+      navigator.push<void>(
+        MaterialPageRoute(builder: (_) => const R2SettingsScreen()),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final controller = ref.watch(appControllerProvider);
+    final revision = controller.backupRevision;
+    if (_seenRevision == null) {
+      _seenRevision = revision;
+    } else if (_seenRevision != revision) {
+      _seenRevision = revision;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) unawaited(_loadStatuses());
+      });
+    }
+    final settings = controller.r2Settings;
+    return SafeArea(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * 0.82,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const _BackupSheetHandle(),
+              Row(
+                children: [
+                  const Expanded(
+                    child: Text(
+                      '备份到',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: '关闭',
+                    onPressed: _activeTargetId == null
+                        ? () => Navigator.of(context).pop()
+                        : null,
+                    icon: const Icon(LucideIcons.x),
+                  ),
+                ],
+              ),
+              const Text(
+                '选择一个位置备份当前整帖。任务创建后会在后台继续。',
+                style: TextStyle(color: AppTheme.muted, fontSize: 13),
+              ),
+              const SizedBox(height: 10),
+              if (_loading)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 28),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (settings.targets.isEmpty)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 20),
+                  child: Column(
+                    children: [
+                      const Icon(LucideIcons.cloudOff, size: 34),
+                      const SizedBox(height: 10),
+                      const Text('还没有可用的备份位置'),
+                      const SizedBox(height: 14),
+                      FilledButton(
+                        onPressed: _manageTargets,
+                        child: const Text('添加备份位置'),
+                      ),
+                    ],
+                  ),
+                )
+              else
+                Flexible(
+                  child: ListView(
+                    shrinkWrap: true,
+                    children: [
+                      for (final connection in settings.connections) ...[
+                        if (settings.targets.any(
+                          (target) =>
+                              target.connectionId == connection.connectionId,
+                        )) ...[
+                          Padding(
+                            padding: const EdgeInsets.fromLTRB(2, 10, 2, 6),
+                            child: Text(
+                              connection.bucket,
+                              style: const TextStyle(
+                                color: AppTheme.muted,
+                                fontFamily: 'monospace',
+                                fontSize: 11,
+                              ),
+                            ),
+                          ),
+                          for (final target in settings.targets.where(
+                            (target) =>
+                                target.connectionId == connection.connectionId,
+                          ))
+                            _BackupTargetTile(
+                              target: target,
+                              status: _statuses[target.targetId],
+                              busy: _activeTargetId == target.targetId,
+                              enabled: _activeTargetId == null,
+                              onTap: () => _enqueue(target),
+                            ),
+                        ],
+                      ],
+                    ],
+                  ),
+                ),
+              if (_loadError != null) ...[
+                const SizedBox(height: 10),
+                Text(
+                  _loadError!,
+                  style: const TextStyle(color: AppTheme.danger, fontSize: 13),
+                ),
+              ],
+              if (settings.targets.isNotEmpty) ...[
+                const SizedBox(height: 8),
+                TextButton(
+                  onPressed: _activeTargetId == null ? _manageTargets : null,
+                  child: const Text('管理备份位置'),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _BackupTargetTile extends StatelessWidget {
+  const _BackupTargetTile({
+    required this.target,
+    required this.status,
+    required this.busy,
+    required this.enabled,
+    required this.onTap,
+  });
+
+  final R2BackupTargetSummary target;
+  final BackupTargetStatus? status;
+  final bool busy;
+  final bool enabled;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final state = status?.state ?? BackupTargetState.notBackedUp;
+    final completed = state == BackupTargetState.completed;
+    final failed = state == BackupTargetState.failed;
+    final stateColor = completed
+        ? AppTheme.success
+        : failed
+        ? AppTheme.danger
+        : AppTheme.muted;
+    final label = switch (state) {
+      BackupTargetState.notBackedUp => '未备份',
+      BackupTargetState.pending => '等待或备份中',
+      BackupTargetState.completed => '已备份',
+      BackupTargetState.failed => '备份失败',
+    };
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8),
+      child: OutlinedButton(
+        style: OutlinedButton.styleFrom(
+          foregroundColor: AppTheme.foreground,
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          minimumSize: const Size.fromHeight(62),
+          alignment: Alignment.centerLeft,
+        ),
+        onPressed: enabled && !completed ? onTap : null,
+        child: Row(
+          children: [
+            const SizedBox.square(
+              dimension: 36,
+              child: Icon(LucideIcons.cloud, size: 18),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    target.name,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                  Text(
+                    '${target.bucket} / ${target.prefix}',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      color: AppTheme.muted,
+                      fontFamily: 'monospace',
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (busy)
+              const SizedBox.square(
+                dimension: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              )
+            else
+              Text(label, style: TextStyle(color: stateColor, fontSize: 12)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BackupSheetHandle extends StatelessWidget {
+  const _BackupSheetHandle();
+
+  @override
+  Widget build(BuildContext context) => Center(
+    child: Container(
+      width: 36,
+      height: 4,
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppTheme.border,
+        borderRadius: BorderRadius.circular(999),
+      ),
+    ),
+  );
+}
 
 class _MissingPost extends StatelessWidget {
   const _MissingPost();

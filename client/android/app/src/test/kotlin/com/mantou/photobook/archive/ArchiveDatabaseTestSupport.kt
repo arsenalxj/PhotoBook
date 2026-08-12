@@ -23,9 +23,9 @@ internal fun ArchiveDatabase.commitCompletedJob(
             jobId,
             claimed.attemptCount,
             post,
-            backupTargetId?.let { BackupDestination(it, deviceId) },
         ),
     ) {
         "测试任务提交被拒绝"
     }
+    backupTargetId?.let { enqueueManualBackup(post.id, it, deviceId) }
 }

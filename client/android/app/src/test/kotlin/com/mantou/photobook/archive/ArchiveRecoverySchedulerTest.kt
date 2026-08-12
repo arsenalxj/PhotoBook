@@ -3,6 +3,7 @@ package com.mantou.photobook.archive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ArchiveRecoverySchedulerTest {
@@ -37,5 +38,15 @@ class ArchiveRecoverySchedulerTest {
 
         assertEquals(RecoveryWorkKind.BACKUP, update.kind)
         assertEquals(5_000L, update.delayMs)
+    }
+
+    @Test
+    fun `existing pending backups request a keep-only immediate recovery`() {
+        val update = ArchiveRecoveryScheduler.existingBackupUpdate(hasPendingBackups = true)
+
+        assertEquals(RecoveryWorkKind.BACKUP, update?.kind)
+        assertEquals(0L, update?.delayMs)
+        assertTrue(update?.keepExisting == true)
+        assertNull(ArchiveRecoveryScheduler.existingBackupUpdate(hasPendingBackups = false))
     }
 }

@@ -35,8 +35,9 @@ class AppController extends ChangeNotifier {
   List<ArchiveJob> tasks = const [];
   bool isRunning = false;
   InstagramSessionSummary? instagramSession;
-  R2ConfigSummary? r2Config;
+  R2SettingsSummary r2Settings = const R2SettingsSummary();
   BackupStatus backupStatus = const BackupStatus();
+  int backupRevision = 0;
 
   String? message;
   int messageRevision = 0;
@@ -59,10 +60,9 @@ class AppController extends ChangeNotifier {
       try {
         final runtime = await _runtimeBridge.getRuntimeState();
         instagramSession = runtime.instagramSession;
-        r2Config = runtime.r2Config;
-        if (r2Config != null) await _reloadLocalState();
-        if (activeJobCount > 0 || r2Config != null) {
-          unawaited(_runtimeBridge.backupNow());
+        r2Settings = runtime.r2Settings;
+        if (activeJobCount > 0) {
+          unawaited(_runtimeBridge.resumeCaptureJobs());
         }
       } on PlatformException catch (error) {
         _publishMessage(error.message ?? '原生归档服务初始化失败');
@@ -74,19 +74,19 @@ class AppController extends ChangeNotifier {
 
   Future<void> refreshArchive({bool showErrors = true}) async {
     if (isRunning) return;
-    final shouldStart = _isAndroid && (activeJobCount > 0 || r2Config != null);
+    final shouldStart = _isAndroid && activeJobCount > 0;
     if (shouldStart) {
       isRunning = true;
       notifyListeners();
     }
     try {
       if (shouldStart) {
-        await _runtimeBridge.backupNow();
+        await _runtimeBridge.resumeCaptureJobs();
       }
       await _reloadLocalState();
     } on PlatformException catch (error) {
       isRunning = false;
-      if (showErrors) _publishMessage(error.message ?? 'R2 备份启动失败');
+      if (showErrors) _publishMessage(error.message ?? '归档任务恢复失败');
     }
   }
 
@@ -265,28 +265,59 @@ class AppController extends ChangeNotifier {
     if (!value) return;
     await _reloadLocalState();
     await _reloadRuntimeState();
-    await importClipboard(automatic: true);
-    if (_isAndroid && (activeJobCount > 0 || r2Config != null)) {
-      unawaited(_runtimeBridge.backupNow());
-    }
-  }
-
-  Future<void> saveR2Config(R2ConfigInput config) async {
-    if (!_isAndroid) throw StateError('R2 备份仅支持 Android');
-    r2Config = await _runtimeBridge.saveR2Config(config);
     try {
-      await _reloadLocalState();
-    } on Object {
-      _publishMessage('R2 配置已保存，但本地状态刷新失败，稍后会自动重试');
-      unawaited(_retryLocalStateReload());
+      await _runtimeBridge.resumeBackupJobs();
+    } on PlatformException catch (error) {
+      _publishMessage(error.message ?? 'R2 备份恢复失败');
+    }
+    await importClipboard(automatic: true);
+    if (_isAndroid && activeJobCount > 0) {
+      unawaited(_runtimeBridge.resumeCaptureJobs());
     }
   }
 
-  Future<void> clearR2Config() async {
-    if (!_isAndroid) return;
-    await _runtimeBridge.clearR2Config();
-    r2Config = null;
+  Future<void> saveR2Connection(R2ConnectionInput input) async {
+    if (!_isAndroid) throw StateError('R2 备份仅支持 Android');
+    r2Settings = await _runtimeBridge.saveR2Connection(input);
+    notifyListeners();
+  }
+
+  Future<void> updateR2Connection(R2CredentialsInput input) async {
+    if (!_isAndroid) throw StateError('R2 备份仅支持 Android');
+    r2Settings = await _runtimeBridge.updateR2Connection(input);
+    notifyListeners();
+  }
+
+  Future<void> saveR2Target(R2TargetInput input) async {
+    if (!_isAndroid) throw StateError('R2 备份仅支持 Android');
+    r2Settings = await _runtimeBridge.saveR2Target(input);
+    notifyListeners();
+  }
+
+  Future<void> deleteR2Target(String targetId) async {
+    if (!_isAndroid) throw StateError('R2 备份仅支持 Android');
+    r2Settings = await _runtimeBridge.deleteR2Target(targetId);
     await _reloadLocalState();
+  }
+
+  Future<void> deleteR2Connection(String connectionId) async {
+    if (!_isAndroid) throw StateError('R2 备份仅支持 Android');
+    r2Settings = await _runtimeBridge.deleteR2Connection(connectionId);
+    await _reloadLocalState();
+  }
+
+  Future<Map<String, BackupTargetStatus>> readBackupTargetStatuses(
+    String postId,
+  ) => _database.readBackupTargetStatuses(postId);
+
+  Future<ManualBackupEnqueueStatus> enqueueR2Backup(
+    String postId,
+    String targetId,
+  ) async {
+    if (!_isAndroid) throw StateError('R2 备份仅支持 Android');
+    final status = await _runtimeBridge.enqueueR2Backup(postId, targetId);
+    await _reloadLocalState();
+    return status;
   }
 
   Future<void> _reloadLocalState() {
@@ -309,14 +340,13 @@ class AppController extends ChangeNotifier {
         final reloadAll = _fullReloadRequested;
         _fullReloadRequested = false;
         if (reloadAll) {
-          final loadedPosts = await _database.listPosts(
-            backupTargetId: r2Config?.backupTargetId,
-          );
+          final loadedPosts = await _database.listPosts();
           final loadedTasks = await _database.listVisibleJobs();
           final loadedBackupStatus = await _database.readBackupStatus();
           posts = loadedPosts;
           tasks = loadedTasks;
           backupStatus = loadedBackupStatus;
+          backupRevision += 1;
         } else {
           tasks = await _database.listVisibleJobs();
         }
@@ -386,12 +416,8 @@ class AppController extends ChangeNotifier {
     if (!_isAndroid) return;
     try {
       final runtime = await _runtimeBridge.getRuntimeState();
-      final previousBackupTargetId = r2Config?.backupTargetId;
       instagramSession = runtime.instagramSession;
-      r2Config = runtime.r2Config;
-      if (previousBackupTargetId != r2Config?.backupTargetId) {
-        await _reloadLocalState();
-      }
+      r2Settings = runtime.r2Settings;
       notifyListeners();
     } on PlatformException catch (error) {
       _publishMessage(error.message ?? '原生归档状态刷新失败');

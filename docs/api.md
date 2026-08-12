@@ -8,7 +8,7 @@ MethodChannel：`com.mantou.photobook/archive`
 
 | 方法 | 入参 | 返回 | 用途 |
 |---|---|---|---|
-| `getRuntimeState` | 无 | JSON map | 获取活动/失败任务数、Instagram Session 和 R2 备份配置摘要 |
+| `getRuntimeState` | 无 | JSON map | 获取活动/失败任务数、Instagram Session、R2 连接和备份位置摘要 |
 | `retryJob` | `jobId` | 无 | 将失败任务重新排队并启动服务 |
 | `cancelJob` | `jobId` | 无 | 排队任务直接改为 `failed + CANCELLED`；运行任务先改为 `cancelling`，清理完成后再收口为已取消 |
 | `deleteJob` | `jobId` | 无 | 删除一条 `failed` 任务记录，不删除帖子或媒体 |
@@ -19,10 +19,14 @@ MethodChannel：`com.mantou.photobook/archive`
 | `importInstagramCookies` | `cookieHeader` | Session 摘要 | 在线验证用户主动粘贴的 Cookie，成功后加密保存并返回真实用户名 |
 | `copyInstagramCookies` | 无 | 无 | 仅在 Session 可用时由 Android 原生层写入敏感剪贴板，Cookie 不返回 Flutter |
 | `clearInstagramSession` | 无 | 无 | 清除加密 Session、Keystore 密钥和 WebView 数据 |
-| `saveR2Config` | 配置 map | 配置摘要 | 加密保存通过验证的 R2 配置 |
-| `clearR2Config` | 无 | 无 | 清除密钥和当前资料库绑定 |
-| `backupNow` | 无 | 无 | 启动一次前台备份，只上传本机待处理任务 |
-| `ensureOriginal` | `mediaId` | 本地文件路径 | 从当前 R2 的本设备目录按需恢复原媒体 |
+| `saveR2Connection` | endpoint、bucket、凭证及默认位置 | 连接与位置摘要 | 验证并加密保存连接，同时建立首个 prefix 位置，不创建帖子任务 |
+| `updateR2Connection` | connectionId、endpoint、bucket、凭证 | 连接与位置摘要 | 验证并更新已有连接的凭证，不改变该连接的位置或目标身份 |
+| `saveR2Target` | connectionId、名称、prefix | 连接与位置摘要 | 在已有连接下新增位置，或只修改已有位置名称；prefix 不可原地修改，不重复传递 Secret |
+| `deleteR2Target` | targetId | 连接与位置摘要 | 删除位置并取消该位置未完成任务，不删除远端对象 |
+| `deleteR2Connection` | connectionId | 连接与位置摘要 | 删除连接及其位置并取消对应未完成任务，不删除远端对象 |
+| `enqueueR2Backup` | postId、targetId | 入队状态 | 为当前帖子 generation 幂等创建手动备份任务并启动 Worker |
+| `resumeCaptureJobs` | 无 | 空 | 仅在存在抓取任务时启动前台服务，不处理或创建 R2 任务 |
+| `ensureOriginal` | `mediaId` | 本地文件路径 | 从已完成且仍保存配置的备份位置按需恢复原媒体 |
 | `deletePost` | `postId` | 无 | 只在本机删除帖子，不创建 R2 删除操作 |
 | `deleteMediaSelection` | `postId + mediaIds` | `postId + postDeleted` | 只在本机原子删除选中的逻辑媒体；全选时删除帖子 |
 | `shareMedia` | `mediaIds` | 无 | 确保原媒体存在后打开 Android 系统分享面板 |
@@ -30,7 +34,9 @@ MethodChannel：`com.mantou.photobook/archive`
 
 EventChannel：`com.mantou.photobook/archive_events`
 
-事件类型为 `archiveChanged`、`jobChanged`、`runStarted` 和 `runFinished`。事件只用于驱动刷新和即时反馈，不作为权威状态；`jobChanged` 不携带任务快照，Flutter 收到后合并连续刷新请求并重新查询 SQLite。阶段或媒体项进度落库、入队、取消、删除、重试和任务结束时发送 `jobChanged`，不复用 `archiveChanged` 上报下载进度。`runFinished` 可携带脱敏后的备份错误，冷启动仍从 `app_meta.last_backup_error` 恢复错误状态。
+事件类型为 `archiveChanged`、`jobChanged`、`runStarted` 和 `runFinished`。事件只用于驱动刷新和即时反馈，不作为权威状态；`jobChanged` 不携带任务快照，Flutter 收到后合并连续刷新请求并重新查询 SQLite。阶段或媒体项进度落库、入队、取消、删除、重试和任务结束时发送 `jobChanged`，不复用 `archiveChanged` 上报下载进度。手动备份任务的状态也由 SQLite 查询，`runFinished` 只携带脱敏后的最近执行错误。
+
+R2 加密配置只有在 SharedPreferences 中确实不存在 IV 和密文时才表示未配置。字段残缺、Keystore 解密失败或 JSON 无效必须返回脱敏错误并保留待备份任务。冷启动和回前台可补建处理现有任务的唯一 Worker，但不能创建新的 `r2_backup_jobs`，也不能替换正在执行或已经排期的 Worker。
 
 `getRuntimeState.instagramSession` 只返回非敏感摘要：未配置时为 `null`，否则为 `{status: "ready" | "needs_refresh", username, validatedAt}`。`importInstagramCookies` 是 Cookie 唯一允许的 Flutter -> Kotlin 入口，输入框提交时立即清空，验证失败不覆盖旧 Session。`copyInstagramCookies` 只返回成功或失败；Flutter 侧不存在读取已保存 Cookie 内容的接口。
 

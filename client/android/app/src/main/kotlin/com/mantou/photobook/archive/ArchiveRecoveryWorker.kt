@@ -38,9 +38,6 @@ class ArchiveCaptureRecoveryWorker(
             database.nextQueuedDelayMs()?.let { delay ->
                 ArchiveRecoveryScheduler.appendCapture(applicationContext, delay)
             }
-            if (runCatching { R2ConfigStore(applicationContext).read() != null }.getOrDefault(false)) {
-                ArchiveRecoveryScheduler.scheduleBackupNow(applicationContext)
-            }
             Result.success()
         } catch (error: Exception) {
             runError = "帖子后台恢复失败，请重新打开 App 后重试"
@@ -68,7 +65,8 @@ class R2BackupRecoveryWorker(
         ArchiveEventBus.emitRunStarted()
         return try {
             setForeground(recoveryForegroundInfo(applicationContext, "正在恢复 R2 备份"))
-            val backupResult = R2BackupEngine(applicationContext, database).backupIfConfigured()
+            database.migrateToManualBackupMode()
+            val backupResult = R2BackupEngine(applicationContext, database).backupPending()
             runError = backupResult.error
             ArchiveRecoveryScheduler.backupDelay(backupResult)?.let { delay ->
                 ArchiveRecoveryScheduler.appendBackup(applicationContext, delay)
@@ -94,6 +92,7 @@ internal enum class RecoveryWorkKind {
 internal data class RecoveryWorkUpdate(
     val kind: RecoveryWorkKind,
     val delayMs: Long?,
+    val keepExisting: Boolean = false,
 )
 
 object ArchiveRecoveryScheduler {
@@ -117,6 +116,14 @@ object ArchiveRecoveryScheduler {
         replace(context, RecoveryWorkUpdate(RecoveryWorkKind.BACKUP, 0))
     }
 
+    fun scheduleExistingBackups(
+        context: Context,
+        database: ArchiveDatabase,
+        deviceId: String,
+    ) {
+        existingBackupUpdate(database.hasPendingBackupJobs(deviceId))?.let { replace(context, it) }
+    }
+
     internal fun appendCapture(context: Context, delayMs: Long) {
         append(context, RecoveryWorkUpdate(RecoveryWorkKind.CAPTURE, delayMs))
     }
@@ -138,6 +145,13 @@ object ArchiveRecoveryScheduler {
     internal fun backupUpdate(backupResult: R2BackupResult?): RecoveryWorkUpdate =
         RecoveryWorkUpdate(RecoveryWorkKind.BACKUP, backupDelay(backupResult))
 
+    internal fun existingBackupUpdate(hasPendingBackups: Boolean): RecoveryWorkUpdate? =
+        if (hasPendingBackups) {
+            RecoveryWorkUpdate(RecoveryWorkKind.BACKUP, 0, keepExisting = true)
+        } else {
+            null
+        }
+
     internal fun backupDelay(backupResult: R2BackupResult?): Long? =
         backupResult?.takeIf { it.shouldRetry }?.retryDelay
             ?: backupResult?.takeIf { it.shouldRetry }?.let { BACKUP_RETRY_DELAY_MS }
@@ -152,7 +166,7 @@ object ArchiveRecoveryScheduler {
         }
         workManager.enqueueUniqueWork(
             workName,
-            ExistingWorkPolicy.REPLACE,
+            if (update.keepExisting) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE,
             request(update.kind, delayMs),
         )
     }

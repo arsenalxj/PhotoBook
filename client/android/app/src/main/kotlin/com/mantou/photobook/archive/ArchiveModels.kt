@@ -1,7 +1,6 @@
 package com.mantou.photobook.archive
 
 import java.net.URI
-import org.json.JSONArray
 import org.json.JSONObject
 
 data class CaptureJob(
@@ -137,42 +136,6 @@ data class PreparedPost(
     val sourcePlatform: String = SOURCE_PLATFORM_INSTAGRAM,
 ) {
     val id: String = "$sourcePlatform:$sourcePostId"
-
-    fun backupSnapshotJson(
-        deviceId: String,
-        backupSeq: Long,
-        generation: Long,
-        now: Long,
-    ): String {
-        val post =
-            JSONObject()
-                .put("id", id)
-                .put("sourcePlatform", sourcePlatform)
-                .put("sourcePostId", sourcePostId)
-                .put("sourceUrl", sourceUrl)
-                .put("authorUsername", authorUsername)
-                .put("authorDisplayName", authorDisplayName)
-                .put("authorProfileUrl", authorProfileUrl)
-                .put("hasAuthorAvatar", authorAvatarSha256 != null)
-                .put("authorAvatarSha256", authorAvatarSha256)
-                .put("caption", caption)
-                .put("publishedAt", publishedAt)
-                .put("locationName", locationName)
-                .put("coverMediaId", media.first().id(id))
-                .put("mediaCount", media.size)
-                .put("savedAt", now)
-                .put("updatedAt", now)
-        val mediaArray = JSONArray()
-        media.forEach { mediaArray.put(it.toBackupJson(id)) }
-        return JSONObject()
-            .put("deviceId", deviceId)
-            .put("backupSeq", backupSeq)
-            .put("generation", generation)
-            .put("createdAt", now)
-            .put("post", post)
-            .put("media", mediaArray)
-            .toString()
-    }
 }
 
 data class PreparedMedia(
@@ -191,22 +154,6 @@ data class PreparedMedia(
     val mediaRole: String = MEDIA_ROLE_PRIMARY,
 ) {
     fun id(postId: String): String = "$postId:$sortIndex"
-
-    fun toBackupJson(postId: String): JSONObject =
-        JSONObject()
-            .put("id", id(postId))
-            .put("postId", postId)
-            .put("sortIndex", sortIndex)
-            .put("logicalIndex", logicalIndex)
-            .put("mediaRole", mediaRole)
-            .put("mediaType", mediaType)
-            .put("mimeType", mimeType)
-            .put("width", width)
-            .put("height", height)
-            .put("durationMs", durationMs)
-            .put("originalSize", originalSize)
-            .put("originalSha256", originalSha256)
-            .put("thumbnailSha256", thumbnailSha256)
 }
 
 const val SOURCE_PLATFORM_INSTAGRAM = "instagram"

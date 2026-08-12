@@ -350,7 +350,6 @@ class ArchiveDatabase(context: Context) :
         jobId: String,
         attemptCount: Int,
         post: PreparedPost,
-        backupDestination: BackupDestination?,
     ): Boolean {
         val db = writableDatabase
         val now = System.currentTimeMillis()
@@ -440,26 +439,6 @@ class ArchiveDatabase(context: Context) :
                 },
                 SQLiteDatabase.CONFLICT_REPLACE,
             )
-            backupDestination?.let { destination ->
-                val backupSeq = nextBackupSeq(db)
-                insertBackupJob(
-                    db = db,
-                    backupSeq = backupSeq,
-                    backupTargetId = destination.backupTargetId,
-                    deviceId = destination.deviceId,
-                    postId = post.id,
-                    sourcePlatform = post.sourcePlatform,
-                    generation = generation,
-                    snapshotJson = post.backupSnapshotJson(
-                        destination.deviceId,
-                        backupSeq,
-                        generation,
-                        now,
-                    ),
-                    createdAt = now,
-                )
-                writeMeta(db, "local_backup_seq", backupSeq.toString())
-            }
             db.update(
                 "capture_jobs",
                 ContentValues().apply {
@@ -578,69 +557,148 @@ class ArchiveDatabase(context: Context) :
         )
     }
 
-    fun activateBackupTarget(backupTargetId: String, deviceId: String) {
+    fun enqueueManualBackup(
+        postId: String,
+        backupTargetId: String,
+        deviceId: String,
+    ): ManualBackupEnqueueStatus {
+        require(postId.isNotBlank()) { "帖子标识无效" }
         require(backupTargetId.isNotBlank()) { "R2 备份目标标识无效" }
         require(DEVICE_ID_PATTERN.matches(deviceId)) { "R2 设备标识无效" }
         val db = writableDatabase
         db.beginTransaction()
         try {
-            db.delete(
-                "r2_backup_jobs",
-                "status = 'pending' AND backup_target_id != ?",
-                arrayOf(backupTargetId),
-            )
-            val posts =
+            val post =
                 db.rawQuery(
                     """
-                    SELECT id, source_platform, backup_generation
+                    SELECT source_platform, backup_generation
                     FROM posts
-                    ORDER BY saved_at, id
+                    WHERE id = ?
                     """.trimIndent(),
-                    null,
+                    arrayOf(postId),
                 ).use { cursor ->
-                    buildList {
-                        while (cursor.moveToNext()) {
-                            add(Triple(cursor.getString(0), cursor.getString(1), cursor.getLong(2)))
-                        }
+                    if (!cursor.moveToFirst()) {
+                        throw ArchiveException("POST_NOT_FOUND", "帖子不存在或已被删除")
                     }
+                    cursor.getString(0) to cursor.getLong(1)
                 }
-            var lastSeq = readMetaLong(db, "local_backup_seq")
-            for ((postId, sourcePlatform, generation) in posts) {
-                val exists =
-                    db.rawQuery(
-                        """
-                        SELECT 1 FROM r2_backup_jobs
-                        WHERE backup_target_id = ? AND device_id = ?
-                          AND post_id = ? AND generation = ?
-                        LIMIT 1
-                        """.trimIndent(),
+            val sourcePlatform = post.first
+            val generation = post.second
+            require(generation > 0) { "帖子备份 generation 无效" }
+            val existing =
+                db.rawQuery(
+                    """
+                    SELECT status FROM r2_backup_jobs
+                    WHERE backup_target_id = ? AND device_id = ?
+                      AND post_id = ? AND generation = ?
+                    LIMIT 1
+                    """.trimIndent(),
+                    arrayOf(backupTargetId, deviceId, postId, generation.toString()),
+                ).use { cursor -> if (cursor.moveToFirst()) cursor.getString(0) else null }
+            if (existing != null) {
+                if (existing != "completed") {
+                    db.update(
+                        "r2_backup_jobs",
+                        ContentValues().apply { putNull("last_error") },
+                        "backup_target_id = ? AND device_id = ? AND post_id = ? AND generation = ?",
                         arrayOf(backupTargetId, deviceId, postId, generation.toString()),
-                    ).use(Cursor::moveToFirst)
-                if (exists) continue
-                lastSeq = nextPositiveSequence(lastSeq, "BACKUP_SEQUENCE_EXHAUSTED")
-                val now = System.currentTimeMillis()
-                insertBackupJob(
-                    db = db,
-                    backupSeq = lastSeq,
-                    backupTargetId = backupTargetId,
-                    deviceId = deviceId,
-                    postId = postId,
-                    sourcePlatform = sourcePlatform,
-                    generation = generation,
-                    snapshotJson = buildBackupSnapshot(db, postId, deviceId, lastSeq, generation, now),
-                    createdAt = now,
-                )
+                    )
+                }
+                db.setTransactionSuccessful()
+                return if (existing == "completed") {
+                    ManualBackupEnqueueStatus.COMPLETED
+                } else {
+                    ManualBackupEnqueueStatus.PENDING
+                }
             }
-            writeMeta(db, "local_backup_seq", lastSeq.toString())
+            val backupSeq = nextBackupSeq(db)
+            val now = System.currentTimeMillis()
+            insertBackupJob(
+                db = db,
+                backupSeq = backupSeq,
+                backupTargetId = backupTargetId,
+                deviceId = deviceId,
+                postId = postId,
+                sourcePlatform = sourcePlatform,
+                generation = generation,
+                snapshotJson = buildBackupSnapshot(db, postId, deviceId, backupSeq, generation, now),
+                createdAt = now,
+            )
+            writeMeta(db, "local_backup_seq", backupSeq.toString())
             db.setTransactionSuccessful()
+            return ManualBackupEnqueueStatus.QUEUED
         } finally {
             db.endTransaction()
         }
     }
 
-    fun discardPendingBackupJobs() {
-        writableDatabase.delete("r2_backup_jobs", "status = 'pending'", null)
+    fun discardPendingBackupJobs(backupTargetId: String): Int =
+        writableDatabase.delete(
+            "r2_backup_jobs",
+            "status = 'pending' AND backup_target_id = ?",
+            arrayOf(backupTargetId),
+        )
+
+    fun migrateToManualBackupMode(): Boolean {
+        val db = writableDatabase
+        db.beginTransaction()
+        try {
+            val migrated =
+                db.rawQuery(
+                    "SELECT value FROM app_meta WHERE key = ?",
+                    arrayOf(MANUAL_BACKUP_MIGRATION_KEY),
+                ).use { cursor -> cursor.moveToFirst() && cursor.getString(0) == "1" }
+            if (migrated) {
+                db.setTransactionSuccessful()
+                return false
+            }
+            db.delete("r2_backup_jobs", "status = 'pending'", null)
+            db.delete("app_meta", "key = 'last_backup_error'", null)
+            writeMeta(db, MANUAL_BACKUP_MIGRATION_KEY, "1")
+            db.setTransactionSuccessful()
+            return true
+        } finally {
+            db.endTransaction()
+        }
     }
+
+    fun listPendingBackupTargetIds(deviceId: String): List<String> =
+        readableDatabase.rawQuery(
+            """
+            SELECT backup_target_id, MIN(backup_seq) AS first_seq
+            FROM r2_backup_jobs
+            WHERE device_id = ? AND status = 'pending'
+            GROUP BY backup_target_id
+            ORDER BY first_seq
+            """.trimIndent(),
+            arrayOf(deviceId),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
+
+    fun hasPendingBackupJobs(deviceId: String): Boolean =
+        readableDatabase.rawQuery(
+            "SELECT 1 FROM r2_backup_jobs WHERE device_id = ? AND status = 'pending' LIMIT 1",
+            arrayOf(deviceId),
+        ).use(Cursor::moveToFirst)
+
+    fun completedBackupTargetIds(postId: String, deviceId: String): List<String> =
+        readableDatabase.rawQuery(
+            """
+            SELECT j.backup_target_id
+            FROM r2_backup_jobs j
+            JOIN posts p ON p.id = j.post_id AND p.backup_generation = j.generation
+            WHERE j.post_id = ? AND j.device_id = ? AND j.status = 'completed'
+            ORDER BY j.completed_at DESC, j.backup_seq DESC
+            """.trimIndent(),
+            arrayOf(postId, deviceId),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add(cursor.getString(0))
+            }
+        }
 
     fun listPendingBackupJobs(
         backupTargetId: String,
@@ -700,6 +758,26 @@ class ArchiveDatabase(context: Context) :
             arrayOf(backupSeq.toString()),
         )
     }
+
+    fun markPendingBackupErrors(
+        backupTargetId: String,
+        deviceId: String,
+        message: String,
+    ): Int =
+        writableDatabase.update(
+            "r2_backup_jobs",
+            ContentValues().apply { put("last_error", message.take(300)) },
+            "backup_target_id = ? AND device_id = ? AND status = 'pending'",
+            arrayOf(backupTargetId, deviceId),
+        )
+
+    fun markPendingBackupErrors(deviceId: String, message: String): Int =
+        writableDatabase.update(
+            "r2_backup_jobs",
+            ContentValues().apply { put("last_error", message.take(300)) },
+            "device_id = ? AND status = 'pending'",
+            arrayOf(deviceId),
+        )
 
     fun hasPendingBackupJobs(backupTargetId: String, deviceId: String): Boolean =
         readableDatabase.rawQuery(
@@ -1149,6 +1227,7 @@ class ArchiveDatabase(context: Context) :
     companion object {
         const val DATABASE_NAME = "photobook.db"
         const val DATABASE_VERSION = 4
+        private const val MANUAL_BACKUP_MIGRATION_KEY = "manual_backup_mode_v1"
         private const val RATE_LIMIT_MS = 30L * 60L * 1000L
         private val DEVICE_ID_PATTERN = Regex("^[A-Za-z0-9_-]{8,64}$")
 

@@ -8,7 +8,7 @@
 
 ## 硬约束
 
-1. **只改 UI 层**：widget 树和样式。不改状态管理、原生桥接（MethodChannel）、数据模型、SQLite、备份逻辑。
+1. **以当前功能合同为边界**：常规视觉调整只改 UI；手动 R2 备份这一轮允许按架构文档同步调整状态管理、原生桥接、配置模型和备份任务逻辑。
 2. **颜色只允许来自下表令牌**。Flutter 侧禁止出现表外的 `Color(0xFF...)` 字面量；先在主题里定义令牌常量，组件全部引用常量。
 3. **状态全覆盖**：每屏必须实现该屏 HTML 中状态切换演示的全部状态，不能只实现默认态。
 4. 一屏改完后跑 `flutter analyze` 和 `flutter test`，通过后再改下一屏。
@@ -60,8 +60,8 @@
 
 ### 4. R2 存储设置 — `client/lib/screens/settings_screen.dart`（R2 子页）
 原型：`photobook-r2-settings.html`
-状态：未配置表单 / 已配置摘要 / 备份失败提示 / 验证中 / 校验错误。
-要点：表单字段（endpoint / bucket / prefix / access key / secret）、验证按钮的加载与错误态、备份状态展示。
+状态：无连接 / 多连接与多位置 / 新增连接 / 新增位置 / 更新凭证 / 验证中 / 校验错误。
+要点：R2 连接保存 endpoint / bucket / access key / secret；一个连接下可新增多个“名称 + prefix”备份位置。连接按 bucket 分组，新增 prefix 不重复输入凭证；删除位置或连接不删除远端对象。
 
 ### 5. Instagram 账号 — `client/lib/screens/instagram_login_screen.dart`
 原型：`photobook-instagram.html`
@@ -71,8 +71,8 @@
 ### 6. 帖子详情 — `client/lib/screens/detail_screen.dart` + `client/lib/widgets/post_action_sheets.dart`
 原型：`photobook-detail.html`
 状态：多图 / 视频 / Live Photo / 原图下载中 / 下载失败 / 帖子不存在。
-弹层：分享、保存、删除（含确认）、更多。
-要点：媒体浏览区（黑底反白控件）、缩略图条、媒体信息、四个底部弹层的选择逻辑与按钮；已备份帖子在作者信息右侧显示备份成功图标。状态最多，排最后做。
+弹层：分享、保存、手动备份位置、删除（含确认）、更多。
+要点：右上角依次为分享、保存、备份、更多；删除媒体移入更多菜单底部。备份抽屉按 bucket 分组列出位置及当前帖的未备份、等待或备份中、已备份、失败状态，每次选择一个位置备份当前整帖；没有位置时提供进入 R2 设置的入口。已备份到任一位置的帖子在作者信息右侧显示备份成功图标。状态最多，排最后做。
 
 ## 验收
 

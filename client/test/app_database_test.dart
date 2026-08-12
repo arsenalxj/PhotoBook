@@ -170,17 +170,13 @@ void main() {
     expect(post.media.single.liveMotion?.id, 'xiaohongshu:live1:1');
   });
 
-  test('当前 generation 完成后才显示已备份且只属于当前目标', () async {
+  test('当前 generation 在任一目标完成后显示已备份并保留逐目标状态', () async {
     final raw = await databaseFactoryFfi.openDatabase(inMemoryDatabasePath);
     const postId = 'instagram:post1';
     await _insertPost(raw, postId: postId);
     await _insertMedia(raw, postId: postId, id: '$postId:0');
 
     expect((await database.listPosts()).single.isBackedUp, isFalse);
-    expect(
-      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
-      isFalse,
-    );
     await _insertBackupJob(
       raw,
       backupSeq: 1,
@@ -189,22 +185,32 @@ void main() {
       generation: 1,
       status: 'pending',
     );
+    expect((await database.listPosts()).single.isBackedUp, isFalse);
     expect(
-      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
-      isFalse,
+      (await database.readBackupTargetStatuses(postId))['target-a']?.state,
+      BackupTargetState.pending,
     );
     await raw.update('r2_backup_jobs', {
       'status': 'completed',
       'completed_at': 10,
     }, where: 'backup_seq = 1');
+    expect((await database.listPosts()).single.isBackedUp, isTrue);
     expect(
-      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
-      isTrue,
+      (await database.readBackupTargetStatuses(postId))['target-a']?.state,
+      BackupTargetState.completed,
     );
-    expect(
-      (await database.listPosts(backupTargetId: 'target-b')).single.isBackedUp,
-      isFalse,
+    await _insertBackupJob(
+      raw,
+      backupSeq: 2,
+      backupTargetId: 'target-b',
+      postId: postId,
+      generation: 1,
+      status: 'pending',
+      lastError: '权限不足',
     );
+    final statuses = await database.readBackupTargetStatuses(postId);
+    expect(statuses['target-b']?.state, BackupTargetState.failed);
+    expect(statuses['target-b']?.lastError, '权限不足');
   });
 
   test('重新归档后的新 generation 在完成前不显示已备份', () async {
@@ -227,10 +233,7 @@ void main() {
       whereArgs: [postId],
     );
 
-    expect(
-      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
-      isFalse,
-    );
+    expect((await database.listPosts()).single.isBackedUp, isFalse);
     await _insertBackupJob(
       raw,
       backupSeq: 2,
@@ -239,10 +242,7 @@ void main() {
       generation: 2,
       status: 'completed',
     );
-    expect(
-      (await database.listPosts(backupTargetId: 'target-a')).single.isBackedUp,
-      isTrue,
-    );
+    expect((await database.listPosts()).single.isBackedUp, isTrue);
   });
 
   test('部分删除不改变 generation 因而保留已备份标记', () async {
@@ -262,7 +262,7 @@ void main() {
 
     await raw.delete('post_media', where: 'id = ?', whereArgs: ['$postId:1']);
 
-    final post = (await database.listPosts(backupTargetId: 'target-a')).single;
+    final post = (await database.listPosts()).single;
     expect(post.mediaCount, 1);
     expect(post.isBackedUp, isTrue);
   });
@@ -304,6 +304,7 @@ Future<void> _insertBackupJob(
   required String postId,
   required int generation,
   required String status,
+  String? lastError,
 }) => raw.insert('r2_backup_jobs', {
   'backup_seq': backupSeq,
   'backup_target_id': backupTargetId,
@@ -313,6 +314,7 @@ Future<void> _insertBackupJob(
   'generation': generation,
   'snapshot_json': '{}',
   'status': status,
+  'last_error': ?lastError,
   'created_at': 1,
   if (status == 'completed') 'completed_at': 1,
 });

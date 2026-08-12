@@ -49,7 +49,48 @@ class ArchiveDatabaseBackupTest {
     }
 
     @Test
-    fun `archive transaction stores generation snapshot and backup job`() {
+    fun `manual backup snapshots current generation and is idempotent`() {
+        val sourcePostId = "ManualBackup1"
+        val postId = archive(sourcePostId)
+
+        val first = database.enqueueManualBackup(postId, BACKUP_TARGET, LOCAL_DEVICE)
+        val second = database.enqueueManualBackup(postId, BACKUP_TARGET, LOCAL_DEVICE)
+
+        assertEquals(ManualBackupEnqueueStatus.QUEUED, first)
+        assertEquals(ManualBackupEnqueueStatus.PENDING, second)
+        val backup = database.listPendingBackupJobs(BACKUP_TARGET, LOCAL_DEVICE).single()
+        assertEquals(1L, backup.generation)
+        assertEquals(postId, JSONObject(backup.snapshotJson).getJSONObject("post").getString("id"))
+        database.markBackupError(backup.backupSeq, "权限不足")
+
+        assertEquals(
+            ManualBackupEnqueueStatus.PENDING,
+            database.enqueueManualBackup(postId, BACKUP_TARGET, LOCAL_DEVICE),
+        )
+        val lastError =
+            database.readableDatabase.rawQuery(
+                "SELECT last_error FROM r2_backup_jobs WHERE backup_seq = ?",
+                arrayOf(backup.backupSeq.toString()),
+            ).use { cursor ->
+                assertTrue(cursor.moveToFirst())
+                if (cursor.isNull(0)) null else cursor.getString(0)
+            }
+        assertNull(lastError)
+    }
+
+    @Test
+    fun `manual backups for different targets remain independent`() {
+        val postId = archive("ManualTargets1")
+
+        database.enqueueManualBackup(postId, "target-a", LOCAL_DEVICE)
+        database.enqueueManualBackup(postId, "target-b", LOCAL_DEVICE)
+
+        assertTrue(database.hasPendingBackupJobs("target-a", LOCAL_DEVICE))
+        assertTrue(database.hasPendingBackupJobs("target-b", LOCAL_DEVICE))
+    }
+
+    @Test
+    fun `manual backup stores current generation snapshot`() {
         val sourcePostId = "Backup1"
         val postId = "instagram:$sourcePostId"
         val job = database.enqueue("https://www.instagram.com/p/$sourcePostId/", sourcePostId)
@@ -67,7 +108,7 @@ class ArchiveDatabaseBackupTest {
     }
 
     @Test
-    fun `backup job insert failure rolls back archive completion`() {
+    fun `manual backup insert failure leaves completed local archive intact`() {
         database.writableDatabase.insertOrThrow(
             "app_meta",
             null,
@@ -90,17 +131,19 @@ class ArchiveDatabaseBackupTest {
             ),
         )
 
-        assertThrows(ArchiveException::class.java) {
+        assertTrue(
             database.commitCompletedJob(
                 job.id,
                 claimed.attemptCount,
                 preparedPost(sourcePostId),
-                BackupDestination(BACKUP_TARGET, LOCAL_DEVICE),
-            )
+            ),
+        )
+        assertThrows(ArchiveException::class.java) {
+            database.enqueueManualBackup("instagram:$sourcePostId", BACKUP_TARGET, LOCAL_DEVICE)
         }
 
-        assertNull(database.originalDescriptor("instagram:$sourcePostId:0"))
-        assertEquals("committing", captureStatus(job.id))
+        assertNotNull(database.originalDescriptor("instagram:$sourcePostId:0"))
+        assertEquals("completed", captureStatus(job.id))
     }
 
     @Test
@@ -159,26 +202,21 @@ class ArchiveDatabaseBackupTest {
     }
 
     @Test
-    fun `target activation seeds active posts and excludes deleted posts`() {
-        val activeId = archive("SeedActive1")
+    fun `adding a target does not seed existing posts`() {
+        archive("SeedActive1")
         val deletedId = archive("SeedDelete1")
         database.deletePost(deletedId)
 
-        database.activateBackupTarget(BACKUP_TARGET, LOCAL_DEVICE)
-
-        assertEquals(
-            listOf(activeId),
-            database.listPendingBackupJobs(BACKUP_TARGET, LOCAL_DEVICE).map { it.postId },
-        )
+        assertTrue(database.listPendingBackupJobs(BACKUP_TARGET, LOCAL_DEVICE).isEmpty())
     }
 
     @Test
-    fun `target activation after partial deletion snapshots remaining physical media`() {
+    fun `manual backup after partial deletion snapshots remaining physical media`() {
         val sourcePostId = "SeedPartial1"
         val postId = archive(sourcePostId, mediaCount = 3)
         database.deleteMediaSelection(postId, listOf("$postId:1"))
 
-        database.activateBackupTarget(BACKUP_TARGET, LOCAL_DEVICE)
+        database.enqueueManualBackup(postId, BACKUP_TARGET, LOCAL_DEVICE)
 
         val snapshot =
             JSONObject(

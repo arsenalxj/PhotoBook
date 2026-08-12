@@ -1,6 +1,6 @@
 # PhotoBook 纯客户端架构方案
 
-> 状态：单向备份重构中
+> 状态：手动单向备份重构中
 > 日期：2026-08-11
 > 范围：Android + Instagram/小红书公开帖子，无 PhotoBook 账号，可选 Instagram 本机会话
 
@@ -35,7 +35,7 @@ flowchart LR
 - 设置页提供 Instagram 官方 WebView 登录、手动 Cookie 登录、登录状态、重新登录、复制Cookie 和清除会话。复制只允许在会话可用时由用户主动触发。
 - App 退到后台或锁屏后继续下载，完成后自动停止前台服务。
 - 本地瀑布流、详情、失败重试和按需原媒体读取。
-- 可选 R2 单向备份、失败重试和同一安装按需恢复缺失原媒体。
+- 可选 R2 手动单向备份、失败重试和同一安装按需恢复缺失原媒体；同一 bucket 可配置多个 prefix，也可增加其他 bucket。
 - 原图、原生 GIF 和原视频可保存到系统相册并通过 Android 系统面板分享；Live Photo 完整态可互斥导出静态图、GIF 或视频。
 - 系统 VPN 透明接管网络。
 
@@ -71,24 +71,24 @@ sequenceDiagram
         S->>P: authenticated media-info 判定公开性并补齐
     end
     S->>F: 流式下载 .part、校验、原子发布
-    S->>D: 帖子/媒体/completed/备份任务同事务提交
-    opt 已配置 R2
-        S->>R: 媒体 -> 不可变快照 -> latest
-        S->>D: 记录备份成功或待重试错误
-    end
-    S->>S: 无活动任务且备份无续跑项后停止并移除通知
+    S->>D: 帖子/媒体/completed/generation 同事务提交
+    S->>S: 无活动抓取任务后停止并移除通知
+    A->>A: 用户在详情页选择备份位置
+    A->>D: 当前 generation 快照/手动备份任务同事务提交
+    D->>R: Worker 上传媒体 -> 不可变快照 -> latest
+    R->>D: 记录备份成功或待重试错误
 ```
 
-所有阶段先写持久状态。系统杀进程、网络中断或用户离开 Flutter 页面时，任务都不能只存在内存。备份按固定批次串行上传，失败任务由 WorkManager 续跑；备份引擎不列举远端帖子或设备，不从 R2 导入本机数据。
+所有阶段先写持久状态。系统杀进程、网络中断或用户离开 Flutter 页面时，任务都不能只存在内存。只有详情页手动操作会创建备份任务；任务创建后按目标和固定批次串行上传，失败任务由 WorkManager 续跑。备份引擎不列举远端帖子或设备，不从 R2 导入本机数据。
 
 ## 4. 组件职责
 
 | 组件 | 负责 | 不负责 |
 |---|---|---|
-| Flutter | 首页、详情、任务列表、Instagram 登录状态、手动 Cookie 瞬时输入与复制命令、R2 设置、检查更新、展示任务状态 | 读取已保存 Cookie、持久化 Cookie、平台抓取、维持后台执行 |
+| Flutter | 首页、详情、任务列表、Instagram 登录状态、手动 Cookie 瞬时输入与复制命令、R2 连接/位置设置、发起手动备份、检查更新、展示任务状态 | 读取已保存 Cookie 或 R2 Secret、持久化凭证、平台抓取、维持后台执行 |
 | MainActivity | 接收分享、规范化链接、先落任务、启动服务 | 长时间网络请求 |
 | ArchiveForegroundService | 通知、串行调度、恢复、停止条件 | UI 状态 |
-| ArchiveRunner | 按平台选择 Python 解析器、原生下载、缩略图、事务提交、一次有界备份 | 保存明文密钥 |
+| ArchiveRunner | 按平台选择 Python 解析器、原生下载、缩略图和本地事务提交 | 创建或执行 R2 备份、保存明文密钥 |
 | Chaquopy bridge | 验证 WebView 或手动 Cookie，调用平台解析器，把帖子映射成统一 JSON | 保存 Session 文件、文件下载、SQLite、R2、ffmpeg |
 | SQLite | 本机帖子、媒体、任务、失败和备份状态 | 二进制媒体、Secret |
 | R2 | 当前安装的不可变帖子快照和内容寻址媒体 | 本机数据源、跨设备同步、任务协调、查询数据库 |
@@ -121,9 +121,9 @@ sequenceDiagram
 
 排队任务取消时直接改为 `failed + CANCELLED`；运行 attempt 取消时先改为 `cancelling`，执行器停止后续阶段，完成文件回滚和任务临时目录清理，再以相同 `attempt_count` 收口为 `failed + CANCELLED`。进程中断后恢复时也必须把遗留 `cancelling` 收口为已取消，不能重新排队。运行 attempt 的阶段更新、错误写入和最终提交都必须同时校验 `attempt_count` 与期望状态；匿名解析前后、读取 Session 前、认证重试前后、媒体下载循环及流式读取中、提交前都检查任务仍属于当前 attempt。取消后不得继续读取 Session、发起认证请求、保存刷新后的 Session、下载或提交。Chaquopy 的 Instaloader 解析是同步调用，不能强杀正在执行的 Python 网络请求，因此单次网络请求超时固定为 30 秒；请求返回后立即响应取消。
 
-抓取恢复与 R2 备份恢复分别使用 `archive_capture_recovery` 和 `r2_backup_recovery` 两个唯一 WorkManager 计划。取消等待自动重试的排队任务后只重算抓取计划，即使已配置 R2 也不得保留无用的抓取唤醒；R2 重试计划不受影响。若另一个抓取任务正在执行，取消排队任务不得替换或取消当前执行器，执行结束后再按剩余队列重算。删除只允许删除 `failed` 任务记录，不删除已归档帖子、媒体或 R2 数据；活动任务必须先取消。
+抓取恢复与 R2 备份恢复分别使用 `archive_capture_recovery` 和 `r2_backup_recovery` 两个唯一 WorkManager 计划。R2 计划只处理已经由用户手动创建的任务，不能因为抓取完成、配置保存、冷启动、回到前台或网络恢复而创建任务。取消等待自动重试的排队任务后只重算抓取计划；R2 重试计划不受影响。若另一个抓取任务正在执行，取消排队任务不得替换或取消当前执行器，执行结束后再按剩余队列重算。删除只允许删除 `failed` 任务记录，不删除已归档帖子、媒体或 R2 数据；活动任务必须先取消。
 
-`posts.backup_generation` 从 1 开始，每次归档或重新归档时递增并防止 `Long` 溢出。删除帖子或媒体不改变 generation。首页和详情页只有在当前备份目标中存在同一 `post_id + backup_generation` 的成功任务时才显示云朵勾选；部分删除后剩余帖子仍保持已备份状态。
+`posts.backup_generation` 从 1 开始，每次归档或重新归档时递增并防止 `Long` 溢出。删除帖子或媒体不改变 generation。首页和详情页只要在任一目标中存在同一 `post_id + backup_generation` 的成功任务就显示云朵勾选；详情页备份抽屉逐位置显示精确状态。部分删除后剩余帖子仍保持已备份状态。
 
 ### `post_backup_generations`
 
@@ -139,7 +139,7 @@ sequenceDiagram
 - `source_platform + snapshot_json`：任务创建时固化的完整快照；后续本机删除或重新归档不得改写旧任务。
 - `status`：`pending / completed`；`last_error` 和 `completed_at` 记录重试状态。
 
-帖子业务写入、generation 递增和备份任务创建必须位于同一 SQLite 事务，不能吞掉任务写入错误。未配置 R2 时本地归档仍正常提交；首次配置或切换目标时，为当前帖子按其现有 generation 建立目标任务。已经入队的任务不因本机删除而取消，其引用的本地媒体在任务完成前不得清理。
+帖子业务写入与 generation 递增位于同一 SQLite 事务，但不创建备份任务。用户在详情页选择位置后，读取当前帖子、固化当前 generation 快照和创建任务位于另一个 SQLite 事务；同一 `target + device + post + generation` 重复操作保持幂等。已经手动入队的任务不因本机删除而取消，其引用的本地媒体在任务完成前不得清理。
 
 ### 小红书与 Live Photo
 
@@ -159,7 +159,12 @@ files/archive/
 
 下载先写任务目录或目标旁的 `.part`。完成长度与 SHA-256 校验后原子改名。图片缩略图最长边 800 px、JPEG Q85；视频使用 `MediaMetadataRetriever` 抽帧，不携带 ffmpeg。
 
-## 7. R2 备份目标与对象协议
+## 7. R2 连接、备份位置与对象协议
+
+R2 配置分为两层：
+
+- R2 连接：规范化 `endpoint + bucket`，以及通过 Android Keystore 加密保存的 Access Key ID 和 Secret。一个连接可被多个备份位置复用；重复连接必须拒绝，不能借新增入口覆盖已有凭证。
+- 备份位置：显示名称、所属连接和规范化 prefix。详情页抽屉按 bucket 分组展示位置，用户每次选择一个位置备份当前整帖。位置创建后只允许修改显示名称；prefix 变化代表新目标，必须新增位置并由用户明确删除旧位置。
 
 资料库身份：
 
@@ -189,13 +194,15 @@ Access Key 只代表访问权限，替换 Key 不产生新目标。每个安装�
 3. 媒体全部确认后创建不可变 `snapshots/<20-digit-backup-seq>.json`；同一个 key 已存在时必须校验内容一致。
 4. 最后更新同帖 `latest.json`，内容只引用刚确认存在的 snapshot，并携带同一 `deviceId + postId + generation + backupSeq`。完成这一步后才把本地任务标记为成功。
 5. `device.json` 只描述当前安装，不用于设备发现。App 不创建全局 index、manifest、ops，不列举其他设备，不拉取远端帖子或删除状态。
-6. 首次配置或切换 endpoint、bucket、prefix 时，只为当前仍存在的本机帖子建立新目标任务。更换 Access Key 只更新凭证；切换目标不读取旧目标、不迁移旧任务或媒体。
+6. 新增连接或位置只保存配置，不创建任务。更换 Access Key 只更新连接凭证；更换 endpoint、bucket 或 prefix 形成新目标，不读取旧目标、不迁移旧任务或媒体。
 7. App 删除帖子或媒体只修改本机 SQLite，不创建云端事件、不更新 latest、不删除任何 R2 对象；已经入队的不可变任务继续完成。
-8. 同一安装的详情页可按本机媒体记录，从当前设备目录按 SHA-256 恢复缺失原媒体。该读取不恢复元数据，也不会访问其他设备目录。
+8. 同一安装的详情页可按本机媒体记录，从已完成且仍保存配置的任一位置按 SHA-256 恢复缺失原媒体。该读取不恢复元数据，也不会访问其他设备目录。
+9. 同一目标内首个失败处停止；不同目标互相隔离，一个 bucket 或 prefix 的失败不得阻塞其他已经手动入队的位置。
+10. 加密配置不存在、无法解密和内容损坏必须分开处理。配置不可读或任务目标暂时无法解析时保留 SQLite 不可变任务并报告错误；只有用户确认删除位置或连接时才清理对应未完成任务。
 
 R2 使用 S3 API 的 `region=auto`。凭证仅存 Keystore，token 权限限制到目标 bucket 的对象读写。当前协议不依赖对象列表分页。
 
-当前 SQLite 结构为 v4。项目处于开发阶段，不维护旧数据库升级或旧 R2 格式兼容；结构变化后卸载 App，并使用全新 R2 prefix 从空数据开始。
+当前 SQLite 结构为 v4。单配置升级为多连接、多位置只迁移 Keystore 加密配置：旧配置转成一个连接和一个位置，并清理旧版未完成的自动备份任务；已完成记录和远端对象保留。该变更不升级 SQLite。其他结构变化仍要求卸载 App，并使用全新 R2 prefix 从空数据开始。
 
 Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。账号密码只提交给官方 WebView；Android `CookieManager` 取得的 Cookie 与用户主动粘贴的 Cookie Header 都由 Chaquopy 调用 `test_login()` 在线验证并取得真实用户名，成功才替换旧会话。手动 Cookie 输入框默认隐藏，提交后立即清空；验证失败不得覆盖旧 Session。WebView 登录成功或取消后仍必须清理 WebView 数据。用户只能在 `ready` 状态主动命令 Android 原生层把已保存 Cookie Header 写入系统剪贴板；已保存 Cookie 不经过 Flutter MethodChannel 返回值，剪贴板标记敏感内容，并在进程存活时 60 秒后仅清理未被替换的该份内容。匿名成功时不解密 Session；认证失败只标记会话需要刷新，不影响已经完成的本地归档。
 
@@ -208,7 +215,7 @@ Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。�
 - Android 15 起后台 `dataSync` 前台服务有系统累计时长限制；超时时保存状态并停止。
 - 用户从系统“活动应用”停止 App 会直接终止进程，无法承诺自动恢复；下次用户启动 App 后继续持久任务。
 - WorkManager 在网络恢复、重启或进程重建后扫描未完成任务，但不替代分享时的直接前台服务；抓取恢复与 R2 备份恢复独立调度，并通过同一执行权串行运行。
-- 已配置 R2 时，App 冷启动和回前台都会触发一次待处理备份；备份完成、续跑和失败状态由原生层事件驱动 Flutter 反馈。
+- App 冷启动、回到前台和网络恢复不得创建 R2 任务；已经由用户手动创建的待处理任务由独立 Worker 续跑。启动和回前台会按 SQLite 补建缺失的唯一 Worker，但使用保留策略，不能替换正在运行或已经排期的 Worker；完成和失败状态由原生层事件驱动 Flutter 反馈。
 
 ## 9. 验收边界
 

@@ -1,467 +1,96 @@
 <!doctype html>
-<html lang="zh-CN"><head>
+<html lang="zh-CN">
+<head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-<title>PhotoBook · R2 设置 — Android 原型</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+<title>PhotoBook · R2 备份位置 — Android 原型</title>
 <style>
   :root {
-    --bg: #ffffff;
-    --surface: #ffffff;
-    --surface-warm: var(--surface);
-    --fg: #111827;
-    --fg-2: var(--fg);
-    --muted: #64748b;
-    --meta: var(--muted);
-    --border: #e5e7eb;
-    --border-soft: var(--border);
-    --accent: #000000;
-    --accent-on: #ffffff;
-    --accent-hover: color-mix(in oklab, var(--accent), white 10%);
-    --accent-active: color-mix(in oklab, var(--accent), white 18%);
-    --success: #16a34a;
-    --warn: #d97706;
-    --danger: #dc2626;
-    --font-display: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
-    --font-body: "Geist", "Geist Sans", -apple-system, system-ui, "Segoe UI", Arial, sans-serif;
-    --font-mono: "Fira Code", ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Monaco, Consolas, monospace;
-    --text-xs: 12px; --text-sm: 14px; --text-base: 16px; --text-lg: 20px;
-    --text-xl: 24px; --text-2xl: 32px; --text-3xl: 40px; --text-4xl: 48px;
-    --leading-body: 1.5; --leading-tight: 1.2; --tracking-display: -0.02em;
-    --space-1: 4px; --space-2: 8px; --space-3: 12px; --space-4: 16px;
-    --space-5: 20px; --space-6: 24px; --space-8: 32px; --space-12: 48px;
-    --radius-sm: 6px; --radius-md: 8px; --radius-lg: 12px; --radius-pill: 9999px;
-    --elev-flat: none;
-    --elev-ring: 0 0 0 1px var(--border);
-    --elev-raised:
-      0 1px 2px 0 color-mix(in oklab, var(--fg), transparent 92%),
-      0 1px 3px 0 color-mix(in oklab, var(--fg), transparent 88%);
-    --focus-ring: 0 0 0 2px var(--bg), 0 0 0 4px var(--accent);
-    --motion-fast: 150ms; --motion-base: 200ms;
-    --ease-standard: cubic-bezier(0.2, 0, 0, 1);
-    --container-max: 1280px;
+    --bg:#fff; --surface:#fff; --fg:#111827; --muted:#64748b; --border:#e5e7eb;
+    --accent:#000; --accent-on:#fff; --success:#16a34a; --warn:#d97706; --danger:#dc2626;
+    --font-body:"Geist",-apple-system,system-ui,"Segoe UI",sans-serif;
+    --font-mono:"Fira Code",ui-monospace,"SF Mono",monospace;
+    --radius-sm:6px; --radius-md:8px; --radius-lg:12px;
   }
-  *, *::before, *::after { box-sizing: border-box; }
-  body {
-    margin: 0; background: color-mix(in oklab, var(--fg) 3%, var(--bg)); color: var(--fg);
-    font-family: var(--font-body); font-size: 15px; line-height: var(--leading-body);
-    -webkit-font-smoothing: antialiased;
-  }
-  button { font: inherit; cursor: pointer; }
-  a { color: inherit; text-decoration: none; }
-  :focus-visible { outline: none; box-shadow: var(--focus-ring); }
-
-  /* ─── 页面外壳(设备之外) ─── */
-  .proto-bar {
-    position: sticky; top: 0; z-index: 20;
-    background: var(--bg); border-bottom: 1px solid var(--border);
-  }
-  .proto-bar-inner {
-    max-width: var(--container-max); margin-inline: auto; padding: var(--space-3) var(--space-6);
-    display: flex; align-items: center; gap: var(--space-4); flex-wrap: wrap;
-  }
-  .proto-title { font-weight: 700; font-size: 15px; letter-spacing: var(--tracking-display); }
-  .proto-sub { color: var(--muted); font-size: 13px; }
-  .state-switch { display: flex; gap: var(--space-2); flex-wrap: wrap; margin-left: auto; }
-  .state-btn {
-    padding: 6px 14px; border: 1px solid var(--border); border-radius: var(--radius-sm);
-    background: var(--bg); color: var(--muted); font-size: 13px; min-height: 36px;
-    transition: color var(--motion-fast) var(--ease-standard), border-color var(--motion-fast) var(--ease-standard);
-  }
-  .state-btn:hover { border-color: var(--fg); color: var(--fg); }
-  .state-btn.active { border-color: var(--accent); color: var(--accent-on); background: var(--accent); }
-  .stage { display: flex; justify-content: center; padding: 40px 24px 64px; }
-  .hint { max-width: var(--container-max); margin: 0 auto; padding: 0 24px 24px; color: var(--muted); font-size: 13px; }
-
-  /* ─── Android 设备框 ─── */
-  .device {
-    position: relative; width: 400px; height: 844px; flex: none;
-    background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-lg);
-    overflow: hidden; display: flex; flex-direction: column;
-    box-shadow: 0 24px 64px color-mix(in oklab, var(--fg) 14%, transparent);
-  }
-  .statusbar {
-    height: 28px; flex: none; display: flex; align-items: center; justify-content: space-between;
-    padding-inline: 20px; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg);
-  }
-  .statusbar .icons { display: flex; gap: 6px; align-items: center; color: var(--muted); }
-  .appbar {
-    height: 56px; flex: none; display: flex; align-items: center; gap: var(--space-2);
-    padding-inline: 8px; border-bottom: 1px solid var(--border); background: var(--bg);
-  }
-  .appbar-title { font-size: var(--text-lg); font-weight: 700; letter-spacing: var(--tracking-display); }
-  .appbar .spacer { flex: 1; }
-  .icon-btn {
-    width: 44px; height: 44px; display: grid; place-items: center; position: relative;
-    background: none; border: 0; border-radius: var(--radius-md); color: var(--fg);
-    transition: background var(--motion-fast) var(--ease-standard);
-  }
-  .icon-btn:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
-  .icon-btn svg { width: 22px; height: 22px; }
-
-  .screen { flex: 1; overflow-y: auto; position: relative; }
-  .content { padding: var(--space-5) var(--space-4) var(--space-8); }
-
-  /* ─── 配置状态行 ─── */
-  .status-row {
-    display: flex; align-items: center; gap: var(--space-3);
-    padding: 14px; border: 1px solid var(--border); border-radius: var(--radius-md);
-    background: var(--bg); margin-bottom: var(--space-4); box-shadow: var(--elev-raised);
-  }
-  .status-row .mark {
-    width: 40px; height: 40px; flex: none; border-radius: var(--radius-md);
-    display: grid; place-items: center;
-    background: color-mix(in oklab, var(--success) 12%, var(--bg)); color: var(--success);
-  }
-  .status-row .mark svg { width: 22px; height: 22px; }
-  .status-row .st-title { font-weight: 700; font-size: 15px; letter-spacing: var(--tracking-display); }
-  .status-row .st-sub { color: var(--muted); font-size: var(--text-xs); font-family: var(--font-mono); }
-  .device[data-state="unconfigured"] .status-row .mark {
-    background: color-mix(in oklab, var(--fg) 6%, transparent); color: var(--muted);
-  }
-  .device[data-state="unconfigured"] .status-row .st-title { color: var(--muted); }
-  .st-configured, .st-unconfigured { display: none; }
-  .device:not([data-state="unconfigured"]) .st-configured { display: block; }
-  .device[data-state="unconfigured"] .st-unconfigured { display: block; }
-  .mark-icon-ok, .mark-icon-off { display: none; }
-  .device:not([data-state="unconfigured"]) .mark-icon-ok { display: block; }
-  .device[data-state="unconfigured"] .mark-icon-off { display: block; }
-
-  /* ─── 备份错误横幅 ─── */
-  .error-banner {
-    display: none; align-items: flex-start; gap: 10px;
-    padding: var(--space-3) 14px; border-radius: var(--radius-md);
-    border: 1px solid color-mix(in oklab, var(--danger) 30%, var(--border));
-    background: color-mix(in oklab, var(--danger) 8%, var(--bg));
-    margin-bottom: var(--space-4); font-size: 13px; line-height: 1.45;
-  }
-  .error-banner svg { width: 20px; height: 20px; flex: none; color: var(--danger); margin-top: 1px; }
-  .device[data-state="backup-failed"] .error-banner { display: flex; }
-
-  /* ─── 表单 ─── */
-  .field { margin-bottom: var(--space-4); }
-  .field label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; }
-  .field label .req { color: var(--muted); font-weight: 400; }
-  .input-wrap { position: relative; }
-  .input-wrap input {
-    width: 100%; min-height: 44px; padding: 10px 12px;
-    border: 1px solid var(--border); border-radius: var(--radius-sm);
-    background: var(--bg); color: var(--fg); font: inherit; font-size: var(--text-sm);
-    font-family: var(--font-mono);
-    transition: border-color var(--motion-fast) var(--ease-standard);
-  }
-  .input-wrap input::placeholder { color: var(--muted); font-family: var(--font-body); }
-  .input-wrap input:focus-visible { outline: none; box-shadow: var(--focus-ring); }
-  .field.invalid .input-wrap input { border-color: var(--danger); }
-  .input-wrap .eye-btn {
-    position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
-    width: 44px; height: 44px; display: grid; place-items: center;
-    background: none; border: 0; border-radius: var(--radius-sm); color: var(--muted);
-    transition: color var(--motion-fast) var(--ease-standard), background var(--motion-fast) var(--ease-standard);
-  }
-  .input-wrap .eye-btn:hover { color: var(--fg); background: color-mix(in oklab, var(--fg) 6%, transparent); }
-  .input-wrap .eye-btn svg { width: 20px; height: 20px; }
-  .field-error { display: none; margin-top: 4px; font-size: var(--text-xs); color: var(--danger); }
-  .field.invalid .field-error { display: block; }
-
-  /* ─── 主按钮 ─── */
-  .primary-btn {
-    width: 100%; min-height: 44px; margin-top: var(--space-2);
-    display: inline-flex; align-items: center; justify-content: center; gap: var(--space-2);
-    border: 1px solid var(--accent); border-radius: var(--radius-sm);
-    background: var(--accent); color: var(--accent-on); font-size: 15px; font-weight: 600;
-    transition: background var(--motion-fast) var(--ease-standard);
-  }
-  .primary-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
-  .primary-btn:disabled { opacity: .65; cursor: default; }
-  .primary-btn .btn-loading { display: none; align-items: center; gap: var(--space-2); }
-  .device[data-state="verifying"] .primary-btn { pointer-events: none; opacity: .65; }
-  .device[data-state="verifying"] .primary-btn .btn-label { display: none; }
-  .device[data-state="verifying"] .primary-btn .btn-loading { display: inline-flex; }
-
-  /* ─── 确认对话框 ─── */
-  .dialog-scrim {
-    position: absolute; inset: 0; z-index: 25; display: none;
-    align-items: center; justify-content: center; padding: var(--space-6);
-    background: color-mix(in oklab, var(--fg) 45%, transparent);
-  }
-  .dialog-scrim.open { display: flex; }
-  .dialog {
-    width: 100%; background: var(--bg); border-radius: var(--radius-md);
-    border: 1px solid var(--border); padding: var(--space-5);
-    box-shadow: 0 24px 64px color-mix(in oklab, var(--fg) 30%, transparent);
-  }
-  .dialog-title { font-size: 17px; font-weight: 700; margin-bottom: 6px; letter-spacing: var(--tracking-display); }
-  .dialog-body { font-size: var(--text-sm); color: var(--muted); margin-bottom: var(--space-5); }
-  .dialog-actions { display: flex; gap: var(--space-2); justify-content: flex-end; }
-  .dialog-btn {
-    min-height: 44px; padding: 10px 20px; border-radius: var(--radius-sm);
-    border: 1px solid var(--border); background: var(--bg); color: var(--fg);
-    font-size: var(--text-sm); font-weight: 600;
-    transition: border-color var(--motion-fast) var(--ease-standard);
-  }
-  .dialog-btn:hover { border-color: var(--fg); }
-  .dialog-btn.danger { background: var(--danger); color: var(--accent-on); border-color: var(--danger); }
-  .dialog-btn.danger:hover { background: color-mix(in oklab, var(--danger), black 8%); }
-
-  /* ─── 加载圈 / Snackbar ─── */
-  .spin {
-    width: 18px; height: 18px; border-radius: 50%; flex: none;
-    border: 2px solid color-mix(in oklab, currentColor 25%, transparent);
-    border-top-color: currentColor; animation: rot 0.8s linear infinite;
-  }
-  @keyframes rot { to { transform: rotate(360deg); } }
-  .snackbar {
-    position: absolute; left: 16px; right: 16px; bottom: 24px; z-index: 30;
-    display: flex; align-items: center; gap: 12px; min-height: 52px;
-    background: var(--fg); color: var(--bg);
-    border-radius: var(--radius-md); padding: 13px 16px; font-size: var(--text-sm);
-    box-shadow: 0 8px 24px color-mix(in oklab, var(--fg) 30%, transparent);
-    opacity: 0; visibility: hidden; transform: translateY(10px); pointer-events: none;
-    transition: opacity var(--motion-base) var(--ease-standard), transform var(--motion-base) var(--ease-standard), visibility var(--motion-base) var(--ease-standard);
-  }
-  .snackbar.show { opacity: 1; visibility: visible; transform: translateY(0); }
-  .snackbar-status { width: 24px; height: 24px; flex: none; display: grid; place-items: center; color: var(--success); }
-  .snackbar[data-kind="error"] .snackbar-status { color: var(--danger); }
-  .snackbar-status svg { width: 17px; height: 17px; }
-  .snackbar-text { min-width: 0; flex: 1; line-height: 1.35; font-weight: 500; }
-
-  /* ─── 状态驱动 ─── */
-  .device[data-state="unconfigured"] #deleteBtn { display: none; }
-
-  .gesture-bar { height: 18px; flex: none; display: grid; place-items: center; background: var(--bg); }
-  .gesture-bar span { width: 108px; height: 4px; border-radius: var(--radius-pill); background: var(--border); }
+  *{box-sizing:border-box} body{margin:0;background:#f7f8fa;color:var(--fg);font:15px/1.5 var(--font-body)}
+  button,input{font:inherit} button{cursor:pointer} a{color:inherit;text-decoration:none}
+  .proto-bar{position:sticky;top:0;z-index:20;background:var(--bg);border-bottom:1px solid var(--border)}
+  .proto-bar-inner{max-width:1280px;margin:auto;padding:12px 24px;display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+  .proto-title{font-weight:700}.proto-sub{color:var(--muted);font-size:13px}.state-switch{display:flex;gap:8px;flex-wrap:wrap;margin-left:auto}
+  .state-btn{min-height:36px;padding:6px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);color:var(--muted)}
+  .state-btn.active{background:var(--accent);border-color:var(--accent);color:var(--accent-on)}
+  .stage{display:flex;justify-content:center;padding:40px 24px 64px}.device{position:relative;width:400px;height:844px;overflow:hidden;display:flex;flex-direction:column;background:var(--bg);border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:0 24px 64px rgb(17 24 39/.14)}
+  .statusbar{height:28px;flex:none;display:flex;align-items:center;justify-content:space-between;padding:0 20px;font:12px var(--font-mono)}
+  .appbar{height:56px;flex:none;display:flex;align-items:center;gap:8px;padding:0 8px;border-bottom:1px solid var(--border)}
+  .appbar-title{font-size:16px;font-weight:700}.spacer{flex:1}.icon-btn{width:44px;height:44px;display:grid;place-items:center;border:0;border-radius:var(--radius-md);background:none;color:var(--fg)}.icon-btn:hover{background:#f3f4f6}.icon-btn svg{width:22px;height:22px}
+  .screen{flex:1;overflow:auto}.content{padding:20px 16px 32px}.section-label{margin:0 0 8px;color:var(--muted);font:12px var(--font-mono)}
+  .summary{display:flex;align-items:center;gap:12px;margin-bottom:20px}.summary-mark{width:40px;height:40px;display:grid;place-items:center;flex:none;border-radius:var(--radius-md);background:#f3f4f6;color:var(--fg)}.summary-mark svg{width:21px}.summary-title{font-weight:700}.summary-sub{color:var(--muted);font-size:13px}
+  .connection{border:1px solid var(--border);border-radius:var(--radius-md);margin-bottom:16px;overflow:hidden;background:var(--surface)}
+  .connection-head{display:flex;align-items:center;gap:12px;padding:14px 12px;border-bottom:1px solid var(--border)}.bucket-icon{width:36px;height:36px;display:grid;place-items:center;flex:none;border-radius:var(--radius-sm);background:#f3f4f6}.bucket-icon svg{width:19px}.connection-copy{min-width:0;flex:1}.bucket{font-weight:700}.endpoint{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font:11px var(--font-mono)}
+  .target{width:100%;min-height:58px;display:flex;align-items:center;gap:12px;padding:10px 12px;border:0;border-bottom:1px solid var(--border);background:var(--bg);text-align:left}.target:last-of-type{border-bottom:0}.target:hover{background:#f9fafb}.target-copy{min-width:0;flex:1}.target-name{font-weight:600}.prefix{color:var(--muted);font:12px var(--font-mono)}.target-state{color:var(--success);font-size:12px}.target-state.pending{color:var(--warn)}
+  .connection-actions{display:flex;gap:8px;padding:10px 12px;background:#fafafa}.text-btn{min-height:40px;display:inline-flex;align-items:center;gap:7px;padding:8px 10px;border:0;border-radius:var(--radius-sm);background:none;color:var(--fg);font-size:13px;font-weight:600}.text-btn:hover{background:#f1f2f4}.text-btn svg{width:17px;height:17px}.text-btn.danger{margin-left:auto;color:var(--danger)}
+  .primary,.outline{width:100%;min-height:46px;border-radius:var(--radius-sm);font-weight:600}.primary{border:1px solid var(--accent);background:var(--accent);color:var(--accent-on)}.outline{border:1px solid var(--border);background:var(--bg);color:var(--fg)}
+  .empty{display:none;min-height:540px;align-items:center;justify-content:center;text-align:center}.empty-icon{width:56px;height:56px;margin:0 auto 14px;display:grid;place-items:center;border:1px solid var(--border);border-radius:var(--radius-md)}.empty-icon svg{width:25px}.empty h2{margin:0 0 6px;font-size:18px}.empty p{margin:0 0 20px;color:var(--muted);font-size:13px}.empty .primary{padding:0 20px;width:auto}
+  .editor{display:none}.editor-title{margin:0 0 4px;font-size:18px}.editor-note{margin:0 0 18px;color:var(--muted);font-size:13px}.field{margin-bottom:16px}.field label{display:block;margin-bottom:6px;font-size:13px;font-weight:600}.req{color:var(--muted);font-weight:400}.field input{width:100%;min-height:44px;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-sm);background:var(--bg);font:14px var(--font-mono)}.field.invalid input{border-color:var(--danger)}.field-error{display:none;margin-top:4px;color:var(--danger);font-size:12px}.field.invalid .field-error{display:block}.editor-actions{display:flex;gap:10px}.editor-actions .outline{flex:1}.editor-actions .primary{flex:2}.spin{width:18px;height:18px;display:none;border:2px solid rgb(255 255 255/.35);border-top-color:#fff;border-radius:50%;animation:rot .8s linear infinite}@keyframes rot{to{transform:rotate(360deg)}}
+  .device[data-state="unconfigured"] .configured{display:none}.device[data-state="unconfigured"] .empty{display:flex}
+  .device[data-state="add-connection"] .configured,.device[data-state="add-location"] .configured,.device[data-state="verifying"] .configured,.device[data-state="validation"] .configured{display:none}
+  .device[data-state="add-connection"] #connectionEditor,.device[data-state="verifying"] #connectionEditor,.device[data-state="validation"] #connectionEditor{display:block}.device[data-state="add-location"] #locationEditor{display:block}
+  .device[data-state="verifying"] .spin{display:inline-block}.device[data-state="verifying"] .save-label{display:none}
+  .snackbar{position:absolute;left:16px;right:16px;bottom:24px;z-index:30;padding:14px 16px;border-radius:var(--radius-md);background:var(--fg);color:var(--bg);opacity:0;transform:translateY(8px);transition:.2s}.snackbar.show{opacity:1;transform:none}
+  .gesture-bar{height:18px;display:grid;place-items:center}.gesture-bar span{width:108px;height:4px;border-radius:10px;background:var(--border)}
+  .hint{max-width:900px;margin:auto;padding:0 24px 24px;color:var(--muted);font-size:13px}
 </style>
 </head>
 <body>
-<header class="proto-bar" data-od-id="proto-bar">
-  <div class="proto-bar-inner">
-    <span class="proto-title">PhotoBook · R2 设置</span>
-    <span class="proto-sub">Android 原型 · 界面 5 / 7</span>
-    <nav class="state-switch" data-od-id="state-switch">
-      <button class="state-btn active" data-state="configured">已配置</button>
-      <button class="state-btn" data-state="unconfigured">未配置</button>
-      <button class="state-btn" data-state="backup-failed">备份失败</button>
-      <button class="state-btn" data-state="verifying">验证中</button>
-      <button class="state-btn" data-state="validation">校验错误</button>
-    </nav>
-  </div>
-</header>
-
-<div class="stage">
-  <div class="device" id="device" data-state="configured" data-od-id="device-r2-settings">
-    <div class="statusbar"><span>9:41</span><span class="icons">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M2 17h3v4H2zM7.5 13h3v8h-3zM13 9h3v12h-3zM18.5 5h3v16h-3z"></path></svg>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M12 18.5 8.5 15a5 5 0 0 1 7 0zM12 12a9 9 0 0 0-6.4 2.6l-1.8-1.9A12 12 0 0 1 12 9a12 12 0 0 1 8.2 3.7l-1.8 1.9A9 9 0 0 0 12 12zM12 5a15 15 0 0 0-9.4 3.3L.8 6.4A18 18 0 0 1 12 2a18 18 0 0 1 11.2 4.4l-1.8 1.9A15 15 0 0 0 12 5z"></path></svg>
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><rect x="2" y="8" width="17" height="9" rx="2"></rect><rect x="20" y="11" width="2.5" height="3" rx="1"></rect></svg>
-    </span></div>
-
-    <div class="appbar" data-od-id="appbar">
-      <a class="icon-btn" href="photobook-settings.html" aria-label="返回" data-od-id="back-btn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 5l-7 7 7 7"/></svg>
-      </a>
-      <span class="appbar-title">Cloudflare R2</span>
-      <span class="spacer"></span>
-      <button class="icon-btn" id="deleteBtn" aria-label="清除配置" data-od-id="delete-config-btn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/></svg>
-      </button>
+<header class="proto-bar"><div class="proto-bar-inner"><span class="proto-title">PhotoBook · R2 备份位置</span><span class="proto-sub">Android 原型 · 界面 5 / 7</span><nav class="state-switch">
+  <button class="state-btn active" data-state="configured">多位置</button><button class="state-btn" data-state="unconfigured">无连接</button><button class="state-btn" data-state="add-connection">新增连接</button><button class="state-btn" data-state="add-location">新增位置</button><button class="state-btn" data-state="verifying">验证中</button><button class="state-btn" data-state="validation">校验错误</button>
+</nav></div></header>
+<div class="stage"><div class="device" id="device" data-state="configured">
+  <div class="statusbar"><span>9:41</span><span>5G&nbsp;&nbsp;92%</span></div>
+  <div class="appbar"><a class="icon-btn" href="photobook-settings.html" aria-label="返回"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M15 5l-7 7 7 7"/></svg></a><span class="appbar-title">Cloudflare R2</span><span class="spacer"></span><button class="icon-btn" id="addConnection" aria-label="添加 R2 连接"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg></button></div>
+  <div class="screen"><div class="content">
+    <div class="configured">
+      <div class="summary"><span class="summary-mark"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 18.5h10a4 4 0 0 0 .7-7.9A6 6 0 0 0 6.1 9a4.5 4.5 0 0 0 .9 9.5Z"/></svg></span><span><div class="summary-title">3 个备份位置</div><div class="summary-sub">备份只在详情页手动发起</div></span></div>
+      <p class="section-label">R2 连接</p>
+      <section class="connection"><div class="connection-head"><span class="bucket-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg></span><span class="connection-copy"><div class="bucket">photobook</div><div class="endpoint">a1b2c3d4.r2.cloudflarestorage.com · 8f****f9</div></span></div>
+        <button class="target"><span class="target-copy"><div class="target-name">家庭相册</div><div class="prefix">/family</div></span><span class="target-state">可用</span></button>
+        <button class="target"><span class="target-copy"><div class="target-name">旅行收藏</div><div class="prefix">/travel</div></span><span class="target-state pending">有待处理任务</span></button>
+        <div class="connection-actions"><button class="text-btn add-location"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>添加位置</button><button class="text-btn">更新凭证</button><button class="text-btn danger">删除连接</button></div>
+      </section>
+      <section class="connection"><div class="connection-head"><span class="bucket-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><ellipse cx="12" cy="5" rx="7" ry="3"/><path d="M5 5v6c0 1.7 3.1 3 7 3s7-1.3 7-3V5M5 11v6c0 1.7 3.1 3 7 3s7-1.3 7-3v-6"/></svg></span><span class="connection-copy"><div class="bucket">photobook-cold</div><div class="endpoint">a1b2c3d4.r2.cloudflarestorage.com · 42****c1</div></span></div>
+        <button class="target"><span class="target-copy"><div class="target-name">长期保留</div><div class="prefix">/archive</div></span><span class="target-state">可用</span></button>
+        <div class="connection-actions"><button class="text-btn add-location"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 5v14M5 12h14"/></svg>添加位置</button><button class="text-btn">更新凭证</button><button class="text-btn danger">删除连接</button></div>
+      </section>
+      <button class="outline" id="addOtherBucket">添加其他 bucket</button>
     </div>
-
-    <div class="screen">
-      <div class="content">
-        <div class="status-row" data-od-id="config-status">
-          <span class="mark">
-            <svg class="mark-icon-ok" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>
-            <svg class="mark-icon-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 18.5H6.5a4 4 0 0 1-.6-7.96 5.5 5.5 0 0 1 10.7-1.6 3.5 3.5 0 0 1 .9 9.56z"/><path d="m4 4 16 16"/></svg>
-          </span>
-          <span>
-            <span class="st-configured">
-              <div class="st-title">photobook-backup / photobook</div>
-              <div class="st-sub">AccessKey …a3f9</div>
-            </span>
-            <span class="st-unconfigured">
-              <div class="st-title">R2 未配置</div>
-              <div class="st-sub">填写下方表单以启用单向云备份</div>
-            </span>
-          </span>
-        </div>
-
-        <div class="error-banner" data-od-id="error-banner">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V13M12 16.2v.3"/></svg>
-          <span>最近备份失败:网络连接失败,请检查系统网络或 VPN。</span>
-        </div>
-
-        <form id="r2Form" novalidate data-od-id="r2-form">
-          <div class="field" data-od-id="field-endpoint">
-            <label for="fEndpoint">S3 Endpoint <span class="req">必填</span></label>
-            <div class="input-wrap"><input id="fEndpoint" type="text" placeholder="https://xxxx.r2.cloudflarestorage.com" autocomplete="off" spellcheck="false"></div>
-            <div class="field-error">不能为空</div>
-          </div>
-          <div class="field" data-od-id="field-bucket">
-            <label for="fBucket">Bucket <span class="req">必填</span></label>
-            <div class="input-wrap"><input id="fBucket" type="text" autocomplete="off" spellcheck="false"></div>
-            <div class="field-error">不能为空</div>
-          </div>
-          <div class="field" data-od-id="field-prefix">
-            <label for="fPrefix">Prefix <span class="req">必填</span></label>
-            <div class="input-wrap"><input id="fPrefix" type="text" autocomplete="off" spellcheck="false"></div>
-            <div class="field-error">不能为空</div>
-          </div>
-          <div class="field" data-od-id="field-access-key">
-            <label for="fAccessKey">Access Key ID <span class="req">必填</span></label>
-            <div class="input-wrap"><input id="fAccessKey" type="text" autocomplete="off" spellcheck="false"></div>
-            <div class="field-error">不能为空</div>
-          </div>
-          <div class="field" data-od-id="field-secret-key">
-            <label for="fSecretKey">Secret Access Key <span class="req">必填</span></label>
-            <div class="input-wrap">
-              <input id="fSecretKey" type="password" autocomplete="off" spellcheck="false">
-              <button type="button" class="eye-btn" id="eyeBtn" aria-label="显示或隐藏密钥" data-od-id="toggle-secret-btn">
-                <svg id="eyeOpen" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/></svg>
-                <svg id="eyeClosed" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" style="display:none"><path d="M4 4l16 16M9.9 6.1A9.4 9.4 0 0 1 12 5.5c6 0 9.5 6.5 9.5 6.5a17 17 0 0 1-2.7 3.6M14.8 17.6A9.2 9.2 0 0 1 12 18.5C6 18.5 2.5 12 2.5 12a17 17 0 0 1 3.3-4M9.9 9.9a3 3 0 0 0 4.2 4.2"/></svg>
-              </button>
-            </div>
-            <div class="field-error">不能为空</div>
-          </div>
-
-          <button type="submit" class="primary-btn" id="saveBtn" data-od-id="verify-save-btn">
-            <span class="btn-label">验证并保存</span>
-            <span class="btn-loading"><span class="spin"></span>正在验证…</span>
-          </button>
-        </form>
-      </div>
-    </div>
-
-    <div class="dialog-scrim" id="dialogScrim" data-od-id="confirm-dialog">
-      <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="dlgTitle">
-        <div class="dialog-title" id="dlgTitle">清除 R2 配置?</div>
-        <div class="dialog-body">本地帖子不会删除。</div>
-        <div class="dialog-actions">
-          <button class="dialog-btn" id="dlgCancel" data-od-id="dialog-cancel">取消</button>
-          <button class="dialog-btn danger" id="dlgConfirm" data-od-id="dialog-confirm">清除</button>
-        </div>
-      </div>
-    </div>
-
-    <div class="snackbar" id="snackbar" role="status" aria-live="polite" aria-atomic="true" data-od-id="snackbar">
-      <span class="snackbar-status" id="snackbarIcon" aria-hidden="true"></span>
-      <span class="snackbar-text" id="snackbarText"></span>
-    </div>
-    <div class="gesture-bar"><span></span></div>
-  </div>
-</div>
-<p class="hint">交互:「验证并保存」校验必填项,通过后进入验证中并提示保存结果;眼睛图标切换密钥明文;右上角删除(仅已配置)弹出确认对话框;proto-bar 可切换已配置 / 未配置 / 备份失败 / 验证中 / 校验错误状态。</p>
-
+    <div class="empty"><div><div class="empty-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17.5 18.5H6.5a4 4 0 0 1-.6-7.96 5.5 5.5 0 0 1 10.7-1.6 3.5 3.5 0 0 1 .9 9.56z"/><path d="M12 11v6M9 14h6"/></svg></div><h2>还没有备份位置</h2><p>先添加一个 R2 bucket，随后可以复用凭证添加多个 prefix。</p><button class="primary" id="emptyAdd">添加 R2 连接</button></div></div>
+    <form class="editor" id="connectionEditor"><h2 class="editor-title">添加 R2 连接</h2><p class="editor-note">连接验证通过后会同时创建第一个备份位置。</p>
+      <div class="field"><label>S3 Endpoint <span class="req">必填</span></label><input data-required placeholder="https://xxxx.r2.cloudflarestorage.com"><div class="field-error">不能为空</div></div>
+      <div class="field"><label>Bucket <span class="req">必填</span></label><input data-required><div class="field-error">不能为空</div></div>
+      <div class="field"><label>位置名称 <span class="req">必填</span></label><input data-required value="默认备份"><div class="field-error">不能为空</div></div>
+      <div class="field"><label>Prefix <span class="req">必填</span></label><input data-required value="photobook"><div class="field-error">不能为空</div></div>
+      <div class="field"><label>Access Key ID <span class="req">必填</span></label><input data-required><div class="field-error">不能为空</div></div>
+      <div class="field"><label>Secret Access Key <span class="req">必填</span></label><input data-required type="password"><div class="field-error">不能为空</div></div>
+      <div class="editor-actions"><button type="button" class="outline cancel">取消</button><button class="primary"><span class="spin"></span><span class="save-label">验证并保存</span></button></div>
+    </form>
+    <form class="editor" id="locationEditor"><h2 class="editor-title">添加备份位置</h2><p class="editor-note">复用 photobook 的加密凭证，只需要填写名称和 prefix。</p>
+      <div class="field"><label>位置名称 <span class="req">必填</span></label><input data-required placeholder="例如：重要资料"><div class="field-error">不能为空</div></div>
+      <div class="field"><label>Prefix <span class="req">必填</span></label><input data-required placeholder="例如：favorites"><div class="field-error">不能为空</div></div>
+      <div class="editor-actions"><button type="button" class="outline cancel">取消</button><button class="primary"><span class="save-label">保存位置</span></button></div>
+    </form>
+  </div></div>
+  <div class="snackbar" id="snackbar">配置已保存，不会自动备份现有帖子</div><div class="gesture-bar"><span></span></div>
+</div></div>
+<p class="hint">交互：连接按 bucket 分组；同一连接可添加多个 prefix 且不重复输入凭证；右上角或底部按钮添加其他 bucket；保存配置不会自动创建帖子备份任务。</p>
 <script>
-  const device = document.getElementById('device');
-  const form = document.getElementById('r2Form');
-  const saveBtn = document.getElementById('saveBtn');
-  const snackbar = document.getElementById('snackbar');
-  const snackbarIcon = document.getElementById('snackbarIcon');
-  const snackbarText = document.getElementById('snackbarText');
-  const dialogScrim = document.getElementById('dialogScrim');
-
-  const CONFIGURED = {
-    fEndpoint: 'https://a1b2c3d4.r2.cloudflarestorage.com',
-    fBucket: 'photobook-backup',
-    fPrefix: 'photobook',
-    fAccessKey: '8f2c…a3f9',
-    fSecretKey: '••••••••••••••••'
-  };
-  const FIELD_IDS = Object.keys(CONFIGURED);
-  const fields = FIELD_IDS.map(id => document.getElementById(id));
-
-  function fillConfigured() {
-    fields.forEach(f => { f.value = CONFIGURED[f.id]; });
-  }
-  function clearForm() {
-    fields.forEach(f => { f.value = ''; });
-    document.getElementById('fPrefix').value = 'photobook';
-  }
-  function clearErrors() {
-    document.querySelectorAll('.field.invalid').forEach(el => el.classList.remove('invalid'));
-  }
-  function showErrors() {
-    fields.forEach(f => f.closest('.field').classList.toggle('invalid', f.value.trim() === ''));
-  }
-
-  let snackTimer = null;
-  const SNACKBAR_ICONS = {
-    success: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 12.5l5 5L20 6.5"/></svg>',
-    error: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m6 6 12 12M18 6 6 18"/></svg>'
-  };
-  function showSnackbar(text, kind = 'success', ms = 2600) {
-    snackbarIcon.innerHTML = SNACKBAR_ICONS[kind] || SNACKBAR_ICONS.success;
-    snackbarText.textContent = text;
-    snackbar.dataset.kind = kind;
-    snackbar.classList.add('show');
-    clearTimeout(snackTimer);
-    snackTimer = setTimeout(() => snackbar.classList.remove('show'), ms);
-  }
-
-  function setState(s) {
-    device.dataset.state = s;
-    document.querySelectorAll('.state-btn').forEach(b => b.classList.toggle('active', b.dataset.state === s));
-    clearErrors();
-    snackbar.classList.remove('show');
-    dialogScrim.classList.remove('open');
-    saveBtn.disabled = false;
-    if (s === 'unconfigured') {
-      clearForm();
-    } else if (s === 'validation') {
-      clearForm();
-      fields.forEach(f => { f.value = ''; });
-      showErrors();
-    } else {
-      fillConfigured();
-    }
-  }
-
-  document.querySelectorAll('.state-btn').forEach(b => b.addEventListener('click', () => setState(b.dataset.state)));
-
-  // 输入时即时清除该字段的错误态
-  fields.forEach(f => f.addEventListener('input', () => {
-    if (f.value.trim() !== '') f.closest('.field').classList.remove('invalid');
-  }));
-
-  // 验证并保存:必填校验 → 验证中 → 结果提示
-  form.addEventListener('submit', e => {
-    e.preventDefault();
-    showErrors();
-    if (fields.some(f => f.value.trim() === '')) return;
-    const prevState = device.dataset.state;
-    saveBtn.disabled = true;
-    device.dataset.state = 'verifying';
-    setTimeout(() => {
-      saveBtn.disabled = false;
-      device.dataset.state = prevState;
-      showSnackbar('R2 配置已保存', 'success');
-    }, 1500);
-  });
-
-  // 眼睛图标切换密钥明文/密文
-  const secretInput = document.getElementById('fSecretKey');
-  const eyeBtn = document.getElementById('eyeBtn');
-  eyeBtn.addEventListener('click', () => {
-    const visible = secretInput.type === 'text';
-    secretInput.type = visible ? 'password' : 'text';
-    document.getElementById('eyeOpen').style.display = visible ? '' : 'none';
-    document.getElementById('eyeClosed').style.display = visible ? 'none' : '';
-  });
-
-  // 删除配置 → 确认对话框
-  document.getElementById('deleteBtn').addEventListener('click', () => dialogScrim.classList.add('open'));
-  document.getElementById('dlgCancel').addEventListener('click', () => dialogScrim.classList.remove('open'));
-  dialogScrim.addEventListener('click', e => { if (e.target === dialogScrim) dialogScrim.classList.remove('open'); });
-  document.getElementById('dlgConfirm').addEventListener('click', () => {
-    dialogScrim.classList.remove('open');
-    setState('unconfigured');
-    showSnackbar('已清除 R2 配置', 'success');
-  });
-
-  fillConfigured();
+  const device=document.getElementById('device'),snackbar=document.getElementById('snackbar');
+  function setState(state){device.dataset.state=state;document.querySelectorAll('.state-btn').forEach(b=>b.classList.toggle('active',b.dataset.state===state));snackbar.classList.remove('show')}
+  document.querySelectorAll('.state-btn').forEach(b=>b.onclick=()=>setState(b.dataset.state));
+  document.getElementById('addConnection').onclick=()=>setState('add-connection');document.getElementById('emptyAdd').onclick=()=>setState('add-connection');document.getElementById('addOtherBucket').onclick=()=>setState('add-connection');document.querySelectorAll('.add-location').forEach(b=>b.onclick=()=>setState('add-location'));document.querySelectorAll('.cancel').forEach(b=>b.onclick=()=>setState('configured'));
+  document.querySelectorAll('form').forEach(form=>form.onsubmit=e=>{e.preventDefault();const inputs=[...form.querySelectorAll('[data-required]')],invalid=inputs.filter(i=>!i.value.trim());inputs.forEach(i=>i.closest('.field').classList.toggle('invalid',!i.value.trim()));if(invalid.length){setState('validation');form.style.display='block';return}setState('verifying');setTimeout(()=>{setState('configured');snackbar.classList.add('show');setTimeout(()=>snackbar.classList.remove('show'),2600)},1000)});
 </script>
-
-</body></html>
+</body>
+</html>

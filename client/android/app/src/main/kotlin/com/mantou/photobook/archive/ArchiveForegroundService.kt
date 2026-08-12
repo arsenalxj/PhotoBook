@@ -39,8 +39,6 @@ class ArchiveForegroundService : Service() {
         if (!wakeLock.isHeld) wakeLock.acquire(WAKE_LOCK_TIMEOUT_MS)
         executor.execute {
             var acquired = false
-            var backupResult: R2BackupResult? = null
-            var backupAttempted = false
             var runError: String? = null
             ArchiveEventBus.emitRunStarted()
             try {
@@ -50,31 +48,16 @@ class ArchiveForegroundService : Service() {
                 ArchiveRunner(this, database).runPending { job, current, total ->
                     updateNotification(archiveProgressText(job, current, total), current, total)
                 }
-                updateNotification("正在备份到 R2", 0, 0)
-                backupAttempted = true
-                backupResult = R2BackupEngine(this, database).backupIfConfigured()
-                runError = backupResult?.error
             } catch (error: InterruptedException) {
                 Thread.currentThread().interrupt()
             } catch (error: Exception) {
                 runError = "归档任务执行失败，请重新打开 App 后重试"
-                if (backupAttempted) {
-                    backupResult =
-                        R2BackupResult(
-                            error = runError,
-                            hasRemainingWork = true,
-                            shouldRetry = true,
-                        )
-                }
             } finally {
                 if (acquired) {
                     database.recoverInterruptedJobs()
                     ArchiveExecutionGate.release()
                 }
                 ArchiveRecoveryScheduler.scheduleCaptureIfNeeded(this, database)
-                if (backupAttempted) {
-                    ArchiveRecoveryScheduler.scheduleBackupIfNeeded(this, backupResult)
-                }
                 ArchiveEventBus.emitArchiveChanged()
                 ArchiveEventBus.emitRunFinished(runError)
                 stopCleanly(startId)

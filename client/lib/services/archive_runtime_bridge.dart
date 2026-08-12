@@ -69,14 +69,14 @@ class ArchiveRuntimeState {
   const ArchiveRuntimeState({
     required this.activeJobCount,
     required this.failedJobCount,
+    required this.r2Settings,
     this.instagramSession,
-    this.r2Config,
   });
 
   final int activeJobCount;
   final int failedJobCount;
   final InstagramSessionSummary? instagramSession;
-  final R2ConfigSummary? r2Config;
+  final R2SettingsSummary r2Settings;
 
   factory ArchiveRuntimeState.fromMap(Map<Object?, Object?> map) =>
       ArchiveRuntimeState(
@@ -87,9 +87,11 @@ class ArchiveRuntimeState {
                 map['instagramSession']! as Map<Object?, Object?>,
               )
             : null,
-        r2Config: map['r2Config'] is Map<Object?, Object?>
-            ? R2ConfigSummary.fromMap(map['r2Config']! as Map<Object?, Object?>)
-            : null,
+        r2Settings: map['r2Settings'] is Map<Object?, Object?>
+            ? R2SettingsSummary.fromMap(
+                map['r2Settings']! as Map<Object?, Object?>,
+              )
+            : const R2SettingsSummary(),
       );
 }
 
@@ -128,34 +130,102 @@ class InstagramSessionSummary {
   }
 }
 
-class R2ConfigSummary {
-  const R2ConfigSummary({
+class R2ConnectionSummary {
+  const R2ConnectionSummary({
+    required this.connectionId,
+    required this.endpoint,
+    required this.bucket,
+    required this.accessKeyIdHint,
+    required this.targetCount,
+  });
+
+  final String connectionId;
+  final String endpoint;
+  final String bucket;
+  final String accessKeyIdHint;
+  final int targetCount;
+
+  factory R2ConnectionSummary.fromMap(Map<Object?, Object?> map) =>
+      R2ConnectionSummary(
+        connectionId: map['connectionId']! as String,
+        endpoint: map['endpoint']! as String,
+        bucket: map['bucket']! as String,
+        accessKeyIdHint: map['accessKeyIdHint']! as String,
+        targetCount: (map['targetCount']! as num).toInt(),
+      );
+}
+
+class R2BackupTargetSummary {
+  const R2BackupTargetSummary({
+    required this.targetId,
+    required this.connectionId,
+    required this.name,
     required this.endpoint,
     required this.bucket,
     required this.prefix,
-    required this.accessKeyIdHint,
-    required this.backupTargetId,
   });
 
+  final String targetId;
+  final String connectionId;
+  final String name;
   final String endpoint;
   final String bucket;
   final String prefix;
-  final String accessKeyIdHint;
-  final String backupTargetId;
 
-  factory R2ConfigSummary.fromMap(Map<Object?, Object?> map) => R2ConfigSummary(
-    endpoint: map['endpoint']! as String,
-    bucket: map['bucket']! as String,
-    prefix: map['prefix']! as String,
-    accessKeyIdHint: map['accessKeyIdHint']! as String,
-    backupTargetId: map['backupTargetId']! as String,
-  );
+  factory R2BackupTargetSummary.fromMap(Map<Object?, Object?> map) =>
+      R2BackupTargetSummary(
+        targetId: map['targetId']! as String,
+        connectionId: map['connectionId']! as String,
+        name: map['name']! as String,
+        endpoint: map['endpoint']! as String,
+        bucket: map['bucket']! as String,
+        prefix: map['prefix']! as String,
+      );
 }
 
-class R2ConfigInput {
-  const R2ConfigInput({
+class R2SettingsSummary {
+  const R2SettingsSummary({
+    this.connections = const [],
+    this.targets = const [],
+  });
+
+  final List<R2ConnectionSummary> connections;
+  final List<R2BackupTargetSummary> targets;
+
+  bool get isEmpty => targets.isEmpty;
+
+  factory R2SettingsSummary.fromMap(Map<Object?, Object?> map) =>
+      R2SettingsSummary(
+        connections: (map['connections'] as List<Object?>? ?? const [])
+            .cast<Map<Object?, Object?>>()
+            .map(R2ConnectionSummary.fromMap)
+            .toList(growable: false),
+        targets: (map['targets'] as List<Object?>? ?? const [])
+            .cast<Map<Object?, Object?>>()
+            .map(R2BackupTargetSummary.fromMap)
+            .toList(growable: false),
+      );
+
+  R2ConnectionSummary? connection(String connectionId) {
+    for (final connection in connections) {
+      if (connection.connectionId == connectionId) return connection;
+    }
+    return null;
+  }
+
+  R2BackupTargetSummary? target(String targetId) {
+    for (final target in targets) {
+      if (target.targetId == targetId) return target;
+    }
+    return null;
+  }
+}
+
+class R2ConnectionInput {
+  const R2ConnectionInput({
     required this.endpoint,
     required this.bucket,
+    required this.targetName,
     required this.prefix,
     required this.accessKeyId,
     required this.secretAccessKey,
@@ -163,6 +233,7 @@ class R2ConfigInput {
 
   final String endpoint;
   final String bucket;
+  final String targetName;
   final String prefix;
   final String accessKeyId;
   final String secretAccessKey;
@@ -170,9 +241,68 @@ class R2ConfigInput {
   Map<String, String> toMap() => {
     'endpoint': endpoint,
     'bucket': bucket,
+    'targetName': targetName,
     'prefix': prefix,
     'accessKeyId': accessKeyId,
     'secretAccessKey': secretAccessKey,
+  };
+}
+
+class R2CredentialsInput {
+  const R2CredentialsInput({
+    required this.connectionId,
+    required this.endpoint,
+    required this.bucket,
+    required this.accessKeyId,
+    required this.secretAccessKey,
+  });
+
+  final String connectionId;
+  final String endpoint;
+  final String bucket;
+  final String accessKeyId;
+  final String secretAccessKey;
+
+  Map<String, String> toMap() => {
+    'connectionId': connectionId,
+    'endpoint': endpoint,
+    'bucket': bucket,
+    'accessKeyId': accessKeyId,
+    'secretAccessKey': secretAccessKey,
+  };
+}
+
+class R2TargetInput {
+  const R2TargetInput({
+    required this.connectionId,
+    required this.name,
+    required this.prefix,
+    this.previousTargetId,
+  });
+
+  final String connectionId;
+  final String name;
+  final String prefix;
+  final String? previousTargetId;
+
+  Map<String, String> toMap() => {
+    'connectionId': connectionId,
+    'name': name,
+    'prefix': prefix,
+    'previousTargetId': ?previousTargetId,
+  };
+}
+
+enum ManualBackupEnqueueStatus {
+  queued,
+  pending,
+  completed;
+
+  factory ManualBackupEnqueueStatus.parse(String value) => switch (value) {
+    'queued' => queued,
+    'pending' => pending,
+    'completed' => completed,
+    _ => throw FormatException('未知手动备份入队状态'),
   };
 }
 
@@ -273,19 +403,68 @@ class ArchiveRuntimeBridge {
   Future<void> clearInstagramSession() =>
       _methodChannel.invokeMethod<void>('clearInstagramSession');
 
-  Future<void> backupNow() => _methodChannel.invokeMethod<void>('backupNow');
+  Future<void> resumeCaptureJobs() =>
+      _methodChannel.invokeMethod<void>('resumeCaptureJobs');
 
-  Future<R2ConfigSummary> saveR2Config(R2ConfigInput config) async {
+  Future<void> resumeBackupJobs() =>
+      _methodChannel.invokeMethod<void>('resumeBackupJobs');
+
+  Future<R2SettingsSummary> saveR2Connection(R2ConnectionInput input) async {
     final value = await _methodChannel.invokeMapMethod<Object?, Object?>(
-      'saveR2Config',
-      config.toMap(),
+      'saveR2Connection',
+      input.toMap(),
     );
-    if (value == null) throw StateError('R2 保存结果为空');
-    return R2ConfigSummary.fromMap(value);
+    if (value == null) throw StateError('R2 连接保存结果为空');
+    return R2SettingsSummary.fromMap(value);
   }
 
-  Future<void> clearR2Config() =>
-      _methodChannel.invokeMethod<void>('clearR2Config');
+  Future<R2SettingsSummary> updateR2Connection(R2CredentialsInput input) async {
+    final value = await _methodChannel.invokeMapMethod<Object?, Object?>(
+      'updateR2Connection',
+      input.toMap(),
+    );
+    if (value == null) throw StateError('R2 凭证更新结果为空');
+    return R2SettingsSummary.fromMap(value);
+  }
+
+  Future<R2SettingsSummary> saveR2Target(R2TargetInput input) async {
+    final value = await _methodChannel.invokeMapMethod<Object?, Object?>(
+      'saveR2Target',
+      input.toMap(),
+    );
+    if (value == null) throw StateError('R2 备份位置保存结果为空');
+    return R2SettingsSummary.fromMap(value);
+  }
+
+  Future<R2SettingsSummary> deleteR2Target(String targetId) async {
+    final value = await _methodChannel.invokeMapMethod<Object?, Object?>(
+      'deleteR2Target',
+      {'targetId': targetId},
+    );
+    if (value == null) throw StateError('R2 备份位置删除结果为空');
+    return R2SettingsSummary.fromMap(value);
+  }
+
+  Future<R2SettingsSummary> deleteR2Connection(String connectionId) async {
+    final value = await _methodChannel.invokeMapMethod<Object?, Object?>(
+      'deleteR2Connection',
+      {'connectionId': connectionId},
+    );
+    if (value == null) throw StateError('R2 连接删除结果为空');
+    return R2SettingsSummary.fromMap(value);
+  }
+
+  Future<ManualBackupEnqueueStatus> enqueueR2Backup(
+    String postId,
+    String targetId,
+  ) async {
+    final value = await _methodChannel.invokeMethod<String>('enqueueR2Backup', {
+      'postId': postId,
+      'targetId': targetId,
+    });
+    if (value == null) throw StateError('R2 手动备份结果为空');
+    return ManualBackupEnqueueStatus.parse(value);
+  }
 
   Future<String> ensureOriginal(String mediaId) async {
     final path = await _methodChannel.invokeMethod<String>('ensureOriginal', {

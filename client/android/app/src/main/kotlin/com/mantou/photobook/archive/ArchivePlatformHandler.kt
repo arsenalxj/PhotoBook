@@ -50,6 +50,10 @@ internal class ArchivePlatformHandler(
         )
 
     init {
+        if (database.migrateToManualBackupMode()) {
+            ArchiveRecoveryScheduler.scheduleBackupIfNeeded(applicationContext, null)
+        }
+        scheduleExistingManualBackups()
         channel.setMethodCallHandler(this)
         // 进程被杀时无法执行退出清理，下次创建原生通道时先清掉遗留的 WebView 数据。
         clearInstagramWebData().whenComplete { _, error ->
@@ -74,17 +78,18 @@ internal class ArchivePlatformHandler(
                 "importInstagramCookies" -> importInstagramCookies(call, result)
                 "copyInstagramCookies" -> copyInstagramCookies(result)
                 "clearInstagramSession" -> clearInstagramSession(result)
-                "saveR2Config" -> saveR2Config(call, result)
-                "clearR2Config" -> {
-                    ArchiveExecutionGate.acquire()
-                    try {
-                        configStore.clear()
-                        database.discardPendingBackupJobs()
-                        database.clearBackupResult()
-                    } finally {
-                        ArchiveExecutionGate.release()
-                    }
-                    ArchiveRecoveryScheduler.scheduleBackupIfNeeded(applicationContext, null)
+                "saveR2Connection" -> saveR2Connection(call, result)
+                "updateR2Connection" -> updateR2Connection(call, result)
+                "saveR2Target" -> saveR2Target(call, result)
+                "deleteR2Target" -> deleteR2Target(call, result)
+                "deleteR2Connection" -> deleteR2Connection(call, result)
+                "enqueueR2Backup" -> enqueueR2Backup(call, result)
+                "resumeBackupJobs" -> {
+                    scheduleExistingManualBackups()
+                    result.success(null)
+                }
+                "resumeCaptureJobs" -> {
+                    ArchiveForegroundService.start(applicationContext)
                     result.success(null)
                 }
                 "ensureOriginal" -> ensureOriginal(call, result)
@@ -92,10 +97,6 @@ internal class ArchivePlatformHandler(
                 "deleteMediaSelection" -> deleteMediaSelection(call, result)
                 "shareMedia" -> shareMedia(call, result)
                 "saveMedia" -> saveMedia(call, result)
-                "backupNow" -> {
-                    ArchiveForegroundService.start(applicationContext)
-                    result.success(null)
-                }
                 else -> result.notImplemented()
             }
         } catch (error: Exception) {
@@ -136,12 +137,12 @@ internal class ArchivePlatformHandler(
     }
 
     private fun runtimeState(): Map<String, Any?> {
-        val config = configStore.read()
+        val settings = configStore.read()
         return mapOf(
             "activeJobCount" to database.activeJobCount(),
             "failedJobCount" to database.failedJobCount(),
             "instagramSession" to instagram.sessionSummary(),
-            "r2Config" to config?.summary(),
+            "r2Settings" to settings.summary(),
         )
     }
 
@@ -474,29 +475,119 @@ internal class ArchivePlatformHandler(
         result.success(null)
     }
 
-    private fun saveR2Config(call: MethodCall, result: MethodChannel.Result) {
-        val config = R2Config.fromMap(call.arguments as? Map<*, *> ?: emptyMap<Any, Any>())
-        R2ObjectStore(config).testConnection()
-        val deviceId = DeviceIdentity(applicationContext).getOrCreate()
+    private fun saveR2Connection(call: MethodCall, result: MethodChannel.Result) {
+        val raw = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+        val connection = R2Connection.fromMap(raw)
+        val targetName = raw["targetName"]?.toString().orEmpty()
+        val prefix = raw["prefix"]?.toString().orEmpty()
+        R2ObjectStore(connection.resolve(prefix)).testConnection()
         ArchiveExecutionGate.acquire()
         try {
-            val previousConfig = configStore.read()
-            configStore.save(config)
-            try {
-                database.activateBackupTarget(config.backupTargetId, deviceId)
-            } catch (error: Exception) {
-                try {
-                    if (previousConfig == null) configStore.clear() else configStore.save(previousConfig)
-                } catch (rollbackError: Exception) {
-                    error.addSuppressed(rollbackError)
-                }
-                throw error
-            }
+            val settings = configStore.saveConnectionWithTarget(connection, targetName, prefix)
+            result.success(settings.summary())
         } finally {
             ArchiveExecutionGate.release()
         }
-        ArchiveForegroundService.start(applicationContext)
-        result.success(config.summary())
+    }
+
+    private fun updateR2Connection(call: MethodCall, result: MethodChannel.Result) {
+        val raw = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+        val expectedConnectionId = raw["connectionId"]?.toString().orEmpty()
+        val connection = R2Connection.fromMap(raw)
+        require(connection.connectionId == expectedConnectionId) { "R2 连接标识不匹配" }
+        val settings = configStore.read()
+        val target = settings.targets.firstOrNull { it.connectionId == connection.connectionId }
+            ?: throw IllegalArgumentException("R2 连接没有可验证的备份位置")
+        R2ObjectStore(connection.resolve(target.prefix)).testConnection()
+        ArchiveExecutionGate.acquire()
+        try {
+            result.success(configStore.updateConnection(connection).summary())
+        } finally {
+            ArchiveExecutionGate.release()
+        }
+    }
+
+    private fun saveR2Target(call: MethodCall, result: MethodChannel.Result) {
+        val raw = call.arguments as? Map<*, *> ?: emptyMap<Any, Any>()
+        val connectionId = raw["connectionId"]?.toString().orEmpty()
+        val name = raw["name"]?.toString().orEmpty()
+        val prefix = raw["prefix"]?.toString().orEmpty()
+        val previousTargetId = raw["previousTargetId"]?.toString()?.takeIf(String::isNotBlank)
+        ArchiveExecutionGate.acquire()
+        try {
+            val settings = configStore.saveTarget(connectionId, name, prefix, previousTargetId)
+            result.success(settings.summary())
+        } finally {
+            ArchiveExecutionGate.release()
+        }
+    }
+
+    private fun deleteR2Target(call: MethodCall, result: MethodChannel.Result) {
+        val targetId = call.argument<String>("targetId").orEmpty()
+        require(targetId.isNotBlank()) { "R2 备份位置不存在" }
+        ArchiveExecutionGate.acquire()
+        try {
+            val settings = configStore.deleteTarget(targetId)
+            database.discardPendingBackupJobs(targetId)
+            database.clearBackupResult()
+            rescheduleManualBackups()
+            result.success(settings.summary())
+        } finally {
+            ArchiveExecutionGate.release()
+        }
+    }
+
+    private fun deleteR2Connection(call: MethodCall, result: MethodChannel.Result) {
+        val connectionId = call.argument<String>("connectionId").orEmpty()
+        require(connectionId.isNotBlank()) { "R2 连接不存在" }
+        ArchiveExecutionGate.acquire()
+        try {
+            val current = configStore.read()
+            val targetIds = current.targets.filter { it.connectionId == connectionId }.map { it.targetId }
+            val settings = configStore.deleteConnection(connectionId)
+            targetIds.forEach(database::discardPendingBackupJobs)
+            database.clearBackupResult()
+            rescheduleManualBackups()
+            result.success(settings.summary())
+        } finally {
+            ArchiveExecutionGate.release()
+        }
+    }
+
+    private fun enqueueR2Backup(call: MethodCall, result: MethodChannel.Result) {
+        val postId = call.argument<String>("postId").orEmpty()
+        val targetId = call.argument<String>("targetId").orEmpty()
+        require(configStore.read().target(targetId) != null) { "R2 备份位置不存在" }
+        val deviceId = DeviceIdentity(applicationContext).getOrCreate()
+        ArchiveExecutionGate.acquire()
+        val status =
+            try {
+                database.enqueueManualBackup(postId, targetId, deviceId)
+            } finally {
+                ArchiveExecutionGate.release()
+            }
+        if (status != ManualBackupEnqueueStatus.COMPLETED) {
+            ArchiveRecoveryScheduler.scheduleBackupNow(applicationContext)
+        }
+        ArchiveEventBus.emitArchiveChanged()
+        result.success(status.name.lowercase())
+    }
+
+    private fun rescheduleManualBackups() {
+        val deviceId = DeviceIdentity(applicationContext).getOrCreate()
+        if (database.hasPendingBackupJobs(deviceId)) {
+            ArchiveRecoveryScheduler.scheduleBackupNow(applicationContext)
+        } else {
+            ArchiveRecoveryScheduler.scheduleBackupIfNeeded(applicationContext, null)
+        }
+    }
+
+    private fun scheduleExistingManualBackups() {
+        ArchiveRecoveryScheduler.scheduleExistingBackups(
+            applicationContext,
+            database,
+            DeviceIdentity(applicationContext).getOrCreate(),
+        )
     }
 
     private fun ensureOriginal(call: MethodCall, result: MethodChannel.Result) {
@@ -604,11 +695,6 @@ internal class ArchivePlatformHandler(
 
     private fun afterArchiveMutation() {
         ArchiveEventBus.emitArchiveChanged()
-        try {
-            if (configStore.read() != null) ArchiveForegroundService.start(applicationContext)
-        } catch (error: Exception) {
-            Log.w(TAG, "本地删除已提交，但启动 R2 备份服务失败", error)
-        }
     }
 
     private fun reportError(result: MethodChannel.Result, error: Exception) {

@@ -73,17 +73,18 @@ APK 构建通过不代表抓取可用。还必须在 arm64 真机验证：
 
 ## 4. 用户配置 R2
 
-R2 不是安装前提。用户需要为当前安装启用单向云备份时，在 App 设置页填写：
+R2 不是安装前提。配置分为 R2 连接和备份位置。新增连接时在 App 设置页填写：
 
 - S3 endpoint，例如 `https://<account-id>.r2.cloudflarestorage.com`。
 - bucket。
-- 可选 prefix；默认使用 `photobook`。
 - Access Key ID。
 - Secret Access Key。
 
-token 只授予目标 bucket 的 Object Read & Write 权限，不需要账户管理权限。建议 PhotoBook 使用独立 bucket；至少使用独立 prefix，禁止复用 Snapit 的业务目录。
+连接验证通过后，为该 bucket 添加一个或多个“显示名称 + prefix”备份位置；默认 prefix 为 `photobook`。新增同一 bucket 下的位置不重复输入凭证。需要权限隔离时新增其他 bucket 连接。
 
-保存前 App 会写入、读取并删除一个随机测试对象。任何一步失败都不替换当前可用配置。
+token 只授予连接 bucket 的 Object Read & Write 权限，不需要账户管理权限。建议 PhotoBook 使用独立 bucket；至少使用独立 prefix，禁止复用 Snapit 的业务目录。
+
+保存连接前 App 会写入、读取并删除一个随机测试对象。任何一步失败都不替换当前可用连接。保存连接或位置不会创建帖子备份任务；用户必须在详情页选择位置。用户已经手动创建的任务可在后台续跑和重试。
 
 ## 5. 应用签名
 

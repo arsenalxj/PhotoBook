@@ -11,7 +11,7 @@ PhotoBook 解决的是“看到一条帖子，分享到手机 App 后长期保�
 - 支持 Instagram 公开图片帖、多图帖和 Reel，以及小红书公开图片、视频、原生 GIF 和 Live Photo。
 - 接收 Android 系统分享，任务进入后台或锁屏后仍由前台服务继续执行。
 - 默认只保存在本机，不要求 PhotoBook 账号、设备配对、Worker、D1 或下载服务器。
-- 可选配置私有 Cloudflare R2，按当前安装实例单向备份帖子快照、预览和原媒体；其他设备不会读取这些数据。
+- 可选配置私有 Cloudflare R2，在详情页手动选择备份位置后，按当前安装实例单向备份帖子快照、预览和原媒体；其他设备不会读取这些数据。
 - 支持查看、筛选、逻辑删除、保存原媒体和通过 Android 系统面板分享原文件，并可在首页任务列表查看阶段、取消、重试或删除归档任务。
 - Live Photo 默认显示静态图，长按播放动态；完整态可互斥保存或分享为静态图、GIF、视频，动态部分失败时静态降级且只提供静态图。
 - 使用 Android 默认网络；系统 VPN 是否接管流量由手机系统决定。
@@ -47,7 +47,7 @@ flowchart TD
     JSON --> MEDIA["Android 原生流式下载与校验"]
     MEDIA --> LOCAL["App 沙盒媒体 + SQLite 元数据"]
     LOCAL --> UI["Flutter 首页、详情和任务状态"]
-    LOCAL -. "可选备份" .-> R2["用户的私有 Cloudflare R2"]
+    LOCAL -. "详情页手动备份" .-> R2["用户选择的 R2 bucket / prefix"]
 ```
 
 一次归档按以下顺序执行：
@@ -56,8 +56,8 @@ flowchart TD
 2. `ArchiveForegroundService` 立即显示通知，并在单线程后台队列中串行处理平台解析与下载任务。
 3. Kotlin 通过 Chaquopy 调用 Instagram 或小红书 Python 桥，并把解析结果映射成 PhotoBook 约定的统一 JSON。
 4. `MediaPipeline` 使用 Android 网络 API 流式下载媒体。文件先写入 `.part`，同步计算 SHA-256，完成后再原子发布到内容寻址目录，同时生成头像、缩略图和视频元数据。
-5. 帖子、媒体、任务完成状态和不可变 R2 备份任务在同一个 SQLite 事务中提交。准备或提交失败时，只回滚本次新增且尚未被引用的文件。
-6. 本地归档完成后才尝试 R2 备份。R2 失败不会撤销已经保存的本机帖子，后续由前台服务或 WorkManager 继续恢复。
+5. 帖子、媒体、任务完成状态和 `backup_generation` 在同一个 SQLite 事务中提交。准备或提交失败时，只回滚本次新增且尚未被引用的文件。
+6. 本地归档不会自动创建 R2 任务。用户在详情页选择备份位置后，App 才固化当前帖子快照并交给 WorkManager 上传；R2 失败不会撤销已经保存的本机帖子。
 
 ## 组件分工
 
@@ -66,7 +66,7 @@ flowchart TD
 | Instaloader | 解析 Instagram 帖子、作者、媒体列表和可选登录 Session |
 | Chaquopy / Python 桥 | 在 APK 内运行 Instagram 和小红书解析器，并输出稳定的统一 JSON 协议 |
 | Kotlin Android 层 | 分享接收、前台服务、任务恢复、媒体下载、SQLite、Keystore、R2 备份和应用更新 |
-| Flutter | 首页、详情、任务列表、Instagram 登录页、R2 设置及状态展示 |
+| Flutter | 首页、详情、任务列表、Instagram 登录页、R2 连接/位置设置、手动备份及状态展示 |
 | SQLite | 本机帖子、媒体清单、抓取任务、错误记录和备份状态的权威数据源 |
 | Cloudflare R2 | 用户可选、按安装实例隔离的单向备份目标，不参与本地归档是否成功的判断 |
 
@@ -104,7 +104,7 @@ docs/                                     中文架构、构建和运维文档
 3. PhotoBook 会显示前台通知并在本机完成解析、下载和入库；完成后通知自动消失。
 4. 首页右上角任务列表可查看当前阶段，并取消、重试或删除任务记录。
 5. 需要提高公开帖解析成功率时，可在设置页通过 Instagram 官方网页或粘贴完整 Cookie 建立本机会话。
-6. 需要为当前安装启用云备份时，可在设置页填写自己的 Cloudflare R2 endpoint、bucket、prefix 和对象读写凭证。
+6. 需要云备份时，先在设置页添加 R2 连接；同一 bucket 可以保存多个 prefix 位置，也可以继续添加其他 bucket。随后在帖子详情页点击备份按钮并选择一个位置。
 
 ## 开发与验证
 

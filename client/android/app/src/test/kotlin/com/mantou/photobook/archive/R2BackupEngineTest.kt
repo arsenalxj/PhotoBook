@@ -46,7 +46,7 @@ class R2BackupEngineTest {
         archive("Order1", config.backupTargetId)
         val store = FakeR2Store(config)
 
-        val result = engine(store).backupIfConfigured()
+        val result = engine(store).backupPending()
 
         assertNull(result.error)
         assertFalse(result.hasRemainingWork)
@@ -67,11 +67,11 @@ class R2BackupEngineTest {
         val store = FakeR2Store(config)
         val engine = engine(store, maxJobsPerBatch = 1)
 
-        val first = engine.backupIfConfigured()
+        val first = engine.backupPending()
         assertTrue(first.hasRemainingWork)
         assertTrue(first.shouldRetry)
 
-        val second = engine.backupIfConfigured()
+        val second = engine.backupPending()
         assertFalse(second.hasRemainingWork)
         val snapshots = store.events.filter { "/snapshots/" in it }
         assertEquals(2, snapshots.size)
@@ -85,7 +85,7 @@ class R2BackupEngineTest {
         archive("Fail2", config.backupTargetId)
         val store = FakeR2Store(config, uploadError = IOException("offline"))
 
-        val result = engine(store).backupIfConfigured()
+        val result = engine(store).backupPending()
 
         assertTrue(result.shouldRetry)
         assertTrue(result.error.orEmpty().contains("R2 备份失败"))
@@ -101,7 +101,7 @@ class R2BackupEngineTest {
         database.deletePost(postId)
         val store = FakeR2Store(config)
 
-        val result = engine(store).backupIfConfigured()
+        val result = engine(store).backupPending()
 
         assertNull(result.error)
         assertTrue(store.events.any { "/snapshots/" in it })
@@ -112,11 +112,11 @@ class R2BackupEngineTest {
     fun `deleting backed up post creates no remote request`() {
         val postId = archive("DeleteComplete1", config.backupTargetId)
         val store = FakeR2Store(config)
-        assertNull(engine(store).backupIfConfigured().error)
+        assertNull(engine(store).backupPending().error)
         val eventCount = store.events.size
 
         database.deletePost(postId)
-        val result = engine(store).backupIfConfigured()
+        val result = engine(store).backupPending()
 
         assertNull(result.error)
         assertEquals(eventCount, store.events.size)
@@ -126,7 +126,7 @@ class R2BackupEngineTest {
     fun `same installation restores missing original from its device folder`() {
         val postId = archive("Restore1", config.backupTargetId)
         val store = FakeR2Store(config)
-        assertNull(engine(store).backupIfConfigured().error)
+        assertNull(engine(store).backupPending().error)
         val descriptor = database.originalDescriptor("$postId:0")!!
         assertTrue(File(descriptor.localPath!!).delete())
 
@@ -141,28 +141,69 @@ class R2BackupEngineTest {
     fun `another installation cannot restore from the old device folder`() {
         val postId = archive("RestoreOther1", config.backupTargetId)
         val store = FakeR2Store(config)
-        assertNull(engine(store).backupIfConfigured().error)
+        assertNull(engine(store).backupPending().error)
         val descriptor = database.originalDescriptor("$postId:0")!!
         assertTrue(File(descriptor.localPath!!).delete())
 
-        assertThrows(IOException::class.java) {
+        assertThrows(ArchiveException::class.java) {
             engine(store, deviceId = OTHER_DEVICE).ensureOriginal(descriptor.mediaId)
         }
-        assertTrue(store.downloadedKeys.last().contains("/devices/$OTHER_DEVICE/media/originals/"))
+        assertTrue(store.downloadedKeys.isEmpty())
     }
 
     @Test
-    fun `switching target drops old pending jobs and seeds only active posts`() {
-        val keptPost = archive("SwitchKeep1", config.backupTargetId)
-        val deletedPost = archive("SwitchDelete1", config.backupTargetId)
-        database.deletePost(deletedPost)
+    fun `adding a target neither drops old pending jobs nor seeds posts`() {
+        archive("SwitchKeep1", config.backupTargetId)
         val newConfig = config("photobook-new")
 
-        database.activateBackupTarget(newConfig.backupTargetId, LOCAL_DEVICE)
+        assertTrue(database.hasPendingBackupJobs(config.backupTargetId, LOCAL_DEVICE))
+        assertFalse(database.hasPendingBackupJobs(newConfig.backupTargetId, LOCAL_DEVICE))
+    }
 
-        assertFalse(database.hasPendingBackupJobs(config.backupTargetId, LOCAL_DEVICE))
-        val newJobs = database.listPendingBackupJobs(newConfig.backupTargetId, LOCAL_DEVICE)
-        assertEquals(listOf(keptPost), newJobs.map { it.postId })
+    @Test
+    fun `missing target configuration keeps pending job and reports error`() {
+        archive("MissingTarget1", config.backupTargetId)
+        val store = FakeR2Store(config)
+        val engine =
+            R2BackupEngine(
+                context = context,
+                database = database,
+                settingsProvider = { R2Settings.EMPTY },
+                storeFactory = { store },
+                deviceInfo = DeviceInfo(LOCAL_DEVICE, 1_750_000_000_000),
+                archiveChangedEmitter = {},
+            )
+
+        val result = engine.backupPending()
+
+        assertTrue(result.shouldRetry)
+        assertTrue(result.error.orEmpty().contains("备份位置配置不可用"))
+        assertTrue(database.hasPendingBackupJobs(config.backupTargetId, LOCAL_DEVICE))
+        assertTrue(store.events.isEmpty())
+    }
+
+    @Test
+    fun `unreadable settings keep every pending job`() {
+        archive("UnreadableSettings1", config.backupTargetId)
+        val store = FakeR2Store(config)
+        val engine =
+            R2BackupEngine(
+                context = context,
+                database = database,
+                settingsProvider = {
+                    throw ArchiveException("R2_CONFIG_UNREADABLE", "R2 配置无法解密，请重新配置")
+                },
+                storeFactory = { store },
+                deviceInfo = DeviceInfo(LOCAL_DEVICE, 1_750_000_000_000),
+                archiveChangedEmitter = {},
+            )
+
+        val result = engine.backupPending()
+
+        assertTrue(result.shouldRetry)
+        assertEquals("R2 配置无法解密，请重新配置", result.error)
+        assertTrue(database.hasPendingBackupJobs(config.backupTargetId, LOCAL_DEVICE))
+        assertTrue(store.events.isEmpty())
     }
 
     @Test
@@ -235,12 +276,24 @@ class R2BackupEngineTest {
         R2BackupEngine(
             context = context,
             database = database,
-            configProvider = { config },
+            settingsProvider = { settingsFor(config) },
             storeFactory = { store },
             deviceInfo = DeviceInfo(deviceId, 1_750_000_000_000),
             maxJobsPerBatch = maxJobsPerBatch,
             archiveChangedEmitter = {},
         )
+
+    private fun settingsFor(config: R2Config): R2Settings {
+        val connection =
+            R2Connection(
+                endpoint = config.endpoint,
+                bucket = config.bucket,
+                accessKeyId = config.accessKeyId,
+                secretAccessKey = config.secretAccessKey,
+            )
+        val target = R2BackupTarget.create(connection, "测试备份", config.prefix)
+        return R2Settings(listOf(connection), listOf(target))
+    }
 
     private fun config(prefix: String): R2Config =
         R2Config.fromMap(

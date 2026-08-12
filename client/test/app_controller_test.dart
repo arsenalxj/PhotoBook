@@ -62,25 +62,41 @@ void main() {
     await controller.setForeground(true);
 
     expect(runtime.clipboardAutomaticCalls, [true]);
+    expect(runtime.resumeBackupCalls, 1);
     expect(controller.message, isNull);
 
     await controller.setForeground(false);
     await controller.setForeground(true);
 
     expect(runtime.clipboardAutomaticCalls, [true, true]);
+    expect(runtime.resumeBackupCalls, 2);
     controller.dispose();
     await runtime.close();
   });
 
-  test('初始化取得 R2 配置后使用当前资料库身份重新读取帖子', () async {
+  test('初始化取得多个 R2 位置后不重复读取帖子或触发自动备份', () async {
     final database = _ImmediateDatabase();
     final runtime = _FakeRuntimeBridge()
-      ..r2Config = const R2ConfigSummary(
-        endpoint: 'https://example.r2.cloudflarestorage.com',
-        bucket: 'photobook-test',
-        prefix: 'photobook',
-        accessKeyIdHint: 'abc…xyz',
-        backupTargetId: 'target-a',
+      ..r2Settings = const R2SettingsSummary(
+        connections: [
+          R2ConnectionSummary(
+            connectionId: 'connection-a',
+            endpoint: 'https://example.r2.cloudflarestorage.com',
+            bucket: 'photobook-test',
+            accessKeyIdHint: 'abc…xyz',
+            targetCount: 1,
+          ),
+        ],
+        targets: [
+          R2BackupTargetSummary(
+            targetId: 'target-a',
+            connectionId: 'connection-a',
+            name: '默认备份',
+            endpoint: 'https://example.r2.cloudflarestorage.com',
+            bucket: 'photobook-test',
+            prefix: 'photobook',
+          ),
+        ],
       );
     final controller = AppController(
       database: database,
@@ -90,32 +106,54 @@ void main() {
 
     await controller.initialize();
 
-    expect(database.postBackupTargetIds, [null, 'target-a']);
+    expect(database.postReadCount, 1);
+    expect(controller.r2Settings.targets.single.targetId, 'target-a');
+    expect(runtime.resumeCaptureCalls, 0);
     controller.dispose();
     await runtime.close();
   });
 
-  test('R2 配置已保存但列表刷新失败时保留成功结果并提示稍后重试', () async {
-    final database = _FailingReloadDatabase();
+  test('新增 R2 连接只更新配置且不创建帖子任务', () async {
+    final database = _ImmediateDatabase();
     final runtime = _FakeRuntimeBridge();
     final controller = AppController(
       database: database,
       runtimeBridge: runtime,
       isAndroid: true,
     );
-    const input = R2ConfigInput(
+    const input = R2ConnectionInput(
       endpoint: 'https://example.r2.cloudflarestorage.com',
       bucket: 'photobook-test',
+      targetName: '默认备份',
       prefix: 'photobook',
       accessKeyId: 'access-key',
       secretAccessKey: 'secret-key',
     );
 
-    await expectLater(controller.saveR2Config(input), completes);
+    await expectLater(controller.saveR2Connection(input), completes);
 
-    expect(runtime.savedR2Config, input);
-    expect(controller.r2Config?.backupTargetId, 'target-a');
-    expect(controller.message, 'R2 配置已保存，但本地状态刷新失败，稍后会自动重试');
+    expect(runtime.savedR2Connection, input);
+    expect(controller.r2Settings.targets.single.targetId, 'target-a');
+    expect(database.postReadCount, 0);
+    expect(runtime.enqueuedBackups, isEmpty);
+    controller.dispose();
+    await runtime.close();
+  });
+
+  test('详情页手动备份只为选中的位置入队并刷新本地状态', () async {
+    final database = _ImmediateDatabase();
+    final runtime = _FakeRuntimeBridge();
+    final controller = AppController(
+      database: database,
+      runtimeBridge: runtime,
+      isAndroid: true,
+    );
+
+    final status = await controller.enqueueR2Backup('post-1', 'target-b');
+
+    expect(status, ManualBackupEnqueueStatus.queued);
+    expect(runtime.enqueuedBackups, [('post-1', 'target-b')]);
+    expect(database.postReadCount, 1);
     controller.dispose();
     await runtime.close();
   });
@@ -219,15 +257,13 @@ void main() {
 
 class _ImmediateDatabase extends AppDatabase {
   int postReadCount = 0;
-  final List<String?> postBackupTargetIds = [];
 
   @override
   Future<void> initialize() async {}
 
   @override
-  Future<List<ArchivedPost>> listPosts({String? backupTargetId}) async {
+  Future<List<ArchivedPost>> listPosts() async {
     postReadCount += 1;
-    postBackupTargetIds.add(backupTargetId);
     return const [];
   }
 
@@ -243,9 +279,8 @@ class _ImmediateDatabase extends AppDatabase {
 
 class _FailingReloadDatabase extends _ImmediateDatabase {
   @override
-  Future<List<ArchivedPost>> listPosts({String? backupTargetId}) async {
+  Future<List<ArchivedPost>> listPosts() async {
     postReadCount += 1;
-    postBackupTargetIds.add(backupTargetId);
     throw StateError('测试数据库读取失败');
   }
 }
@@ -255,7 +290,6 @@ class _DelayedDatabase extends AppDatabase {
   final Completer<void> firstTaskReadStarted = Completer<void>();
   int postReadCount = 0;
   int taskReadCount = 0;
-  final List<String?> postBackupTargetIds = [];
 
   void releaseFirstTaskRead() => _firstTaskRead.complete();
 
@@ -263,9 +297,8 @@ class _DelayedDatabase extends AppDatabase {
   Future<void> initialize() async {}
 
   @override
-  Future<List<ArchivedPost>> listPosts({String? backupTargetId}) async {
+  Future<List<ArchivedPost>> listPosts() async {
     postReadCount += 1;
-    postBackupTargetIds.add(backupTargetId);
     return const [];
   }
 
@@ -298,9 +331,12 @@ class _FakeRuntimeBridge extends ArchiveRuntimeBridge {
   final List<bool> clipboardAutomaticCalls = [];
   final List<String> savedMediaIds = [];
   final List<String> deletedMediaIds = [];
+  final List<(String, String)> enqueuedBackups = [];
   bool deleteSelectionPostDeleted = false;
-  R2ConfigSummary? r2Config;
-  R2ConfigInput? savedR2Config;
+  int resumeCaptureCalls = 0;
+  int resumeBackupCalls = 0;
+  R2SettingsSummary r2Settings = const R2SettingsSummary();
+  R2ConnectionInput? savedR2Connection;
 
   @override
   Stream<ArchiveRuntimeEvent> get events => _events.stream;
@@ -309,22 +345,52 @@ class _FakeRuntimeBridge extends ArchiveRuntimeBridge {
   Future<ArchiveRuntimeState> getRuntimeState() async => ArchiveRuntimeState(
     activeJobCount: 0,
     failedJobCount: 0,
-    r2Config: r2Config,
+    r2Settings: r2Settings,
   );
 
   @override
-  Future<void> backupNow() async {}
+  Future<void> resumeCaptureJobs() async {
+    resumeCaptureCalls += 1;
+  }
 
   @override
-  Future<R2ConfigSummary> saveR2Config(R2ConfigInput config) async {
-    savedR2Config = config;
-    return r2Config = const R2ConfigSummary(
-      endpoint: 'https://example.r2.cloudflarestorage.com',
-      bucket: 'photobook-test',
-      prefix: 'photobook',
-      accessKeyIdHint: 'ac****ey',
-      backupTargetId: 'target-a',
+  Future<void> resumeBackupJobs() async {
+    resumeBackupCalls += 1;
+  }
+
+  @override
+  Future<R2SettingsSummary> saveR2Connection(R2ConnectionInput input) async {
+    savedR2Connection = input;
+    return r2Settings = const R2SettingsSummary(
+      connections: [
+        R2ConnectionSummary(
+          connectionId: 'connection-a',
+          endpoint: 'https://example.r2.cloudflarestorage.com',
+          bucket: 'photobook-test',
+          accessKeyIdHint: 'ac****ey',
+          targetCount: 1,
+        ),
+      ],
+      targets: [
+        R2BackupTargetSummary(
+          targetId: 'target-a',
+          connectionId: 'connection-a',
+          name: '默认备份',
+          endpoint: 'https://example.r2.cloudflarestorage.com',
+          bucket: 'photobook-test',
+          prefix: 'photobook',
+        ),
+      ],
     );
+  }
+
+  @override
+  Future<ManualBackupEnqueueStatus> enqueueR2Backup(
+    String postId,
+    String targetId,
+  ) async {
+    enqueuedBackups.add((postId, targetId));
+    return ManualBackupEnqueueStatus.queued;
   }
 
   @override

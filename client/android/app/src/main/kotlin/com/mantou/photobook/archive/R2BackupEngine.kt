@@ -17,7 +17,7 @@ data class R2BackupResult(
 class R2BackupEngine(
     context: Context,
     private val database: ArchiveDatabase,
-    configProvider: (() -> R2Config?)? = null,
+    settingsProvider: (() -> R2Settings)? = null,
     private val storeFactory: (R2Config) -> R2Store = { R2ObjectStore(it) },
     deviceInfo: DeviceInfo? = null,
     private val maxJobsPerBatch: Int = DEFAULT_MAX_JOBS_PER_BATCH,
@@ -25,7 +25,7 @@ class R2BackupEngine(
 ) {
     private val applicationContext = context.applicationContext
     private val configStore = R2ConfigStore(applicationContext)
-    private val configProvider = configProvider ?: configStore::read
+    private val settingsProvider = settingsProvider ?: configStore::read
     private val deviceInfo = deviceInfo ?: DeviceIdentity(applicationContext).getOrCreateInfo()
     private val archiveRoot = File(applicationContext.filesDir, "archive")
 
@@ -33,52 +33,80 @@ class R2BackupEngine(
         require(maxJobsPerBatch > 0) { "R2 单批备份任务数必须大于 0" }
     }
 
-    fun backupIfConfigured(): R2BackupResult {
-        val config = configProvider() ?: return R2BackupResult()
-        return try {
-            database.activateBackupTarget(config.backupTargetId, deviceInfo.deviceId)
+    fun backupPending(): R2BackupResult {
+        val targetIds = database.listPendingBackupTargetIds(deviceInfo.deviceId)
+        if (targetIds.isEmpty()) {
+            database.writeBackupResult(null)
+            return R2BackupResult()
+        }
+        val settings =
+            try {
+                settingsProvider()
+            } catch (error: Exception) {
+                val message = backupErrorMessage(error)
+                database.markPendingBackupErrors(deviceInfo.deviceId, message)
+                database.writeBackupResult(message)
+                return R2BackupResult(
+                    error = message,
+                    hasRemainingWork = true,
+                    shouldRetry = true,
+                    retryDelay = ERROR_RETRY_DELAY_MS,
+                )
+            }
+        var remainingCapacity = maxJobsPerBatch
+        var completedAny = false
+        var firstError: String? = null
+        for (targetId in targetIds) {
+            if (remainingCapacity <= 0) break
+            val config = settings.resolve(targetId)
+            if (config == null) {
+                val message = "R2 备份位置配置不可用，请重新配置或删除该位置"
+                database.markPendingBackupErrors(targetId, deviceInfo.deviceId, message)
+                if (firstError == null) firstError = message
+                continue
+            }
             val jobs =
                 database.listPendingBackupJobs(
-                    config.backupTargetId,
+                    targetId,
                     deviceInfo.deviceId,
-                    maxJobsPerBatch,
+                    remainingCapacity,
                 )
-            if (jobs.isEmpty()) {
-                database.writeBackupResult(null)
-                return R2BackupResult()
-            }
+            if (jobs.isEmpty()) continue
             val store = storeFactory(config)
-            uploadDeviceDescriptor(store)
-            var completedAny = false
-            for (job in jobs) {
-                try {
-                    uploadJob(store, job)
-                    database.markBackupCompleted(job.backupSeq)
-                    completedAny = true
-                } catch (error: Exception) {
-                    database.markBackupError(job.backupSeq, backupErrorMessage(error))
-                    throw error
+            try {
+                uploadDeviceDescriptor(store)
+                for (job in jobs) {
+                    try {
+                        uploadJob(store, job)
+                        database.markBackupCompleted(job.backupSeq)
+                        completedAny = true
+                        remainingCapacity -= 1
+                    } catch (error: Exception) {
+                        val message = backupErrorMessage(error)
+                        database.markBackupError(job.backupSeq, message)
+                        if (firstError == null) firstError = message
+                        break
+                    }
                 }
+            } catch (error: Exception) {
+                val message = backupErrorMessage(error)
+                database.markBackupError(jobs.first().backupSeq, message)
+                if (firstError == null) firstError = message
             }
-            val hasRemainingWork =
-                database.hasPendingBackupJobs(config.backupTargetId, deviceInfo.deviceId)
-            database.writeBackupResult(null)
-            if (completedAny) archiveChangedEmitter()
-            R2BackupResult(
-                hasRemainingWork = hasRemainingWork,
-                shouldRetry = hasRemainingWork,
-                retryDelay = if (hasRemainingWork) CONTINUATION_DELAY_MS else null,
-            )
-        } catch (error: Exception) {
-            val message = backupErrorMessage(error)
-            database.writeBackupResult(message)
-            R2BackupResult(
-                error = message,
-                hasRemainingWork = true,
-                shouldRetry = true,
-                retryDelay = ERROR_RETRY_DELAY_MS,
-            )
         }
+        val hasRemainingWork = database.hasPendingBackupJobs(deviceInfo.deviceId)
+        database.writeBackupResult(firstError)
+        if (completedAny) archiveChangedEmitter()
+        return R2BackupResult(
+            error = firstError,
+            hasRemainingWork = hasRemainingWork,
+            shouldRetry = hasRemainingWork,
+            retryDelay = when {
+                !hasRemainingWork -> null
+                firstError != null -> ERROR_RETRY_DELAY_MS
+                else -> CONTINUATION_DELAY_MS
+            },
+        )
     }
 
     fun ensureOriginal(mediaId: String): File {
@@ -89,15 +117,38 @@ class R2BackupEngine(
             val existing = File(path)
             if (isValid(existing, descriptor.sha256, descriptor.expectedSize)) return existing
         }
-        val config = configProvider()
-            ?: throw ArchiveException("R2_NOT_CONFIGURED", "尚未配置 R2 备份")
         val extension = extensionForMime(descriptor.mimeType)
         val relativeKey =
             "devices/${deviceInfo.deviceId}/media/originals/${descriptor.sha256}$extension"
         val target = File(archiveRoot, "originals/${descriptor.sha256}$extension")
-        downloadValidated(storeFactory(config), relativeKey, target, descriptor.sha256, descriptor.expectedSize)
-        database.updateOriginalPath(mediaId, descriptor.sha256, target.absolutePath)
-        return target
+        val settings = settingsProvider()
+        val configs =
+            database.completedBackupTargetIds(descriptor.postId, deviceInfo.deviceId)
+                .mapNotNull(settings::resolve)
+        if (configs.isEmpty()) {
+            throw ArchiveException("R2_NOT_CONFIGURED", "没有可用于恢复该媒体的 R2 备份位置")
+        }
+        var lastError: Exception? = null
+        for (config in configs) {
+            try {
+                downloadValidated(
+                    storeFactory(config),
+                    relativeKey,
+                    target,
+                    descriptor.sha256,
+                    descriptor.expectedSize,
+                )
+                database.updateOriginalPath(mediaId, descriptor.sha256, target.absolutePath)
+                return target
+            } catch (error: Exception) {
+                lastError = error
+            }
+        }
+        throw ArchiveException(
+            "MEDIA_RESTORE_FAILED",
+            "无法从已完成的 R2 备份恢复原媒体",
+            lastError,
+        )
     }
 
     private fun uploadDeviceDescriptor(store: R2Store) {

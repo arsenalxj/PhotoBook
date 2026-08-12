@@ -29,9 +29,9 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - `media_type` 只允许 `image / video`；GIF 使用 `media_type=image + mime_type=image/gif`，不增加独立媒体类型。
 - 本机媒体文件保存在 App 沙盒；SQLite 只保存路径、大小和 SHA-256，不保存二进制。
 - R2 是用户可选配置的单向云备份目标。未配置 R2 时，本地归档功能必须完整可用；配置相同 R2 的其他设备也不得读取或合并本安装的数据。
-- 配置相同规范化 `endpoint + bucket + prefix` 时视为同一备份目标；Access Key 不参与目标身份判断。更换 endpoint、bucket 或 prefix 会切换目标，并为当前仍存在的帖子建立该目标的备份任务。
+- R2 配置分为“连接”和“备份位置”：连接由规范化 `endpoint + bucket` 标识并保存凭证；同一连接可保存多个由 `prefix` 区分的备份位置。规范化 `endpoint + bucket + prefix` 相同时视为同一备份目标，Access Key 不参与身份判断；重复连接或位置必须拒绝，不能静默覆盖。位置创建后只允许修改显示名称，prefix 变化必须新增位置并由用户明确删除旧位置。
 - 每次安装生成独立 `device_id`，清除 App 数据或重装后生成新 ID 和新的 R2 目录；不发现其他设备，不维护 peer 或远端高水位。
-- 帖子每次归档或重新归档时递增 `backup_generation`，并在同一 SQLite 事务中保存该代不可变快照和备份任务。删除帖子或媒体不递增 generation、不创建云端删除任务，已经进入队列的备份仍必须完成。
+- 帖子每次归档或重新归档时递增 `backup_generation`，但不自动创建备份任务。只有用户在详情页明确选择备份位置时，才在同一 SQLite 事务中固化当前 generation 的不可变快照并创建任务。删除帖子或媒体不递增 generation、不创建云端删除任务，已经手动进入队列的备份仍必须完成。
 - 媒体使用 SHA-256 内容寻址，但对象必须位于当前安装的 `devices/<device_id>/media/` 下。App 不调用 R2 对象删除；本地删除不会改变任何已上传对象或快照。
 - 详情页保存和删除都以界面可见的逻辑媒体为选择单位并默认全选；Live Photo 静态图和动态视频视为一项。批量保存逐项执行并允许部分成功；批量删除只在本机 SQLite 中原子提交，不写墓碑或 R2 操作。
 
@@ -41,6 +41,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - R2 Access Key ID 和 Secret 由用户在设置中填写，通过 Android Keystore 加密后保存。
 - 日志、SQLite、通知、异常文本和备份快照中禁止出现 Secret 或 Instagram Cookie。
 - R2 token 应只允许目标 bucket 的对象读写，不要求账户管理权限。
+- R2 加密配置不存在、解密失败和内容损坏必须是三种可区分状态。只有确实不存在配置时可返回空设置；解密或解析失败必须保留 SQLite 待备份任务并向用户报错，不得把任务当成已删除位置清理。
 - Instagram 请求必须匿名优先；匿名成功时禁止读取 Session。抓取决策固定分为五类：`SUCCESS` 直接返回；断网、超时、429 和 5xx 为 `RETRYABLE_FAILURE`；匿名元数据响应结构有效但只返回 `data=null + 非空 errors`、明确登录墙或匿名 401/403 时为 `AUTH_PROBE_REQUIRED`；链接无效、明确 404、私密账号、登录失效或 authenticated media-info 空结果为 `DEFINITIVE_FAILURE`；GraphQL envelope、帖子字段、media-info 结构或 Instaloader 解析结果无法理解时为 `UNSUPPORTED_RESPONSE`。任务取消是独立控制状态，不属于抓取决策。`AUTH_PROBE_REQUIRED` 不依赖特定 GraphQL 错误码、message、severity 或 path，也不额外请求匿名 permalink；固定 Instaloader wheel 将部分 HTTP 状态包装进 `ConnectionException` 时，Python 必须从其标准异常链恢复状态，不能把 401/403 当网络失败。Python 返回结构化 `sessionProbeRequired`，Kotlin 重新检查任务未取消后，有 `ready` Session 时最多调用一次独立 authenticated media-info，没有可用 Session 时返回说明“需要登录以确认帖子状态”的 `LOGIN_REQUIRED`。authenticated media-info 必须要求 shortcode 一致且 `user.is_private` 为明确布尔值：私密账号返回 `PRIVATE_POST`，没有帖子数据或无登录失效指纹的 401/403 返回 `POST_INACCESSIBLE`，只有确认公开时才允许归档。未知结构必须返回 `UNSUPPORTED_RESPONSE`，不得误报帖子不存在、不得循环探测 Session。
 - Instagram 账号密码只填写在官方 WebView 页面，业务代码不得读取或保存；WebView Cookie 验证并加密保存后必须清理 WebView Cookie、缓存和本地存储。设置页另允许用户主动粘贴完整 Cookie Header；该文本只能在隐藏输入框与单次 Flutter -> Kotlin 调用中短暂存在，提交后必须立即清空输入框。
 - Instagram Session 使用独立 Android Keystore 密钥加密，只属于本机，不得进入 Flutter 状态、SQLite、R2、备份、日志、通知、异常文本或崩溃上报。手动 Cookie 必须通过 Instaloader `test_login()` 在线验证并取得真实用户名，失败不得覆盖旧 Session。只有用户在已登录页主动点击“复制Cookie”时，Android 原生层才允许把已验证 Session 转为 Cookie Header 写入系统剪贴板；剪贴板必须标记为敏感内容，Flutter 只能收到成功或失败，App 进程存活时在 60 秒后仅清理未被用户替换的该份 Cookie。
@@ -62,24 +63,25 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - Chaquopy 只负责把 shortcode 解析成 JSON；媒体流式下载、哈希、缩略图和视频元数据使用 Android 原生 API。
 - 本地归档和云备份是两条独立状态机。R2 失败不得回滚已经完成的本地归档。
 - WorkManager 只作为进程或网络中断后的恢复保险，分享主流程仍直接启动前台服务。
-- 抓取恢复与 R2 备份恢复必须使用两个独立的唯一 WorkManager 计划；取消抓取任务只重算抓取恢复，不得取消 R2 重试，也不得中断正在处理其他抓取任务的执行器。
+- 抓取恢复与 R2 备份恢复必须使用两个独立的唯一 WorkManager 计划；R2 Worker 只续跑用户已经手动创建的持久任务，不得因冷启动、回到前台、网络恢复或新增配置而创建任务。冷启动和回到前台必须按 SQLite 待处理任务补建缺失的唯一 Worker，但不能替换正在运行或已经排期的 Worker。取消抓取任务只重算抓取恢复，不得取消 R2 重试，也不得中断正在处理其他抓取任务的执行器。
 - 恢复 Worker 正在执行时，新分享启动的前台服务必须等待执行权并继续处理，不能因竞争锁直接退出或把用户任务留给退避重试。
 - App 使用 Android 默认网络；系统 VPN 是否接管流量由系统配置决定。不得加入 Mihomo、代理节点切换或静默直连逻辑。
 - App 冷启动只检查一次 GitHub Release 更新；发现更新后必须先征得用户确认才下载，不提供静默安装。
 
 ## R2 备份约定
 
-- 本地帖子写入、`backup_generation` 递增和 `r2_backup_jobs` 创建必须位于同一 SQLite 事务；任何一步失败都不得留下部分提交。
+- 本地帖子写入与 `backup_generation` 递增位于同一 SQLite 事务，但不创建 R2 任务。手动备份时，读取当前帖子、固化快照和创建 `r2_backup_jobs` 必须位于同一 SQLite 事务；任何一步失败都不得留下部分任务。
 - `r2_backup_jobs` 固化 `backup_target_id + device_id + post_id + generation + backup_seq + snapshot_json`。任务创建后不得因帖子或媒体随后被删除而改写或取消。
-- 同一目标内按 `backup_seq` 串行上传，首个失败处停止并由 WorkManager 重试。每个任务严格按“媒体、不可变 snapshot、`latest.json`”顺序完成；只有三步全部成功才标记成功。
+- 同一目标内按 `backup_seq` 串行上传，首个失败处停止并由 WorkManager 重试；不同目标的失败不得阻止其他目标继续处理。每个任务严格按“媒体、不可变 snapshot、`latest.json`”顺序完成；只有三步全部成功才标记成功。
 - 远端路径固定为 `<prefix>/devices/<device_id>/device.json`、`posts/<platform>/<source_post_id>/snapshots/<20 位 backup_seq>.json`、同帖子 `latest.json` 以及设备目录内的 `media/avatars|thumbnails|originals/`。不创建全局设备索引、manifest、ops 或协议版本目录。
 - snapshot 必须携带 `deviceId`、`backupSeq`、`generation`、完整帖子和媒体清单；帖子 ID、平台、媒体角色、SHA-256 等字段在入队前校验。`latest.json` 只指向同设备同帖已经上传的 snapshot。
-- 界面云朵勾选只表示当前目标中，当前帖子 `backup_generation` 对应的任务已完整成功。部分删除不产生新 generation，剩余帖子继续显示已备份；重新归档会产生新 generation，并在新任务成功前显示待备份。
-- 首次配置 R2 或切换 endpoint、bucket、prefix 时，只为当前仍存在的帖子创建新目标任务；更换 Access Key 只更新凭证，不重复入队。切换目标不读取旧目标、不迁移旧任务，也不从旧目标补文件。
-- App 冷启动、回到前台、用户手动触发和网络恢复时只上传本机待处理任务，不列举或拉取任何远端帖子、设备或状态。错误写入本地状态并展示给用户。
-- 同一安装可按当前帖子记录的 SHA-256，从当前目标的本设备目录按需恢复缺失原媒体；不恢复元数据，不读取其他 `device_id`，新安装也不恢复旧安装的数据。
+- 首页云朵勾选表示当前帖子 `backup_generation` 已成功备份到至少一个位置；详情页抽屉逐位置显示 `未备份 / 等待或备份中 / 已备份 / 失败`。部分删除不产生新 generation，剩余帖子继续显示已备份；重新归档会产生新 generation，并在用户重新手动备份成功前显示未备份。
+- 新增连接、bucket 或 prefix 只保存配置，不为任何帖子创建任务。更换 Access Key 只更新连接凭证；更换 endpoint、bucket 或 prefix 视为新目标，不读取旧目标、不迁移旧任务，也不从旧目标补文件。
+- 用户在详情页每次选择一个备份位置并备份当前整帖。App 冷启动、回到前台和网络恢复只允许续跑已经手动创建的本机待处理任务，不得创建新任务，不列举或拉取任何远端帖子、设备或状态。错误写入本地状态并展示给用户。
+- 配置中暂时找不到待处理任务的目标，或配置解密、解析失败时，任务必须保留并显示失败原因；只有用户确认删除位置或连接时才允许清理对应未完成任务。
+- 同一安装可按当前帖子记录的 SHA-256，从已完成且仍保存配置的任一备份位置按需恢复缺失原媒体；不恢复元数据，不读取其他 `device_id`，新安装也不恢复旧安装的数据。
 - App 删除帖子或媒体不得写墓碑、上传删除事件或调用 R2 删除。R2 媒体和历史快照长期保留。
-- 当前 SQLite 结构固定为 v4。项目处于开发阶段，不实现旧数据库升级或旧 R2 格式兼容；改版验证时卸载 App，并使用全新 R2 prefix 从空数据开始。
+- 当前 SQLite 结构固定为 v4。R2 单配置升级为多连接、多位置时迁移 Keystore 加密配置，不升级 SQLite；升级时清理旧版本遗留的未完成自动备份任务，保留已完成记录和远端对象。其他结构改版仍不实现旧数据库升级或旧 R2 格式兼容。
 
 ## 运行时文件与清理
 
@@ -115,4 +117,4 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - Android：覆盖先持久化后启动、后台继续、进程恢复、任务结束自动停服和通知权限。
 - 抓取：覆盖图片帖、多图帖、Reel、重复分享、失效链接、匿名优先、五类抓取决策、已知及未知 `data=null + 非空 errors` 的受控 authenticated media-info 探测、明确 404 不触发 Session、未知或畸形结构返回 `UNSUPPORTED_RESPONSE`、无 Session、Session 失效、media-info 空结果、私密帖拒绝、取消期间不读取 Session 以及系统 VPN。
 - 登录：覆盖普通登录、2FA、取消、重新登录、手动 Cookie 在线验证与用户名回显、新 Cookie 失败不覆盖旧 Session、复制Cookie、剪贴板敏感标记与定时清理、WebView 数据清理、Keystore 持久化以及 Cookie 全链路脱敏。
-- R2 备份：覆盖无 R2、本地成功但上传失败、首次 seed、媒体/快照/latest 顺序、任务重试、删除后队列继续、同安装原媒体恢复、新安装不拉取、换 Key 和换备份目标。
+- R2 备份：覆盖无 R2、连接与多个 prefix、不同 bucket、本地归档不自动入队、手动入队幂等、媒体/快照/latest 顺序、不同目标隔离、任务重试、删除后队列继续、同安装跨位置原媒体恢复、新安装不拉取、换 Key 和换备份目标。

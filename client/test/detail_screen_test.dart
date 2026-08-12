@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:photobook/controllers/app_controller.dart';
 import 'package:photobook/controllers/providers.dart';
+import 'package:photobook/core/database/app_database.dart';
 import 'package:photobook/core/theme/app_theme.dart';
 import 'package:photobook/models/post.dart';
 import 'package:photobook/screens/detail_screen.dart';
@@ -142,6 +143,8 @@ void main() {
 
     expect(find.text('复制链接'), findsOneWidget);
     expect(find.byIcon(LucideIcons.copy), findsOneWidget);
+    expect(find.text('删除媒体'), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete-post-media')), findsOneWidget);
 
     await tester.tap(find.text('复制链接'));
     await tester.pumpAndSettle();
@@ -191,6 +194,68 @@ void main() {
     controller.notifyListeners();
     await tester.pump();
     expect(backupBadge, findsNothing);
+  });
+
+  testWidgets('详情页手动备份抽屉按 bucket 展示逐位置状态并允许失败位置重试', (tester) async {
+    final controller = _FakeAppController()
+      ..phase = AppPhase.ready
+      ..r2Settings = const R2SettingsSummary(
+        connections: [
+          R2ConnectionSummary(
+            connectionId: 'connection-a',
+            endpoint: 'https://example.r2.cloudflarestorage.com',
+            bucket: 'photobook-test',
+            accessKeyIdHint: 'ac****ey',
+            targetCount: 2,
+          ),
+        ],
+        targets: [
+          R2BackupTargetSummary(
+            targetId: 'target-a',
+            connectionId: 'connection-a',
+            name: '家庭相册',
+            endpoint: 'https://example.r2.cloudflarestorage.com',
+            bucket: 'photobook-test',
+            prefix: 'family',
+          ),
+          R2BackupTargetSummary(
+            targetId: 'target-b',
+            connectionId: 'connection-a',
+            name: '旅行收藏',
+            endpoint: 'https://example.r2.cloudflarestorage.com',
+            bucket: 'photobook-test',
+            prefix: 'travel',
+          ),
+        ],
+      )
+      ..backupTargetStatuses = const {
+        'target-a': BackupTargetStatus(state: BackupTargetState.completed),
+        'target-b': BackupTargetStatus(
+          state: BackupTargetState.failed,
+          lastError: '权限不足',
+        ),
+      }
+      ..posts = [
+        _postWithMedia(const [(width: 1080, height: 1350)]),
+      ];
+    await _pumpDetail(tester, controller);
+
+    expect(find.byKey(const ValueKey('backup-post')), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete-post-media')), findsNothing);
+    await tester.tap(find.byKey(const ValueKey('backup-post')));
+    await tester.pumpAndSettle();
+
+    expect(find.text('photobook-test'), findsOneWidget);
+    expect(find.text('家庭相册'), findsOneWidget);
+    expect(find.text('已备份'), findsOneWidget);
+    expect(find.text('旅行收藏'), findsOneWidget);
+    expect(find.text('备份失败'), findsOneWidget);
+
+    await tester.tap(find.text('旅行收藏'));
+    await tester.pumpAndSettle();
+
+    expect(controller.enqueuedBackups, [('post-1', 'target-b')]);
+    expect(find.text('等待或备份中'), findsOneWidget);
   });
 
   testWidgets('本地原图解码期间保留缩略图占位', (tester) async {
@@ -467,8 +532,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('2/3'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('delete-post-media')));
-    await tester.pumpAndSettle();
+    await _openDeleteMediaSheet(tester);
     expect(find.text('3/3'), findsOneWidget);
     expect(find.text('删除帖子'), findsOneWidget);
 
@@ -534,8 +598,7 @@ void main() {
       ];
     await _pumpDetail(tester, controller);
 
-    await tester.tap(find.byKey(const ValueKey('delete-post-media')));
-    await tester.pumpAndSettle();
+    await _openDeleteMediaSheet(tester);
     expect(find.text('2/2'), findsOneWidget);
     expect(find.text('删除帖子'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('delete-selected-media')));
@@ -625,8 +688,7 @@ void main() {
       ];
     await _pumpDetail(tester, controller);
 
-    await tester.tap(find.byKey(const ValueKey('delete-post-media')));
-    await tester.pumpAndSettle();
+    await _openDeleteMediaSheet(tester);
     await tester.tap(find.byKey(const ValueKey('delete-selected-media')));
     await tester.pump();
     expect(find.text('正在删除'), findsOneWidget);
@@ -784,7 +846,8 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('保存到系统相册'), findsNothing);
     expect(find.byKey(const ValueKey('save-post-media')), findsOneWidget);
-    expect(find.byKey(const ValueKey('delete-post-media')), findsOneWidget);
+    expect(find.byKey(const ValueKey('backup-post')), findsOneWidget);
+    expect(find.byKey(const ValueKey('delete-post-media')), findsNothing);
   });
 
   testWidgets('视频初始化期间长按不再打开媒体操作', (tester) async {
@@ -859,6 +922,13 @@ Future<void> _pumpDetail(WidgetTester tester, AppController controller) =>
         ),
       ),
     );
+
+Future<void> _openDeleteMediaSheet(WidgetTester tester) async {
+  await tester.tap(find.byTooltip('更多'));
+  await tester.pumpAndSettle();
+  await tester.tap(find.byKey(const ValueKey('delete-post-media')));
+  await tester.pumpAndSettle();
+}
 
 File _writeImage(Directory directory, String name) {
   final imageBytes = base64Decode(
@@ -948,11 +1018,31 @@ class _FakeAppController extends AppController {
   final List<MediaExportMode> savedExportModes = [];
   final List<String> deletedMediaIds = [];
   final List<String> deletedPostIds = [];
+  final List<(String, String)> enqueuedBackups = [];
+  Map<String, BackupTargetStatus> backupTargetStatuses = const {};
   final Set<String> saveFailures = {};
   int mediaSaveRefreshCount = 0;
   Completer<void>? shareCompleter;
   Completer<void>? saveCompleter;
   Completer<void>? deleteSelectionCompleter;
+
+  @override
+  Future<Map<String, BackupTargetStatus>> readBackupTargetStatuses(
+    String postId,
+  ) async => backupTargetStatuses;
+
+  @override
+  Future<ManualBackupEnqueueStatus> enqueueR2Backup(
+    String postId,
+    String targetId,
+  ) async {
+    enqueuedBackups.add((postId, targetId));
+    backupTargetStatuses = {
+      ...backupTargetStatuses,
+      targetId: const BackupTargetStatus(state: BackupTargetState.pending),
+    };
+    return ManualBackupEnqueueStatus.queued;
+  }
 
   @override
   Future<File> ensureOriginal(PostMedia media) async {

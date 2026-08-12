@@ -118,6 +118,7 @@
     background: none; color: var(--fg); font-size: var(--text-sm); text-align: left;
   }
   .menu-item:hover { background: color-mix(in oklab, var(--fg) 6%, transparent); }
+  .menu-item.danger { color: var(--danger); border-top: 1px solid var(--border); border-radius: 0 0 var(--radius-sm) var(--radius-sm); margin-top: 4px; }
 
   .screen { flex: 1; overflow-y: auto; position: relative; }
 
@@ -289,6 +290,25 @@
   .sheet-sub { margin: 0 0 12px; font-size: 13px; color: var(--muted); line-height: 1.55; }
   .sheet-close { width: 44px; height: 44px; margin: -8px -8px -8px 0; }
   .sheet-close:disabled { opacity: .4; cursor: default; }
+
+  .backup-group-title { margin: 14px 2px 6px; color: var(--muted); font-family: var(--font-mono); font-size: var(--text-xs); }
+  .backup-target {
+    width: 100%; min-height: 62px; display: flex; align-items: center; gap: 12px;
+    padding: 10px 12px; border: 1px solid var(--border); border-bottom: 0;
+    background: var(--bg); color: var(--fg); text-align: left;
+  }
+  .backup-target:first-of-type { border-radius: var(--radius-md) var(--radius-md) 0 0; }
+  .backup-target.last { border-bottom: 1px solid var(--border); border-radius: 0 0 var(--radius-md) var(--radius-md); }
+  .backup-target:hover { background: color-mix(in oklab, var(--fg) 4%, var(--bg)); }
+  .backup-target-icon { width: 36px; height: 36px; flex: none; display: grid; place-items: center; border-radius: var(--radius-sm); background: color-mix(in oklab, var(--fg) 6%, var(--bg)); }
+  .backup-target-icon svg { width: 18px; height: 18px; }
+  .backup-target-copy { flex: 1; min-width: 0; }
+  .backup-target-name { font-size: var(--text-sm); font-weight: 700; }
+  .backup-target-path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-family: var(--font-mono); font-size: 11px; }
+  .backup-target-state { color: var(--muted); font-size: var(--text-xs); }
+  .backup-target-state.ok { color: var(--success); }
+  .backup-target-state.failed { color: var(--danger); }
+  .manage-backups { margin-top: 12px; }
 
   .selectall-row {
     display: flex; align-items: center; gap: 10px; min-height: 44px;
@@ -468,8 +488,8 @@
       <button class="icon-btn" id="saveBtn" aria-label="保存媒体" data-od-id="save-btn">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 4v11M7 11l5 5 5-5M5 20h14"/></svg>
       </button>
-      <button class="icon-btn" id="deleteBtn" aria-label="删除媒体" data-od-id="delete-btn">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/></svg>
+      <button class="icon-btn" id="backupBtn" aria-label="备份帖子" data-od-id="backup-btn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7.5 18.5h9a4.5 4.5 0 0 0 .8-8.9A6 6 0 0 0 5.9 8.1 4.7 4.7 0 0 0 7.5 18.5Z"/><path d="M12 15V8M9 11l3-3 3 3"/></svg>
       </button>
       <button class="icon-btn" id="overflowBtn" aria-label="更多" data-od-id="overflow-btn">
         <svg viewBox="0 0 24 24" fill="currentColor"><circle cx="12" cy="5" r="1.8"/><circle cx="12" cy="12" r="1.8"/><circle cx="12" cy="19" r="1.8"/></svg>
@@ -484,6 +504,10 @@
       <button class="menu-item" id="openOriginal" data-od-id="open-original">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 4h6v6M20 4l-9 9M9 5H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-2"/></svg>
         打开原帖
+      </button>
+      <button class="menu-item danger" id="deleteMedia" data-od-id="delete-media-menu">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 7h16M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2M6 7l1 13a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1l1-13M10 11v6M14 11v6"/></svg>
+        删除媒体
       </button>
     </div>
 
@@ -568,7 +592,37 @@
     <!-- 遮罩 + 底部弹层 -->
     <div class="scrim" id="scrim" data-od-id="scrim"></div>
 
-    <!-- ① 保存到系统相册 -->
+    <!-- ① 手动备份位置 -->
+    <div class="sheet" id="sheet-backup" data-od-id="sheet-backup">
+      <div class="grabber"></div>
+      <div class="sheet-head">
+        <p class="sheet-title">备份到</p>
+        <button class="icon-btn sheet-close" data-close aria-label="关闭" data-od-id="backup-close">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="m6 6 12 12M18 6 6 18"/></svg>
+        </button>
+      </div>
+      <p class="sheet-sub">选择一个位置备份当前整帖。任务创建后会在后台继续。</p>
+      <p class="backup-group-title">photobook</p>
+      <button class="backup-target" data-target="家庭相册">
+        <span class="backup-target-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7.5 18.5h9a4.5 4.5 0 0 0 .8-8.9A6 6 0 0 0 5.9 8.1 4.7 4.7 0 0 0 7.5 18.5Z"/></svg></span>
+        <span class="backup-target-copy"><span class="backup-target-name">家庭相册</span><span class="backup-target-path">photobook / family</span></span>
+        <span class="backup-target-state ok">已备份</span>
+      </button>
+      <button class="backup-target last" data-target="旅行收藏">
+        <span class="backup-target-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7.5 18.5h9a4.5 4.5 0 0 0 .8-8.9A6 6 0 0 0 5.9 8.1 4.7 4.7 0 0 0 7.5 18.5Z"/></svg></span>
+        <span class="backup-target-copy"><span class="backup-target-name">旅行收藏</span><span class="backup-target-path">photobook / travel</span></span>
+        <span class="backup-target-state">未备份</span>
+      </button>
+      <p class="backup-group-title">photobook-cold</p>
+      <button class="backup-target last" data-target="长期保留">
+        <span class="backup-target-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7.5 18.5h9a4.5 4.5 0 0 0 .8-8.9A6 6 0 0 0 5.9 8.1 4.7 4.7 0 0 0 7.5 18.5Z"/></svg></span>
+        <span class="backup-target-copy"><span class="backup-target-name">长期保留</span><span class="backup-target-path">photobook-cold / archive</span></span>
+        <span class="backup-target-state failed">备份失败</span>
+      </button>
+      <button class="btn-ghost manage-backups" id="manageBackups">管理备份位置</button>
+    </div>
+
+    <!-- ② 保存到系统相册 -->
     <div class="sheet" id="sheet-save" data-od-id="sheet-save">
       <div class="grabber"></div>
       <div class="sheet-head">
@@ -616,7 +670,7 @@
       <button class="btn-primary" id="saveSubmit" data-od-id="save-submit">保存 3 项</button>
     </div>
 
-    <!-- ② 删除媒体 -->
+    <!-- ③ 删除媒体 -->
     <div class="sheet" id="sheet-delete-media" data-od-id="sheet-delete-media">
       <div class="grabber"></div>
       <div class="sheet-head">
@@ -653,7 +707,7 @@
       <button class="btn-primary danger" id="deleteSubmit" data-od-id="delete-submit">删除 2 项</button>
     </div>
 
-    <!-- ③ 分享媒体 -->
+    <!-- ④ 分享媒体 -->
     <div class="sheet" id="sheet-share" data-od-id="sheet-share">
       <div class="grabber"></div>
       <div class="sheet-head">
@@ -721,7 +775,7 @@
     <div class="gesture-bar"><span></span></div>
   </div>
 </div>
-<p class="hint">交互:默认态媒体区左右拖拽翻页(1/4);右上角依次为分享媒体、保存媒体、删除媒体、更多(复制链接/打开原帖);删除媒体弹层中全选后点删除,会进入「删除这条帖子?」确认。</p>
+<p class="hint">交互:默认态媒体区左右拖拽翻页(1/4);右上角依次为分享媒体、保存媒体、手动备份、更多;备份抽屉按 bucket 分组选择一个 prefix;删除媒体位于更多菜单底部。</p>
 
 <script>
   const device = document.getElementById('device');
@@ -804,6 +858,10 @@
   document.getElementById('openOriginal').addEventListener('click', () => {
     closeMenu();
     snackbar('已在外部浏览器打开原帖', false);
+  });
+  document.getElementById('deleteMedia').addEventListener('click', () => {
+    closeMenu();
+    openSheet('sheet-delete-media');
   });
   document.addEventListener('pointerdown', e => {
     if (!e.target.closest('#overflowMenu') && !e.target.closest('#overflowBtn')) closeMenu();
@@ -891,7 +949,19 @@
   wireSeg('saveSeg');
   wireSeg('shareSeg');
 
-  /* ─── ① 保存到系统相册 ─── */
+  /* ─── ① 手动备份 ─── */
+  document.getElementById('backupBtn').addEventListener('click', () => openSheet('sheet-backup'));
+  document.querySelectorAll('.backup-target').forEach(target => target.addEventListener('click', () => {
+    if (target.querySelector('.backup-target-state').classList.contains('ok')) return;
+    const state = target.querySelector('.backup-target-state');
+    state.className = 'backup-target-state';
+    state.textContent = '等待备份';
+    closeSheet(true);
+    snackbar('已开始备份到' + target.dataset.target);
+  }));
+  document.getElementById('manageBackups').addEventListener('click', () => location.href = 'photobook-r2-settings.html');
+
+  /* ─── ② 保存到系统相册 ─── */
   document.getElementById('saveBtn').addEventListener('click', () => openSheet('sheet-save'));
   const saveItems = Array.from(document.querySelectorAll('#saveGrid .thumb-item'));
   const saveAll = document.getElementById('saveAll');
@@ -935,8 +1005,7 @@
   });
   updateSave();
 
-  /* ─── ② 删除媒体 ─── */
-  document.getElementById('deleteBtn').addEventListener('click', () => openSheet('sheet-delete-media'));
+  /* ─── ③ 删除媒体 ─── */
   const deleteItems = Array.from(document.querySelectorAll('#deleteGrid .thumb-item'));
   const deleteAll = document.getElementById('deleteAll');
   const deleteCount = document.getElementById('deleteCount');
@@ -975,7 +1044,7 @@
   });
   updateDelete();
 
-  /* ─── ③ 分享媒体 ─── */
+  /* ─── ④ 分享媒体 ─── */
   document.getElementById('shareBtn').addEventListener('click', () => openSheet('sheet-share'));
   const shareItems = Array.from(document.querySelectorAll('#shareGrid .thumb-item'));
   const shareSubmit = document.getElementById('shareSubmit');

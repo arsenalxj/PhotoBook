@@ -10,6 +10,15 @@ class BackupStatus {
   final String? lastError;
 }
 
+enum BackupTargetState { notBackedUp, pending, completed, failed }
+
+class BackupTargetStatus {
+  const BackupTargetStatus({required this.state, this.lastError});
+
+  final BackupTargetState state;
+  final String? lastError;
+}
+
 class AppDatabase {
   AppDatabase({DatabaseFactory? databaseFactory, String? databasePath})
     : _databaseFactory = databaseFactory ?? databaseFactorySqflitePlugin,
@@ -171,7 +180,7 @@ class AppDatabase {
     );
   }
 
-  Future<List<ArchivedPost>> listPosts({String? backupTargetId}) async {
+  Future<List<ArchivedPost>> listPosts() async {
     final postRows = await _db.query(
       'posts',
       columns: const [
@@ -208,7 +217,7 @@ class AppDatabase {
       ],
       orderBy: 'post_id, sort_index ASC',
     );
-    final backedUpPostIds = await _backedUpPostIds(backupTargetId);
+    final backedUpPostIds = await _backedUpPostIds();
     final groupedMedia = <String, List<PostMedia>>{};
     for (final row in mediaRows) {
       final postId = row['post_id']! as String;
@@ -286,22 +295,49 @@ class AppDatabase {
     );
   }
 
-  Future<Set<String>> _backedUpPostIds(String? backupTargetId) async {
-    final normalizedBackupTargetId = backupTargetId?.trim();
-    if (normalizedBackupTargetId == null || normalizedBackupTargetId.isEmpty) {
-      return const <String>{};
-    }
+  Future<Map<String, BackupTargetStatus>> readBackupTargetStatuses(
+    String postId,
+  ) async {
     final rows = await _db.rawQuery(
       '''
+      SELECT j.backup_target_id, j.status, j.last_error
+      FROM r2_backup_jobs j
+      JOIN posts p
+        ON p.id = j.post_id
+       AND p.backup_generation = j.generation
+      WHERE j.post_id = ?
+      ''',
+      [postId],
+    );
+    return {
+      for (final row in rows)
+        row['backup_target_id']! as String: _backupTargetStatusFromRow(row),
+    };
+  }
+
+  BackupTargetStatus _backupTargetStatusFromRow(Map<String, Object?> row) {
+    if (row['status'] == 'completed') {
+      return const BackupTargetStatus(state: BackupTargetState.completed);
+    }
+    final lastError = (row['last_error'] as String?)?.trim();
+    if (lastError != null && lastError.isNotEmpty) {
+      return BackupTargetStatus(
+        state: BackupTargetState.failed,
+        lastError: lastError,
+      );
+    }
+    return const BackupTargetStatus(state: BackupTargetState.pending);
+  }
+
+  Future<Set<String>> _backedUpPostIds() async {
+    final rows = await _db.rawQuery('''
       SELECT DISTINCT j.post_id
       FROM r2_backup_jobs j
       JOIN posts p
         ON p.id = j.post_id
        AND p.backup_generation = j.generation
-      WHERE j.backup_target_id = ? AND j.status = 'completed'
-      ''',
-      [normalizedBackupTargetId],
-    );
+      WHERE j.status = 'completed'
+      ''');
     return rows.map((row) => row['post_id']! as String).toSet();
   }
 

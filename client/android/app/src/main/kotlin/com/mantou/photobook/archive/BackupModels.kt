@@ -1,9 +1,10 @@
 package com.mantou.photobook.archive
 
-data class BackupDestination(
-    val backupTargetId: String,
-    val deviceId: String,
-)
+enum class ManualBackupEnqueueStatus {
+    QUEUED,
+    PENDING,
+    COMPLETED,
+}
 
 data class PendingR2BackupJob(
     val backupSeq: Long,

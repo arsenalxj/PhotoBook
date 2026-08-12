@@ -91,7 +91,6 @@ class ArchiveDatabaseCaptureTest {
                 job.id,
                 attempt.attemptCount,
                 preparedPost(sourcePostId),
-                null,
             ),
         )
         assertFalse(database.deleteJob(job.id))
@@ -102,7 +101,6 @@ class ArchiveDatabaseCaptureTest {
                 job.id,
                 attempt.attemptCount,
                 preparedPost(sourcePostId),
-                null,
             ),
         )
         assertNull(database.originalDescriptor("instagram:$sourcePostId:0"))
@@ -186,7 +184,6 @@ class ArchiveDatabaseCaptureTest {
                 job.id,
                 claimed.attemptCount,
                 preparedPost(sourcePostId, SOURCE_PLATFORM_XIAOHONGSHU),
-                null,
             ),
         )
 

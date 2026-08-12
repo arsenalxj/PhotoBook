@@ -35,7 +35,7 @@ void main() {
         'username': 'archive_user',
         'validatedAt': 1750000000000,
       },
-      'r2Config': null,
+      'r2Settings': {'connections': <Object>[], 'targets': <Object>[]},
     });
 
     expect(
@@ -46,21 +46,36 @@ void main() {
     expect(runtime.instagramSession?.validatedAt, 1750000000000);
   });
 
-  test('解析 R2 目标身份用于帖子备份状态', () {
+  test('解析多个 R2 连接与备份位置摘要', () {
     final runtime = ArchiveRuntimeState.fromMap({
       'activeJobCount': 0,
       'failedJobCount': 0,
       'instagramSession': null,
-      'r2Config': {
-        'endpoint': 'https://example.r2.cloudflarestorage.com',
-        'bucket': 'photobook-test',
-        'prefix': 'photobook',
-        'accessKeyIdHint': 'abc…xyz',
-        'backupTargetId': 'target-a',
+      'r2Settings': {
+        'connections': [
+          {
+            'connectionId': 'connection-a',
+            'endpoint': 'https://example.r2.cloudflarestorage.com',
+            'bucket': 'photobook-test',
+            'accessKeyIdHint': 'abc…xyz',
+            'targetCount': 2,
+          },
+        ],
+        'targets': [
+          {
+            'targetId': 'target-a',
+            'connectionId': 'connection-a',
+            'name': '默认备份',
+            'endpoint': 'https://example.r2.cloudflarestorage.com',
+            'bucket': 'photobook-test',
+            'prefix': 'photobook',
+          },
+        ],
       },
     });
 
-    expect(runtime.r2Config?.backupTargetId, 'target-a');
+    expect(runtime.r2Settings.connections.single.targetCount, 2);
+    expect(runtime.r2Settings.targets.single.targetId, 'target-a');
   });
 
   test('删除、分享和保存方法使用稳定的原生通道参数', () async {
@@ -108,7 +123,7 @@ void main() {
     );
     await bridge.copyInstagramCookies();
     await bridge.clearInstagramSession();
-    await bridge.backupNow();
+    await bridge.resumeCaptureJobs();
     await bridge.copyJobSourceUrl('job-active');
     await bridge.cancelJob('job-active');
     await bridge.retryJob('job-failed');
@@ -136,7 +151,7 @@ void main() {
       'importInstagramCookies',
       'copyInstagramCookies',
       'clearInstagramSession',
-      'backupNow',
+      'resumeCaptureJobs',
       'copyJobSourceUrl',
       'cancelJob',
       'retryJob',
@@ -167,5 +182,66 @@ void main() {
       'mediaId': 'media-1',
       'exportMode': 'original',
     });
+  });
+
+  test('R2 多连接和手动备份方法使用稳定的原生通道参数', () async {
+    const methodChannel = MethodChannel('photobook-test/r2');
+    const eventChannel = EventChannel('photobook-test/r2-events');
+    final calls = <MethodCall>[];
+    final settings = <String, Object>{
+      'connections': <Object>[],
+      'targets': <Object>[],
+    };
+    TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+        .setMockMethodCallHandler(methodChannel, (call) async {
+          calls.add(call);
+          if (call.method == 'enqueueR2Backup') return 'queued';
+          return settings;
+        });
+    addTearDown(
+      () => TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(methodChannel, null),
+    );
+    final bridge = ArchiveRuntimeBridge(
+      methodChannel: methodChannel,
+      eventChannel: eventChannel,
+    );
+
+    await bridge.saveR2Connection(
+      const R2ConnectionInput(
+        endpoint: 'https://example.r2.cloudflarestorage.com',
+        bucket: 'photobook-test',
+        targetName: '默认备份',
+        prefix: 'photobook',
+        accessKeyId: 'access-key',
+        secretAccessKey: 'secret-key',
+      ),
+    );
+    await bridge.saveR2Target(
+      const R2TargetInput(
+        connectionId: 'connection-a',
+        name: '旅行收藏',
+        prefix: 'travel',
+      ),
+    );
+    final status = await bridge.enqueueR2Backup('post-1', 'target-a');
+
+    expect(status, ManualBackupEnqueueStatus.queued);
+    expect(calls[0].method, 'saveR2Connection');
+    expect(calls[0].arguments, {
+      'endpoint': 'https://example.r2.cloudflarestorage.com',
+      'bucket': 'photobook-test',
+      'targetName': '默认备份',
+      'prefix': 'photobook',
+      'accessKeyId': 'access-key',
+      'secretAccessKey': 'secret-key',
+    });
+    expect(calls[1].method, 'saveR2Target');
+    expect(calls[1].arguments, {
+      'connectionId': 'connection-a',
+      'name': '旅行收藏',
+      'prefix': 'travel',
+    });
+    expect(calls[2].arguments, {'postId': 'post-1', 'targetId': 'target-a'});
   });
 }
