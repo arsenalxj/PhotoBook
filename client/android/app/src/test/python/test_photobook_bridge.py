@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import base64
+import io
 import json
 import unittest
+from contextlib import redirect_stderr, redirect_stdout
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -17,6 +20,7 @@ from instaloader.exceptions import (
     QueryReturnedNotFoundException,
     TooManyRequestsException,
 )
+from requests import Response, Session
 from requests.exceptions import SSLError, Timeout
 
 
@@ -36,9 +40,6 @@ class _FakeContext:
         self.iphone_response: dict[str, object] = {"items": []}
         self.metadata_calls: list[tuple[str, dict[str, object]]] = []
         self.iphone_calls: list[tuple[str, dict[str, object]]] = []
-
-    def update_cookies(self, cookies: dict[str, str]) -> None:
-        self.cookies.update(cookies)
 
     def error(self, message: str) -> None:
         self.errors.append(message)
@@ -67,13 +68,9 @@ class _FakeContext:
 
 
 class _FakeLoader:
-    def __init__(self, username: str | None = "archive_user") -> None:
+    def __init__(self) -> None:
         self.context = _FakeContext()
-        self.login_username = username
         self.loaded_session: tuple[str, dict[str, str]] | None = None
-
-    def test_login(self) -> str | None:
-        return self.login_username
 
     def load_session(self, username: str, cookies: dict[str, str]) -> None:
         self.context.username = username
@@ -184,55 +181,111 @@ class SessionBridgeTest(unittest.TestCase):
         self.assertEqual(error["code"], "LOGIN_INCOMPLETE")
         self.assertNotIn("must-not-leak", str(caught.exception))
 
-    def test_validates_cookie_and_returns_normalized_session(self) -> None:
-        loader = _FakeLoader()
-        with patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader):
-            payload = json.loads(
-                photobook_bridge.validate_session(
-                    "sessionid=session-value; csrftoken=csrf-value; mid=device-value"
-                )
+    def test_validates_browser_session_with_authenticated_current_user(self) -> None:
+        def respond(request, **kwargs):
+            del kwargs
+            response = Response()
+            response.url = request.url
+            response.request = request
+            response.headers["Content-Type"] = "application/json"
+            authorization = request.headers.get("authorization", "")
+            credentials = (
+                json.loads(base64.b64decode(authorization.removeprefix("Bearer IGT:2:")))
+                if authorization.startswith("Bearer IGT:2:")
+                else None
             )
+            authenticated = (
+                request.url == "https://i.instagram.com/api/v1/accounts/current_user/"
+                and credentials == {"ds_user_id": "123", "sessionid": "session-value"}
+                and request.headers.get("ig-intended-user-id") == "123"
+            )
+            response.status_code = 200 if authenticated else 401
+            response._content = json.dumps(
+                {"status": "ok", "user": {"pk": 123, "username": "verified_user"}}
+                if authenticated else {"status": "fail", "message": "login_required"}
+            ).encode()
+            return response
 
-        self.assertEqual(payload["username"], "archive_user")
-        self.assertEqual(payload["cookies"]["sessionid"], "refreshed-session")
-        self.assertEqual(loader.context.cookies["mid"], "device-value")
+        with (
+            patch.object(Session, "send", side_effect=respond),
+            patch.object(photobook_bridge.instaloader.InstaloaderContext, "do_sleep"),
+        ):
+            payload = json.loads(photobook_bridge.validate_session(
+                "sessionid=session-value; csrftoken=csrf-value; ds_user_id=123; mid=device-value"
+            ))
 
-    def test_validation_failure_returns_stable_error(self) -> None:
-        loader = _FakeLoader(username=None)
-        with patch.object(photobook_bridge.instaloader, "Instaloader", return_value=loader):
+        self.assertEqual(payload["username"], "verified_user")
+        self.assertEqual(payload["cookies"]["sessionid"], "session-value")
+        self.assertEqual(payload["cookies"]["mid"], "device-value")
+
+    def test_validation_rejects_missing_account_cookie_before_request(self) -> None:
+        with patch.object(Session, "send") as send:
             with self.assertRaises(RuntimeError) as caught:
-                photobook_bridge.validate_session(
-                    "sessionid=session-value; csrftoken=csrf-value"
-                )
+                photobook_bridge.validate_session("sessionid=session-value; csrftoken=csrf-value")
+        self.assertEqual(json.loads(str(caught.exception))["code"], "LOGIN_INCOMPLETE")
+        send.assert_not_called()
 
-        error = json.loads(str(caught.exception))
-        self.assertEqual(error["code"], "LOGIN_VALIDATION_FAILED")
+    def test_validation_rejects_unverified_or_mismatched_identity(self) -> None:
+        for user in (None, [], {}, {"pk": 456, "username": "other_user"},
+                     {"pk": 123, "username": " "}, {"pk": 123, "username": True}):
+            with self.subTest(user=user):
+                with self.assertRaises(RuntimeError) as caught:
+                    self._validate_http_response(200, {"status": "ok", "user": user})
+                self.assertEqual(json.loads(str(caught.exception))["code"], "UNSUPPORTED_RESPONSE")
 
-    def test_validation_preserves_retryable_network_errors(self) -> None:
+    def test_validation_classifies_http_failures_without_exposing_credentials(self) -> None:
         cases = (
-            (TooManyRequestsException("rate limited"), "RATE_LIMITED"),
-            (ConnectionException("offline"), "NETWORK_ERROR"),
-            (Timeout("timed out"), "NETWORK_ERROR"),
+            (429, {"status": "fail", "message": "slow down"}, "RATE_LIMITED"),
+            (400, {"status": "fail", "message": "feedback_required"}, "RATE_LIMITED"),
+            (401, {"status": "fail", "message": "login_required"}, "LOGIN_VALIDATION_FAILED"),
+            (403, {"status": "fail"}, "LOGIN_VALIDATION_FAILED"),
+            (400, {"status": "fail", "message": "challenge_required"}, "LOGIN_VALIDATION_FAILED"),
+            (503, {"status": "fail", "message": "unavailable"}, "NETWORK_ERROR"),
+            (404, {"status": "fail"}, "UNSUPPORTED_RESPONSE"),
+            (200, "<html>homepage</html>", "UNSUPPORTED_RESPONSE"),
         )
-        for failure, expected_code in cases:
-            with self.subTest(expected_code=expected_code, failure=type(failure).__name__):
-                loader = _FakeLoader()
+        for status, response, expected_code in cases:
+            with self.subTest(status=status, response=response):
+                with self.assertRaises(RuntimeError) as caught:
+                    self._validate_http_response(status, response)
+                self.assertEqual(json.loads(str(caught.exception))["code"], expected_code)
+                self.assertNotIn("session-value", str(caught.exception))
+
+    def test_validation_preserves_transport_errors_without_logging_secrets(self) -> None:
+        for failure in (Timeout("session-value"), SSLError("session-value")):
+            with self.subTest(failure=type(failure).__name__):
+                captured = io.StringIO()
                 with (
-                    patch.object(
-                        photobook_bridge.instaloader,
-                        "Instaloader",
-                        return_value=loader,
-                    ),
-                    patch.object(loader, "test_login", side_effect=failure),
+                    patch.object(Session, "send", side_effect=failure),
+                    patch.object(photobook_bridge.instaloader.InstaloaderContext, "do_sleep"),
+                    redirect_stdout(captured), redirect_stderr(captured),
                 ):
                     with self.assertRaises(RuntimeError) as caught:
                         photobook_bridge.validate_session(
-                            "sessionid=must-not-leak; csrftoken=csrf-value"
+                            "sessionid=session-value; csrftoken=csrf-value; ds_user_id=123"
                         )
+                self.assertEqual(json.loads(str(caught.exception))["code"], "NETWORK_ERROR")
+                self.assertNotIn("session-value", str(caught.exception) + captured.getvalue())
 
-                error = json.loads(str(caught.exception))
-                self.assertEqual(error["code"], expected_code)
-                self.assertNotIn("must-not-leak", str(caught.exception))
+    def _validate_http_response(self, status, payload):
+        def respond(request, **kwargs):
+            del kwargs
+            response = Response()
+            response.status_code = status
+            response.reason = "Fixture"
+            response.url = request.url
+            response.request = request
+            response._content = (payload if isinstance(payload, str) else json.dumps(payload)).encode()
+            response.headers["Content-Type"] = "application/json"
+            return response
+
+        with (
+            patch.object(Session, "send", side_effect=respond),
+            patch.object(photobook_bridge.instaloader.InstaloaderContext, "do_sleep"),
+        ):
+            return json.loads(photobook_bridge.validate_session(
+                "sessionid=session-value; csrftoken=csrf-value; ds_user_id=123"
+            ))
 
     def test_fetch_returns_no_session_for_anonymous_request(self) -> None:
         loader = _FakeLoader()

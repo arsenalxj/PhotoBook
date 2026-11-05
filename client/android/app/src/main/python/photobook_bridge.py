@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 import json
 import re
 from datetime import datetime, timezone
@@ -57,19 +58,33 @@ def health_check() -> str:
 def validate_session(cookie_header: str) -> str:
     try:
         cookies = _cookies_from_header(cookie_header)
+        user_id = cookies.get("ds_user_id", "")
+        if not re.fullmatch(r"[1-9][0-9]*", user_id):
+            raise RuntimeError(_error_json(
+                "LOGIN_INCOMPLETE", "Instagram 登录信息不完整，请完成登录或提供完整 Cookie"
+            ))
         loader = instaloader.Instaloader(
             max_connection_attempts=1,
             request_timeout=30.0,
+            quiet=True,
         )
         loader.context.update_cookies(cookies)
-        username = loader.test_login()
-        if not username:
-            raise RuntimeError(
-                _error_json(
-                    "LOGIN_VALIDATION_FAILED",
-                    "Instagram 登录状态无法验证，请完成页面验证后重试",
-                )
-            )
+        # 固定 wheel 的 test_login 使用已失效的 GraphQL 查询；只替换会话校验。
+        loader.context.user_id = user_id
+        token = base64.b64encode(json.dumps(
+            {"ds_user_id": user_id, "sessionid": cookies["sessionid"]},
+            separators=(",", ":"),
+        ).encode("utf-8")).decode("ascii")
+        loader.context.iphone_headers["authorization"] = f"Bearer IGT:2:{token}"
+        response = loader.context.get_iphone_json("api/v1/accounts/current_user/", {})
+        user = response.get("user") if isinstance(response, dict) else None
+        username = user.get("username") if isinstance(user, dict) else None
+        if (not isinstance(username, str) or not username.strip()
+                or str(user.get("pk")) != user_id or response.get("status") != "ok"):
+            raise RuntimeError(_error_json(
+                "UNSUPPORTED_RESPONSE", "Instagram 登录验证返回了无法确认的账号信息，请检查 PhotoBook 更新"
+            ))
+        username = username.strip()
         loader.context.username = username
         return json.dumps(
             _session_payload(username, loader.save_session()),
@@ -80,7 +95,7 @@ def validate_session(cookie_header: str) -> str:
         raise
     except Exception as error:
         code, message = _classify_validation_error(error)
-        raise RuntimeError(_error_json(code, message)) from error
+        raise RuntimeError(_error_json(code, message)) from None
 
 
 def fetch_post(shortcode: str, session_json: str | None = None) -> str:
@@ -569,11 +584,25 @@ def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]
 def _classify_validation_error(error: Exception) -> tuple[str, str]:
     chain = _exception_chain(error)
     message = "\n".join(str(item).lower() for item in chain)
+    http_status = _http_status_from_exception_chain(chain)
     if any(
         isinstance(item, instaloader_exceptions.TooManyRequestsException)
         for item in chain
-    ) or "feedback_required" in message:
+    ) or http_status == 429 or "feedback_required" in message:
         return "RATE_LIMITED", "Instagram 请求过于频繁，请稍后重试"
+    if any(marker in message for marker in ("checkpoint_required", "challenge_required")):
+        return "LOGIN_VALIDATION_FAILED", "Instagram 要求安全验证，请在登录页面完成验证后重试"
+    if http_status in {401, 403} or any(
+        isinstance(item, instaloader_exceptions.LoginRequiredException) for item in chain
+    ) or any(marker in message for marker in ("login_required", "accounts/login", "logged out")):
+        return "LOGIN_VALIDATION_FAILED", "Instagram 登录已失效，请重新登录"
+    if http_status is not None and 500 <= http_status <= 599:
+        return "NETWORK_ERROR", "Instagram 服务暂时不可用，请稍后重试"
+    if http_status is not None or any(
+        isinstance(item, (json.JSONDecodeError, requests_exceptions.JSONDecodeError))
+        for item in chain
+    ):
+        return "UNSUPPORTED_RESPONSE", "Instagram 登录验证接口返回异常，请检查 PhotoBook 更新"
     if any(
         isinstance(
             item,
@@ -586,7 +615,7 @@ def _classify_validation_error(error: Exception) -> tuple[str, str]:
         for item in chain
     ):
         return "NETWORK_ERROR", "连接 Instagram 失败，请检查系统网络或 VPN"
-    return "LOGIN_VALIDATION_FAILED", "Instagram 登录状态验证失败"
+    return "UNSUPPORTED_RESPONSE", "Instagram 登录验证返回了无法识别的数据，请检查 PhotoBook 更新"
 
 
 def _exception_chain(error: BaseException) -> list[BaseException]:

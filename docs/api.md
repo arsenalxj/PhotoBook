@@ -89,7 +89,7 @@ validate_session(cookie_header: str) -> str
 fetch_post(shortcode: str, session_json: str | None = None) -> str
 ```
 
-`validate_session` 解析完整 Cookie header，要求 `sessionid` 和 `csrftoken`，通过 Instaloader `test_login()` 取得真实用户名并返回规范化 Session JSON。`fetch_post` 返回 UTF-8 JSON envelope：
+`validate_session` 解析完整 Cookie header，要求 `sessionid`、`csrftoken` 和 `ds_user_id`。Python 根据浏览器 Session 构造临时移动端认证头，通过 Instaloader `get_iphone_json("api/v1/accounts/current_user/", {})` 在线验证；只有服务端返回有效用户名且账号 ID 与 `ds_user_id` 一致时，才返回规范化 Session JSON。认证头不持久化、不写日志。限流返回 `RATE_LIMITED`，网络或服务端故障返回 `NETWORK_ERROR`，登录失效或安全验证返回带明确提示的 `LOGIN_VALIDATION_FAILED`，接口格式异常返回 `UNSUPPORTED_RESPONSE`。`fetch_post` 返回 UTF-8 JSON envelope：
 
 ```json
 {

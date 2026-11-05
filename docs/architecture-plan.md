@@ -204,7 +204,7 @@ R2 使用 S3 API 的 `region=auto`。凭证仅存 Keystore，token 权限限制�
 
 当前 SQLite 结构为 v4。单配置升级为多连接、多位置只迁移 Keystore 加密配置：旧配置转成一个连接和一个位置，并清理旧版未完成的自动备份任务；已完成记录和远端对象保留。该变更不升级 SQLite。其他结构变化仍要求卸载 App，并使用全新 R2 prefix 从空数据开始。
 
-Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。账号密码只提交给官方 WebView；Android `CookieManager` 取得的 Cookie 与用户主动粘贴的 Cookie Header 都由 Chaquopy 调用 `test_login()` 在线验证并取得真实用户名，成功才替换旧会话。手动 Cookie 输入框默认隐藏，提交后立即清空；验证失败不得覆盖旧 Session。WebView 登录成功或取消后仍必须清理 WebView 数据。用户只能在 `ready` 状态主动命令 Android 原生层把已保存 Cookie Header 写入系统剪贴板；已保存 Cookie 不经过 Flutter MethodChannel 返回值，剪贴板标记敏感内容，并在进程存活时 60 秒后仅清理未被替换的该份内容。匿名成功时不解密 Session；认证失败只标记会话需要刷新，不影响已经完成的本地归档。
+Instagram Session 使用独立 Keystore 密钥加密，不写 SQLite 或 R2。账号密码只提交给官方 WebView；Android `CookieManager` 取得的 Cookie 与用户主动粘贴的 Cookie Header 都由 Chaquopy 请求 `accounts/current_user` 在线验证。Python 根据 `ds_user_id + sessionid` 构造仅驻留内存的移动端认证头，服务端账号 ID 必须匹配 `ds_user_id`，用户名必须来自服务端，成功才替换旧会话。手动 Cookie 输入框默认隐藏，提交后立即清空；验证失败不得覆盖旧 Session。WebView 登录成功或取消后仍必须清理 WebView 数据。用户只能在 `ready` 状态主动命令 Android 原生层把已保存 Cookie Header 写入系统剪贴板；已保存 Cookie 不经过 Flutter MethodChannel 返回值，剪贴板标记敏感内容，并在进程存活时 60 秒后仅清理未被替换的该份内容。匿名成功时不解密 Session；认证失败只标记会话需要刷新，不影响已经完成的本地归档。
 
 ## 8. Android 生命周期
 
