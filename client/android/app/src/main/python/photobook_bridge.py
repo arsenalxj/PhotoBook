@@ -554,6 +554,15 @@ def _classify_error(error: Exception, *, authenticated: bool) -> tuple[str, str]
         for item in chain
     ) or http_status == 404:
         return "POST_UNAVAILABLE", "帖子不存在、已失效或当前不可访问"
+    if (
+        any(
+            isinstance(item, instaloader_exceptions.QueryReturnedBadRequestException)
+            for item in chain
+        )
+        and http_status == 400
+        and "media not found" in message
+    ):
+        return "POST_UNAVAILABLE", "帖子不存在、已失效或当前不可访问"
     if any(
         isinstance(item, instaloader_exceptions.QueryReturnedForbiddenException)
         for item in chain

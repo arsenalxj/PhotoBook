@@ -710,6 +710,34 @@ class SessionBridgeTest(unittest.TestCase):
         error = json.loads(str(caught.exception))
         self.assertEqual(error["code"], "POST_INACCESSIBLE")
 
+    def test_media_info_media_not_found_is_inaccessible(self) -> None:
+        loader = _FakeLoader()
+        with (
+            patch.object(
+                photobook_bridge.instaloader,
+                "Instaloader",
+                return_value=loader,
+            ),
+            patch.object(
+                loader.context,
+                "get_iphone_json",
+                side_effect=QueryReturnedBadRequestException(
+                    '400 Bad Request - "fail" status, message "Media not found or '
+                    'unavailable" when accessing '
+                    "https://i.instagram.com/api/v1/media/123/info/"
+                ),
+            ),
+        ):
+            with self.assertRaises(RuntimeError) as caught:
+                photobook_bridge.fetch_post_media_info(
+                    "PublicPost",
+                    _session_json(),
+                )
+
+        error = json.loads(str(caught.exception))
+        self.assertEqual(error["code"], "POST_INACCESSIBLE")
+        self.assertIn("登录后仍无法访问", error["message"])
+
     def test_authenticated_media_info_serializes_reel(self) -> None:
         loader = _FakeLoader()
         loader.context.iphone_response = {"items": [_iphone_reel()]}
@@ -816,6 +844,23 @@ class SessionBridgeTest(unittest.TestCase):
             ),
             (TooManyRequestsException("429 Too Many Requests"), False, "RATE_LIMITED"),
             (QueryReturnedNotFoundException("404 Not Found"), False, "POST_UNAVAILABLE"),
+            (
+                QueryReturnedBadRequestException(
+                    '400 Bad Request - "fail" status, message "Media not found or '
+                    'unavailable" when accessing '
+                    "https://i.instagram.com/api/v1/media/123/info/"
+                ),
+                True,
+                "POST_UNAVAILABLE",
+            ),
+            (
+                QueryReturnedBadRequestException(
+                    '400 Bad Request - "fail" status, message "invalid parameter" '
+                    "when accessing https://i.instagram.com/api/v1/media/123/info/"
+                ),
+                True,
+                "UNSUPPORTED_RESPONSE",
+            ),
             (ConnectionException("connection failed"), False, "NETWORK_ERROR"),
             (ValueError("unexpected"), False, "UNSUPPORTED_RESPONSE"),
         )
