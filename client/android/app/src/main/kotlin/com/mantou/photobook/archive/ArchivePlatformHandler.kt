@@ -33,6 +33,7 @@ internal class ArchivePlatformHandler(
     private val instagram = InstagramClient(applicationContext)
     private val instagramCookieClipboard = InstagramCookieClipboard(applicationContext)
     private val mediaActions = ArchiveMediaActions(activity, database)
+    private val mediaPipeline = MediaPipeline(applicationContext, database::isMediaShaReferenced)
     private val permissionExecutor = Executors.newSingleThreadExecutor()
     private val sessionExecutor = Executors.newSingleThreadExecutor()
     private val instagramLoginAttempts = InstagramLoginAttemptCoordinator()
@@ -435,6 +436,14 @@ internal class ArchivePlatformHandler(
             return
         }
         if (cancellation == JobCancellationResult.QUEUED) {
+            // 排队任务可能带有断点续传残留，取消即放弃进度。
+            // 与执行器共用内容寻址文件，必须走执行门避免并发删除。
+            ArchiveExecutionGate.acquire()
+            try {
+                mediaPipeline.discardJob(jobId)
+            } finally {
+                ArchiveExecutionGate.release()
+            }
             try {
                 ArchiveRecoveryScheduler.scheduleCaptureIfNeeded(applicationContext, database)
             } catch (error: Exception) {
@@ -450,6 +459,12 @@ internal class ArchivePlatformHandler(
         if (jobId.isBlank() || !database.deleteJob(jobId)) {
             result.error("JOB_NOT_FOUND", "失败任务不存在或已被处理", null)
             return
+        }
+        ArchiveExecutionGate.acquire()
+        try {
+            mediaPipeline.discardJob(jobId)
+        } finally {
+            ArchiveExecutionGate.release()
         }
         ArchiveEventBus.emitJobChanged()
         result.success(null)

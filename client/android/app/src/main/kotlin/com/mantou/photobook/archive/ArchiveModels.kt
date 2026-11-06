@@ -30,6 +30,23 @@ data class RemotePost(
     val media: List<RemoteMedia>,
     val sourcePlatform: String = SOURCE_PLATFORM_INSTAGRAM,
 ) {
+    fun toJson(): JSONObject =
+        JSONObject()
+            .put("sourcePostId", sourcePostId)
+            .put("sourceUrl", sourceUrl)
+            .put("authorUsername", authorUsername)
+            .put("authorDisplayName", authorDisplayName)
+            .put("authorProfileUrl", authorProfileUrl)
+            .put("authorAvatarUrl", authorAvatarUrl)
+            .put("caption", caption)
+            .put("publishedAt", publishedAt)
+            .put("locationName", locationName)
+            .put(
+                "media",
+                org.json.JSONArray().apply { media.forEach { put(it.toJson()) } },
+            )
+            .put("sourcePlatform", sourcePlatform)
+
     companion object {
         fun fromJson(raw: String): RemotePost {
             val json = JSONObject(raw)
@@ -89,6 +106,20 @@ data class RemoteMedia(
 ) {
     val downloadUrls: List<String>
         get() = listOfNotNull(url, fallbackUrl?.takeIf(String::isNotBlank)).distinct()
+
+    fun toJson(): JSONObject =
+        JSONObject()
+            .put("sortIndex", sortIndex)
+            .put("logicalIndex", logicalIndex)
+            .put("mediaType", mediaType)
+            .put("mediaRole", mediaRole)
+            .put("url", url)
+            .apply {
+                if (width != null) put("width", width)
+                if (height != null) put("height", height)
+                if (durationMs != null) put("durationMs", durationMs)
+                if (fallbackUrl != null) put("fallbackUrl", fallbackUrl)
+            }
 
     companion object {
         fun fromJson(json: JSONObject): RemoteMedia {
@@ -154,6 +185,49 @@ data class PreparedMedia(
     val mediaRole: String = MEDIA_ROLE_PRIMARY,
 ) {
     fun id(postId: String): String = "$postId:$sortIndex"
+
+    fun toJson(): JSONObject =
+        JSONObject()
+            .put("sortIndex", sortIndex)
+            .put("mediaType", mediaType)
+            .put("mimeType", mimeType)
+            .put("width", width)
+            .put("height", height)
+            .put("originalSize", originalSize)
+            .put("originalSha256", originalSha256)
+            .put("thumbnailSha256", thumbnailSha256)
+            .put("localOriginalPath", localOriginalPath)
+            .put("localThumbnailPath", localThumbnailPath)
+            .put("logicalIndex", logicalIndex)
+            .put("mediaRole", mediaRole)
+            .apply { if (durationMs != null) put("durationMs", durationMs) }
+
+    companion object {
+        fun fromJson(json: JSONObject): PreparedMedia {
+            val sortIndex = json.getInt("sortIndex")
+            val logicalIndex = json.getInt("logicalIndex")
+            val mediaType = json.getString("mediaType")
+            val mediaRole = json.getString("mediaRole")
+            require(sortIndex >= 0 && logicalIndex >= 0) { "媒体编号无效" }
+            require(mediaType == "image" || mediaType == "video") { "媒体类型无效" }
+            require(mediaRole in SUPPORTED_MEDIA_ROLES) { "媒体角色无效" }
+            return PreparedMedia(
+                sortIndex = sortIndex,
+                mediaType = mediaType,
+                mimeType = json.getString("mimeType"),
+                width = json.getInt("width"),
+                height = json.getInt("height"),
+                durationMs = json.optionalPositiveLong("durationMs"),
+                originalSize = json.getLong("originalSize"),
+                originalSha256 = json.getString("originalSha256"),
+                thumbnailSha256 = json.getString("thumbnailSha256"),
+                localOriginalPath = json.getString("localOriginalPath"),
+                localThumbnailPath = json.getString("localThumbnailPath"),
+                logicalIndex = logicalIndex,
+                mediaRole = mediaRole,
+            )
+        }
+    }
 }
 
 const val SOURCE_PLATFORM_INSTAGRAM = "instagram"

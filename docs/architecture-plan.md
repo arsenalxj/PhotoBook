@@ -119,6 +119,8 @@ sequenceDiagram
 
 同一 `(source_platform, request_key)` 只有一个任务；不同短链即使最终指向同一帖子，也可能各自解析和下载，但最终按 `<source_platform>:<source_post_id>` 覆盖为同一正式帖子。首页任务列表只查询 `queued / fetching / downloading / committing / cancelling / failed`，按“进行中 / 失败 / 已取消”分组，不展示已完成历史，也不混入 R2 备份或应用更新任务。长按任务项发送 `jobId` 给 Android，由原生层从 SQLite 读取 `source_url` 并复制，不把小红书 `xsec_token` 下发到 Flutter。`queued` 且设置了 `next_attempt_at` 时显示“等待自动重试”，下载阶段显示 `progress_current / progress_total`，`cancelling` 显示“正在取消”且不提供取消、重试或删除操作。
 
+抓取重试采用断点续传。解析成功后执行器把 `RemotePost` 写入 `files/archive/jobs/<job_id>/resume.json`，之后每完成一个媒体项（按 `sort_index + media_role`）原子重写该文件，记录已完成媒体元数据和本次任务创建的全部内容寻址文件。只有 `NETWORK_ERROR / RATE_LIMITED` 导致任务重排 `queued` 时保留任务目录、resume 和已完成文件；下一 attempt 直接以 resume 中的解析结果进入下载，跳过已完成媒体，避免重复解析请求触发平台限流。最终失败、取消、提交失败和成功提交后都回滚未被引用的文件并删除任务目录；排队任务被直接取消或失败任务被删除时也按 resume 回滚残留文件。媒体地址过期（HTTP 403/410）归为 `MEDIA_URL_EXPIRED` 确定失败，但使用 resume 续传的 attempt 允许在下载阶段重新解析一次刷新地址：新解析的媒体键集合必须覆盖已完成项，否则丢弃全部进度按新结果重来；第二次仍过期则记为最终失败。resume 文件缺失或损坏时降级为从头开始。
+
 排队任务取消时直接改为 `failed + CANCELLED`；运行 attempt 取消时先改为 `cancelling`，执行器停止后续阶段，完成文件回滚和任务临时目录清理，再以相同 `attempt_count` 收口为 `failed + CANCELLED`。进程中断后恢复时也必须把遗留 `cancelling` 收口为已取消，不能重新排队。运行 attempt 的阶段更新、错误写入和最终提交都必须同时校验 `attempt_count` 与期望状态；匿名解析前后、读取 Session 前、认证重试前后、媒体下载循环及流式读取中、提交前都检查任务仍属于当前 attempt。取消后不得继续读取 Session、发起认证请求、保存刷新后的 Session、下载或提交。Chaquopy 的 Instaloader 解析是同步调用，不能强杀正在执行的 Python 网络请求，因此单次网络请求超时固定为 30 秒；请求返回后立即响应取消。
 
 抓取恢复与 R2 备份恢复分别使用 `archive_capture_recovery` 和 `r2_backup_recovery` 两个唯一 WorkManager 计划。R2 计划只处理已经由用户手动创建的任务，不能因为抓取完成、配置保存、冷启动、回到前台或网络恢复而创建任务。取消等待自动重试的排队任务后只重算抓取计划；R2 重试计划不受影响。若另一个抓取任务正在执行，取消排队任务不得替换或取消当前执行器，执行结束后再按剩余队列重算。删除只允许删除 `failed` 任务记录，不删除已归档帖子、媒体或 R2 数据；活动任务必须先取消。
@@ -152,6 +154,8 @@ Live Photo 的静态图必须成功，动态视频允许下载失败后静态降
 ```text
 files/archive/
   jobs/<job_id>/
+    resume.json        # 断点续传进度，仅可重试失败期间保留
+    *.part             # 下载中临时文件
   avatars/<sha256>.jpg
   thumbnails/<sha256>.jpg
   originals/<sha256>.<ext>

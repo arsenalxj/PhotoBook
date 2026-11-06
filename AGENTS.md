@@ -58,6 +58,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 - 前台服务必须立即显示通知；所有任务结束后移除通知并停止自身。
 - Instaloader 同步调用只能在串行后台队列运行，禁止阻塞主线程。
 - Instaloader 单次网络请求超时固定为 30 秒；运行中任务取消后进入 `cancelling`，解析或下载返回并完成文件回滚、临时目录清理后才进入 `failed + CANCELLED`。取消期间不得读取 Session、发起认证重试、从 authenticated GraphQL 继续发起 media-info 请求或保存刷新后的 Session。
+- 抓取失败重试使用断点续传：解析成功后把解析结果写入任务目录 `resume.json`，之后逐媒体固化进度；只有 `NETWORK_ERROR / RATE_LIMITED` 重排队列时保留 resume 和已完成媒体文件，下一 attempt 跳过解析、只下载缺失媒体。最终失败、取消、提交失败和成功提交后都全量回滚未引用文件并清理任务目录。媒体地址过期（HTTP 403/410）时在下载阶段最多重新解析一次刷新地址，随后继续补缺失媒体；续传进度按 `sort_index + media_role` 逐媒体记录。
 - 匿名抓取成功时禁止读取或解密 Instagram Session；限流、断网、已明确判定不存在和 `UNSUPPORTED_RESPONSE` 不得触发认证重试或改变 Session 状态。只有上一条约定的 `AUTH_PROBE_REQUIRED` 允许通过 authenticated media-info 使用 Session 判定，且每个 attempt 最多一次。
 - 登录态只提高公开帖抓取成功率。即使当前账号有权查看，私密账号帖子也必须返回不可访问，不得归档或备份。
 - Chaquopy 只负责把 shortcode 解析成 JSON；媒体流式下载、哈希、缩略图和视频元数据使用 Android 原生 API。
@@ -85,7 +86,7 @@ PhotoBook 是个人使用的 Android 多平台帖子归档 App，首批支持 In
 
 ## 运行时文件与清理
 
-- 抓取临时文件放 App 沙盒 `archive/jobs/<job_id>/`。
+- 抓取临时文件放 App 沙盒 `archive/jobs/<job_id>/`，其中 `resume.json` 保存断点续传进度（解析结果、已完成媒体和已创建文件清单），只在可重试失败重排期间保留。
 - 更新临时文件放 App 缓存 `updates/`，下载写 `.part`，完成校验后原子改名；失败、取消和过期缓存必须清理。
 - Live Photo 转 GIF 临时文件放 App 缓存 `share_exports/`；系统分享面板可能延迟读取，拉起后不得立即删除，只清理超过 24 小时的文件。
 - 永久媒体分别放 `archive/avatars/`、`archive/thumbnails/` 和 `archive/originals/`。

@@ -4,6 +4,7 @@ import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.media.MediaMetadataRetriever
+import android.util.Log
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -12,6 +13,15 @@ import java.net.URL
 import java.security.MessageDigest
 import kotlin.math.max
 import kotlin.math.roundToInt
+import org.json.JSONObject
+
+internal data class JobResume(
+    val remote: RemotePost,
+    val avatarSha256: String?,
+    val avatarPath: String?,
+    val completedMedia: List<PreparedMedia>,
+    val createdFilePaths: List<String>,
+)
 
 class MediaPipeline(
     context: Context,
@@ -36,69 +46,207 @@ class MediaPipeline(
         onProgress: (current: Int, total: Int) -> Unit,
     ): PreparedPost {
         val jobDirectory = File(jobs, job.id).apply { mkdirs() }
+        val resume = loadResume(job.id)
         val createdFiles = linkedSetOf<File>()
-        return try {
-            ensureAttemptActive(isAttemptActive)
-            val avatar =
-                prepareAvatar(
-                    remote.authorAvatarUrl,
-                    remote.sourcePlatform,
-                    jobDirectory,
-                    createdFiles,
-                    isAttemptActive,
-                )
-            val preparedMedia =
-                buildList {
-                    remote.media.forEachIndexed { index, item ->
+        resume?.createdFilePaths?.forEach { createdFiles += File(it) }
+        val completedByKey = HashMap<Triple<Int, String, String>, PreparedMedia>()
+        resume?.completedMedia?.forEach { item ->
+            if (File(item.localOriginalPath).isFile && File(item.localThumbnailPath).isFile) {
+                completedByKey[Triple(item.sortIndex, item.mediaRole, item.mediaType)] = item
+            }
+        }
+        ensureAttemptActive(isAttemptActive)
+        val resumedAvatar =
+            resume?.let { state ->
+                val avatarPath = state.avatarPath
+                val avatarSha256 = state.avatarSha256
+                if (avatarPath != null && avatarSha256 != null && File(avatarPath).isFile) {
+                    StoredFile(File(avatarPath), avatarSha256)
+                } else {
+                    null
+                }
+            }
+        val avatar =
+            resumedAvatar ?: prepareAvatar(
+                remote.authorAvatarUrl,
+                remote.sourcePlatform,
+                jobDirectory,
+                createdFiles,
+                isAttemptActive,
+            )
+        if (resumedAvatar == null && avatar != null) {
+            persistResume(job.id, remote, avatar, completedByKey.values.toList(), createdFiles)
+        }
+        val preparedMedia =
+            buildList {
+                remote.media.forEachIndexed { index, item ->
                     ensureAttemptActive(isAttemptActive)
-                    val filesBefore = createdFiles.toSet()
-                    try {
-                        add(
-                            prepareMedia(
-                                item,
-                                remote.sourcePlatform,
-                                jobDirectory,
-                                createdFiles,
-                                isAttemptActive,
-                            ),
-                        )
-                    } catch (error: ArchiveException) {
-                        if (item.mediaRole != MEDIA_ROLE_LIVE_MOTION) throw error
-                        val motionFiles = createdFiles - filesBefore
-                        rollbackFiles(motionFiles.map(File::getAbsolutePath))
-                        createdFiles.removeAll(motionFiles)
+                    val existing = completedByKey[Triple(item.sortIndex, item.mediaRole, item.mediaType)]
+                    if (existing != null) {
+                        add(existing)
+                    } else {
+                        val filesBefore = createdFiles.toSet()
+                        try {
+                            add(
+                                prepareMedia(
+                                    item,
+                                    remote.sourcePlatform,
+                                    jobDirectory,
+                                    createdFiles,
+                                    isAttemptActive,
+                                ),
+                            )
+                        } catch (error: Exception) {
+                            // 失败项的半成品文件还没进 resume，先回滚并固化当前进度，
+                            // 否则 discardJob 按 resume 回滚时删不到它们。
+                            val partialFiles = createdFiles - filesBefore
+                            rollbackFiles(partialFiles.map(File::getAbsolutePath))
+                            createdFiles.removeAll(partialFiles)
+                            if (error is ArchiveException &&
+                                item.mediaRole == MEDIA_ROLE_LIVE_MOTION
+                            ) {
+                                persistResume(job.id, remote, avatar, toList(), createdFiles)
+                                ensureAttemptActive(isAttemptActive)
+                                onProgress(index + 1, remote.media.size)
+                                return@forEachIndexed
+                            }
+                            runCatching {
+                                persistResume(job.id, remote, avatar, toList(), createdFiles)
+                            }
+                            throw error
+                        }
+                        persistResume(job.id, remote, avatar, toList(), createdFiles)
                     }
                     ensureAttemptActive(isAttemptActive)
                     onProgress(index + 1, remote.media.size)
+                }
+            }
+        if (preparedMedia.isEmpty()) {
+            throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "帖子没有可保存的媒体")
+        }
+        return PreparedPost(
+            sourcePostId = remote.sourcePostId,
+            sourceUrl = remote.sourceUrl,
+            authorUsername = remote.authorUsername,
+            authorDisplayName = remote.authorDisplayName,
+            authorProfileUrl = remote.authorProfileUrl,
+            authorAvatarSha256 = avatar?.sha256,
+            localAvatarPath = avatar?.file?.absolutePath,
+            caption = remote.caption,
+            publishedAt = remote.publishedAt,
+            locationName = remote.locationName,
+            media = preparedMedia,
+            createdFilePaths = createdFiles.map(File::getAbsolutePath),
+            sourcePlatform = remote.sourcePlatform,
+        )
+    }
+
+    internal fun loadResume(jobId: String): JobResume? {
+        val file = resumeFile(jobId)
+        if (!file.isFile) return null
+        return runCatching {
+            val json = JSONObject(file.readText())
+            check(json.optInt("version") == RESUME_VERSION) { "续传进度版本无效" }
+            val completedJson = json.getJSONArray("completedMedia")
+            val completed =
+                buildList {
+                    for (index in 0 until completedJson.length()) {
+                        add(PreparedMedia.fromJson(completedJson.getJSONObject(index)))
                     }
                 }
-            if (preparedMedia.isEmpty()) {
-                throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "帖子没有可保存的媒体")
-            }
-            PreparedPost(
-                sourcePostId = remote.sourcePostId,
-                sourceUrl = remote.sourceUrl,
-                authorUsername = remote.authorUsername,
-                authorDisplayName = remote.authorDisplayName,
-                authorProfileUrl = remote.authorProfileUrl,
-                authorAvatarSha256 = avatar?.sha256,
-                localAvatarPath = avatar?.file?.absolutePath,
-                caption = remote.caption,
-                publishedAt = remote.publishedAt,
-                locationName = remote.locationName,
-                media = preparedMedia,
-                createdFilePaths = createdFiles.map(File::getAbsolutePath),
-                sourcePlatform = remote.sourcePlatform,
+            val pathsJson = json.getJSONArray("createdFilePaths")
+            JobResume(
+                remote = RemotePost.fromJson(json.getJSONObject("remote").toString()),
+                avatarSha256 = json.optString("avatarSha256").takeIf { it.isNotEmpty() },
+                avatarPath = json.optString("avatarPath").takeIf { it.isNotEmpty() },
+                completedMedia = completed,
+                createdFilePaths =
+                    buildList {
+                        for (index in 0 until pathsJson.length()) {
+                            add(pathsJson.getString(index))
+                        }
+                    },
             )
+        }.onFailure { error ->
+            Log.w(TAG, "任务 $jobId 的续传进度损坏，降级为重新解析", error)
+        }.getOrNull()
+    }
+
+    fun saveResume(jobId: String, remote: RemotePost) {
+        File(jobs, jobId).mkdirs()
+        writeResume(jobId, JobResume(remote, null, null, emptyList(), emptyList()))
+    }
+
+    fun refreshResumeRemote(jobId: String, remote: RemotePost): Boolean {
+        val resume = loadResume(jobId) ?: return false
+        val freshKeys = remote.media.map { Triple(it.sortIndex, it.mediaRole, it.mediaType) }.toSet()
+        if (!resume.completedMedia.all {
+                Triple(it.sortIndex, it.mediaRole, it.mediaType) in freshKeys
+            }
+        ) {
+            return false
+        }
+        writeResume(jobId, resume.copy(remote = remote))
+        return true
+    }
+
+    fun discardJob(jobId: String) {
+        loadResume(jobId)?.let { rollbackFiles(it.createdFilePaths) }
+        cleanupJob(jobId)
+    }
+
+    private fun persistResume(
+        jobId: String,
+        remote: RemotePost,
+        avatar: StoredFile?,
+        completedMedia: List<PreparedMedia>,
+        createdFiles: Set<File>,
+    ) {
+        writeResume(
+            jobId,
+            JobResume(
+                remote = remote,
+                avatarSha256 = avatar?.sha256,
+                avatarPath = avatar?.file?.absolutePath,
+                completedMedia = completedMedia,
+                createdFilePaths = createdFiles.map(File::getAbsolutePath),
+            ),
+        )
+    }
+
+    private fun writeResume(jobId: String, resume: JobResume) {
+        val target = resumeFile(jobId)
+        val part = File(target.parentFile, "${target.name}.part")
+        val mediaJson = org.json.JSONArray()
+        resume.completedMedia.forEach { mediaJson.put(it.toJson()) }
+        val pathsJson = org.json.JSONArray()
+        resume.createdFilePaths.forEach { pathsJson.put(it) }
+        val json =
+            JSONObject()
+                .put("version", RESUME_VERSION)
+                .put("remote", resume.remote.toJson())
+                .put("completedMedia", mediaJson)
+                .put("createdFilePaths", pathsJson)
+                .apply {
+                    if (resume.avatarSha256 != null) put("avatarSha256", resume.avatarSha256)
+                    if (resume.avatarPath != null) put("avatarPath", resume.avatarPath)
+                }
+        try {
+            FileOutputStream(part, false).use { output ->
+                output.write(json.toString().toByteArray(Charsets.UTF_8))
+                output.fd.sync()
+            }
         } catch (error: Exception) {
-            rollbackFiles(createdFiles.map(File::getAbsolutePath))
-            throw error
+            part.delete()
+            throw ArchiveException("MEDIA_STORE_FAILED", "续传进度保存失败", error)
+        }
+        if (!part.renameTo(target)) {
+            part.delete()
+            throw ArchiveException("MEDIA_STORE_FAILED", "续传进度保存失败")
         }
     }
 
-    fun rollbackPrepared(post: PreparedPost) {
-        rollbackFiles(post.createdFilePaths)
-    }
+    private fun resumeFile(jobId: String): File = File(File(jobs, jobId), "resume.json")
 
     fun cleanupJob(jobId: String) {
         val directory = File(jobs, jobId)
@@ -114,6 +262,9 @@ class MediaPipeline(
         }
         jobs.listFiles()?.forEach { directory ->
             if (directory.isDirectory && directory.lastModified() < cutoff) {
+                runCatching {
+                    loadResume(directory.name)?.let { rollbackFiles(it.createdFilePaths) }
+                }
                 directory.deleteRecursively()
             }
         }
@@ -232,7 +383,9 @@ class MediaPipeline(
             try {
                 return download(url, target, mediaType, sourcePlatform, isAttemptActive)
             } catch (error: ArchiveException) {
-                if (error.code != "MEDIA_DOWNLOAD_FAILED" || index == urls.lastIndex) throw error
+                val canFallback =
+                    error.code == "MEDIA_DOWNLOAD_FAILED" || error.code == "MEDIA_URL_EXPIRED"
+                if (!canFallback || index == urls.lastIndex) throw error
             }
         }
         throw ArchiveException("MEDIA_DOWNLOAD_FAILED", "媒体下载失败")
@@ -256,6 +409,7 @@ class MediaPipeline(
                     when {
                         status == 429 -> "RATE_LIMITED"
                         status == 408 || status == 425 || status in 500..599 -> "NETWORK_ERROR"
+                        status == 403 || status == 410 -> "MEDIA_URL_EXPIRED"
                         else -> "MEDIA_DOWNLOAD_FAILED"
                     }
                 throw ArchiveException(
@@ -557,8 +711,10 @@ class MediaPipeline(
     private data class MediaMetadata(val width: Int, val height: Int, val durationMs: Long?)
 
     companion object {
+        private const val TAG = "MediaPipeline"
         private const val THUMBNAIL_MAX_EDGE = 800
         private const val AVATAR_MAX_EDGE = 256
+        private const val RESUME_VERSION = 1
         private const val STALE_FILE_AGE_MS = 24L * 60L * 60L * 1000L
         private const val CANCELLATION_CHECK_INTERVAL_NANOS = 250_000_000L
         private const val MAX_MEDIA_REDIRECTS = 5

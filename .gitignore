@@ -8,3 +8,4 @@
 *.jks
 *.keystore
 **/key.properties
+**/.wrangler/
